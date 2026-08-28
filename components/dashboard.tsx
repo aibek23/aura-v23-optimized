@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useTransition } from "react"
 import type { Customer, Product, Profile, Role, Sale } from "@/lib/types"
 import { Toaster } from "@/components/ui/sonner"
 import { AppHeader } from "@/components/app-header"
@@ -53,11 +53,13 @@ export function Dashboard({
   const isAdmin = viewRole === "admin" || viewRole === "super_admin"
   const isSuperAdmin = profile.role === "super_admin"
 
+  const [, startTransition] = useTransition()
+
   const handleExitImpersonation = async () => {
     try {
       await impersonateShop(null)
       toast.success("Вернулись в панель суперадмина")
-      router.refresh()
+      startTransition(() => router.refresh())
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Ошибка")
     }

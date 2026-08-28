@@ -146,7 +146,7 @@ export function ClientsScreen({ clients }: { clients: Customer[] }) {
         toast.success("Клиент добавлен")
       }
       setDialogOpen(false)
-      router.refresh()
+      startTransition(() => router.refresh())
     } catch (e) {
       toast.error((e as Error).message)
     } finally {
@@ -159,7 +159,7 @@ export function ClientsScreen({ clients }: { clients: Customer[] }) {
     try {
       await deleteClient(c.id)
       toast.success("Клиент удалён")
-      router.refresh()
+      startTransition(() => router.refresh())
     } catch (e) {
       toast.error((e as Error).message)
     }

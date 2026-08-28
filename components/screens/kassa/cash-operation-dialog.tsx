@@ -40,7 +40,7 @@ export function CashOperationDialog({
   onClose: () => void
 }) {
   const router = useRouter()
-  const [source, setSource] = useState<CashSource>("cash")
+  const [, startTransition] = useTransition()
   const [amount, setAmount] = useState(initialAmount ?? "")
   const [cashPart, setCashPart] = useState("")
   const [elePart, setElePart] = useState("")
@@ -92,7 +92,7 @@ export function CashOperationDialog({
         type === "income" ? "Внесение проведено" : type === "collection" ? "Инкассация проведена" : "Изъятие проведено",
       )
       onClose()
-      router.refresh()
+      startTransition(() => router.refresh())
     } catch (e) {
       console.error("[kassa] cash operation error:", e)
       toast.error(e instanceof Error ? e.message : "Не удалось провести операцию")
@@ -106,7 +106,7 @@ export function CashOperationDialog({
     try {
       await deleteCashReasonPreset(id)
       toast.success("Подсказка удалена")
-      router.refresh()
+      startTransition(() => router.refresh())
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Не удалось удалить подсказку")
     } finally {

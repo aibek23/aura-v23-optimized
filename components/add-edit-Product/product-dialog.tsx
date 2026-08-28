@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useTransition } from "react"
 import type { Product } from "@/lib/types"
 import { createProduct, updateProduct, type ProductInput } from "@/app/actions/products"
 import { clearDraft, pushNameHistory } from "@/lib/name-history"
@@ -31,7 +31,7 @@ export function ProductDialog({
   onPrintLabel?: (product: Product) => void | Promise<void>
 }) {
   const router = useRouter()
-  const [saving, setSaving] = useState(false)
+  const [, startTransition] = useTransition()
 
   const {
     form,
@@ -97,7 +97,7 @@ export function ProductDialog({
       }
       setNameHistory(pushNameHistory(form.name))
       onOpenChange(false)
-      router.refresh()
+      startTransition(() => router.refresh())
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Не удалось сохранить")
     } finally {

@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useMemo, useState, useTransition } from "react"
 import dynamic from "next/dynamic"
 import type { Product } from "@/lib/types"
 import { DEFAULT_SIZE_KEY, type JewelryLabelSizeKey } from "@/lib/niimbot"
@@ -47,8 +47,7 @@ export function SkladScreen({
   isAdmin: boolean
 }) {
   const router = useRouter()
-  const [query, setQuery] = useState("")
-  const [page, setPage] = useState(1)
+  const [, startTransition] = useTransition()
 
   const [labelProduct, setLabelProduct] = useState<Product | null>(null)
   const [labelDialogOpen, setLabelDialogOpen] = useState(false)
@@ -117,7 +116,7 @@ export function SkladScreen({
     try {
       await deleteProduct(p.id)
       toast.success("Товар удалён")
-      router.refresh()
+      startTransition(() => router.refresh())
     } catch (e) {
       console.error("[sklad] delete error:", e)
       toast.error("Не удалось удалить")

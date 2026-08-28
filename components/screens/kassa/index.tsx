@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState, useTransition } from "react"
 import type { MetalRate, Product, Profile, Role, Sale, SaleItem, Customer } from "@/lib/types"
 import { formatSom } from "@/lib/format"
 import { buildRateMap, scrapRateOf } from "@/lib/rates"
@@ -49,6 +49,7 @@ export function KassaScreen({
   clients?: Customer[]
 }) {
   const router = useRouter()
+  const [, startTransition] = useTransition()
   const [query, setQuery] = useState("")
   const [debounced, setDebounced] = useState("")
   
@@ -370,7 +371,7 @@ export function KassaScreen({
         description: showBonus ? `Начислено ${res.bonusEarned} бонусов` : undefined,
       })
       handleReset()
-      router.refresh()
+      startTransition(() => router.refresh())
     } catch (e) {
       console.error("[kassa] checkout error:", e)
       toast.error(e instanceof Error ? e.message : "Ошибка оформления продажи")

@@ -33,7 +33,6 @@ export default function LoginPage() {
       const { error } = await supabase.auth.signInWithPassword({ email, password })
       if (error) throw error
       router.push("/crm")
-      router.refresh()
     } catch (error: unknown) {
       console.error("[v0] Login error:", error)
       setError(loginErrorMessage(error))

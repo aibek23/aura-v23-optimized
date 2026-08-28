@@ -6,20 +6,20 @@ import { AuraMark } from "@/components/brand/aura-mark"
 import { createClient } from "@/lib/supabase/client"
 import { useRouter } from "next/navigation"
 import { Clock, XCircle, Loader2 } from "lucide-react"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useTransition } from "react"
 
 export function PendingScreen({ profile, email }: { profile: Profile | null; email: string }) {
   const router = useRouter()
+  const [, startTransition] = useTransition()
   const rejected = profile?.status === "rejected"
   // Авто-обновление каждые 10 сек для pending: когда admin подтвердит — страница перезагрузится.
   const [checking, setChecking] = useState(false)
 
   useEffect(() => {
     if (rejected) return
-    const interval = setInterval(async () => {
+    const interval = setInterval(() => {
       setChecking(true)
-      router.refresh()
-      setChecking(false)
+      startTransition(() => { router.refresh(); setChecking(false) })
     }, 10_000)
     return () => clearInterval(interval)
   }, [rejected, router])
@@ -28,7 +28,6 @@ export function PendingScreen({ profile, email }: { profile: Profile | null; ema
     const supabase = createClient()
     await supabase.auth.signOut()
     router.push("/auth/login")
-    router.refresh()
   }
 
   return (

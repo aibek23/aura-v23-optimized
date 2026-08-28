@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState, useTransition } from "react"
 import type { Product } from "@/lib/types"
 import { CATEGORIES } from "@/lib/types"
 import { formatSom, formatWeight } from "@/lib/format"
@@ -33,8 +33,7 @@ export function VitrinaScreen({
   isAdmin: boolean
 }) {
   const router = useRouter()
-  const [query, setQuery] = useState("")
-  const [category, setCategory] = useState<string>("all")
+  const [, startTransition] = useTransition()
   const [selected, setSelected] = useState<Product | null>(null)
   const [togglingId, setTogglingId] = useState<string | null>(null)
 
@@ -55,7 +54,7 @@ export function VitrinaScreen({
     try {
       await updateProduct(p.id, { is_hidden: !p.is_hidden })
       toast.success(p.is_hidden ? `«${p.name}» теперь виден на витрине` : `«${p.name}» скрыт от покупателей`)
-      router.refresh()
+      startTransition(() => router.refresh())
     } catch (e) {
       toast.error((e as Error).message)
     } finally {

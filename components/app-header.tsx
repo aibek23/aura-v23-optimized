@@ -43,7 +43,6 @@ export function AppHeader({
     const supabase = createClient()
     await supabase.auth.signOut()
     router.push("/auth/login")
-    router.refresh()
   }
 
   const initials = (profile.full_name ?? "?")

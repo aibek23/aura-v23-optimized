@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useMemo, useState, useTransition } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -47,6 +47,7 @@ export function KassaScrap({
   onRequestDeposit: () => void
 }) {
   const router = useRouter()
+  const [, startTransition] = useTransition()
   const calc = useCalculator()
   const [open, setOpen] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -172,7 +173,7 @@ export function KassaScrap({
       toast.success(`Лом принят, выплачено ${formatSom(total)}`)
       reset()
       setOpen(false)
-      router.refresh()
+      startTransition(() => router.refresh())
     } catch (e) {
       console.error("[kassa] scrap intake error:", e)
       toast.error(e instanceof Error ? e.message : "Не удалось провести приём лома")

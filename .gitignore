@@ -31,4 +31,4 @@ dist-ssr
 *.sln
 *.sw?
 .next/
-node_modules/
+node_modules/ No newline at end of file
