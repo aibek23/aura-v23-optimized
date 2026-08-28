@@ -32,6 +32,7 @@ export function ProductDialog({
 }) {
   const router = useRouter()
   const [, startTransition] = useTransition()
+  const [saving, setSaving] = useState(false)
 
   const {
     form,

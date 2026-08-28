@@ -56,6 +56,8 @@ export function SkladScreen({
 
   const [productDialogOpen, setProductDialogOpen] = useState(false)
   const [editing, setEditing] = useState<Product | null>(null)
+  const [query, setQuery] = useState("")
+  const [page, setPage] = useState(1)
 
   const filtered = useMemo(() => {
     const q = query.toLowerCase()

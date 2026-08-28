@@ -36,6 +36,8 @@ export function VitrinaScreen({
   const [, startTransition] = useTransition()
   const [selected, setSelected] = useState<Product | null>(null)
   const [togglingId, setTogglingId] = useState<string | null>(null)
+  const [query, setQuery] = useState("")
+  const [category, setCategory] = useState<string>("all")
 
   const filtered = useMemo(() => {
     const q = query.toLowerCase()

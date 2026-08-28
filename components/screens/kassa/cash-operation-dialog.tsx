@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useState, useTransition } from "react"
 import type { CashOpType, CashReasonPreset, CashSource } from "@/lib/types"
 import { CASH_SOURCES } from "@/lib/types"
 import type { CashBalances } from "@/lib/cash"
@@ -48,6 +48,7 @@ export function CashOperationDialog({
   const [savePreset, setSavePreset] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [removing, setRemoving] = useState<string | null>(null)
+  const [source, setSource] = useState<CashSource>("cash")
 
   const isCollection = type === "collection"
   // Для инкассации источник всегда наличные — сумма переводится в электронные.
