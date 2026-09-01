@@ -54,16 +54,16 @@ export function AppHeader({
 
   return (
     <header className="sticky top-0 z-20 border-b border-border bg-background/85 backdrop-blur">
-      <div className="mx-auto flex h-16 w-full max-w-7xl items-center justify-between gap-4 px-4 md:px-6">
-        <div className="flex items-center gap-3">
-          <AuraMark className="h-8 w-8" />
-          <div className="leading-tight">
-            <div className="font-serif text-xl">Aura</div>
-            <div className="text-[10px] uppercase tracking-[0.25em] text-primary">{profile.shop_name}</div>
+      <div className="mx-auto flex h-16 w-full max-w-7xl items-center justify-between gap-2 overflow-hidden px-3 sm:gap-4 sm:px-4 md:px-6">
+        <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
+          <AuraMark className="h-8 w-8 shrink-0" />
+          <div className="min-w-0 leading-tight">
+            <div className="font-serif text-lg sm:text-xl">Aura</div>
+            <div className="truncate text-[10px] uppercase tracking-[0.2em] text-primary sm:tracking-[0.25em]">{profile.shop_name}</div>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-1 sm:gap-2">
           <NotificationBell
             visible={profile.role === "super_admin"}
             onSeeAll={onOpenNotifications}

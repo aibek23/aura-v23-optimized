@@ -27,6 +27,7 @@ export function BarcodeScannerModal({
   const fileRef = useRef<HTMLInputElement>(null)
   const closedRef = useRef(false)
 
+  const camerasRef = useRef<MediaDeviceInfo[]>([])
   const [cameras, setCameras] = useState<MediaDeviceInfo[]>([])
   const [deviceIndex, setDeviceIndex] = useState(0)
   const [facing, setFacing] = useState<"environment" | "user">("environment")
@@ -34,7 +35,6 @@ export function BarcodeScannerModal({
   const [manual, setManual] = useState("")
   const [manualMode, setManualMode] = useState(false)
 
-  if (!readerRef.current) readerRef.current = new BrowserMultiFormatReader()
 
   /** Полная остановка сканера и камеры. */
   const stopEverything = useCallback(() => {
@@ -44,6 +44,12 @@ export function BarcodeScannerModal({
       /* контроллер уже остановлен */
     }
     controlsRef.current = null
+
+    try {
+      readerRef.current = null
+    } catch {
+      /* ignore */
+    }
 
     const stream = activeStreamRef.current
     if (stream) {
@@ -84,14 +90,19 @@ export function BarcodeScannerModal({
     [onClose, onScan, stopEverything],
   )
 
-  // Список камер — только чтобы показать кнопку переключения.
+  // Сброс "закрытого" состояния при каждом монтировании — иначе повторное
+  // открытие окна стартует с closedRef === true и сканер сразу глушится.
   useEffect(() => {
-    BrowserMultiFormatReader.listVideoInputDevices()
-      .then((devices) => setCameras(devices))
-      .catch(() => setCameras([]))
+    closedRef.current = false
+    return () => {
+      closedRef.current = true
+    }
   }, [])
 
   // Запуск / перезапуск потока при смене камеры.
+  // ВАЖНО: список камер НЕ входит в зависимости — раньше он приходил асинхронно
+  // и вызывал второй запуск поверх ещё не освобождённого потока, из-за чего при
+  // повторном открытии камера "зависала".
   useEffect(() => {
     let cancelled = false
 
@@ -104,7 +115,12 @@ export function BarcodeScannerModal({
         return
       }
 
-      const chosen = cameras[deviceIndex]
+      // Даём браузеру такт, чтобы полностью освободить устройство после
+      // предыдущего сеанса (иначе getUserMedia может зависнуть).
+      await new Promise((r) => setTimeout(r, 60))
+      if (cancelled || closedRef.current) return
+
+      const chosen = camerasRef.current[deviceIndex]
       const constraints: MediaStreamConstraints = {
         audio: false,
         video: chosen?.deviceId
@@ -136,6 +152,7 @@ export function BarcodeScannerModal({
       const video = videoRef.current
       if (!video) {
         stream.getTracks().forEach((t) => t.stop())
+        activeStreamRef.current = null
         return
       }
       video.srcObject = stream
@@ -145,24 +162,45 @@ export function BarcodeScannerModal({
         /* автоплей может быть отложен — не критично */
       }
 
+      // Список камер узнаём только ПОСЛЕ выдачи прав: enumerateDevices не
+      // трогает камеру, в отличие от listVideoInputDevices() из ZXing.
       try {
-        const controls = await readerRef.current!.decodeFromVideoElement(video, (result) => {
+        const devices = await navigator.mediaDevices.enumerateDevices()
+        const videoInputs = devices.filter((d) => d.kind === "videoinput")
+        camerasRef.current = videoInputs
+        if (!cancelled && !closedRef.current) setCameras(videoInputs)
+      } catch {
+        /* не критично — останется переключение по facingMode */
+      }
+
+      if (cancelled || closedRef.current) return
+
+      // Каждый сеанс — свой экземпляр ридера: переиспользование старого
+      // после stop() приводит к "мёртвому" декодеру при повторном открытии.
+      const reader = new BrowserMultiFormatReader()
+      readerRef.current = reader
+      try {
+        const controls = await reader.decodeFromVideoElement(video, (result) => {
           if (result) handleResult(result.getText())
         })
         if (cancelled || closedRef.current) controls.stop()
         else controlsRef.current = controls
       } catch {
-        setError("Не удалось запустить распознавание. Попробуйте загрузить фото кода.")
+        if (!cancelled && !closedRef.current) {
+          setError("Не удалось запустить распознавание. Попробуйте загрузить фото кода.")
+        }
       }
     }
 
     void start()
 
+
+
     return () => {
       cancelled = true
       stopEverything()
     }
-  }, [cameras, deviceIndex, facing, handleResult, stopEverything])
+  }, [deviceIndex, facing, handleResult, stopEverything])
 
   // Esc закрывает окно и освобождает камеру.
   useEffect(() => {
@@ -185,7 +223,8 @@ export function BarcodeScannerModal({
     setError(null)
     const url = URL.createObjectURL(file)
     try {
-      const result = await readerRef.current!.decodeFromImageUrl(url)
+      const reader = readerRef.current ?? new BrowserMultiFormatReader()
+      const result = await reader.decodeFromImageUrl(url)
       handleResult(result.getText())
     } catch {
       setError("На фото не найден QR или штрихкод. Попробуйте другое фото или введите код вручную.")
