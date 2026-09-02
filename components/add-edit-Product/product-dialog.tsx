@@ -15,6 +15,7 @@ import { ProductGeneralInfo } from "@/components/add-edit-Product/product-genera
 import { cn } from "@/lib/utils"
 import { toast } from "sonner"
 import { useRouter } from "next/navigation"
+import { InlineLoader } from "@/components/ui/page-loader"
 
 export function ProductDialog({
   open,
@@ -302,7 +303,14 @@ export function ProductDialog({
               Отмена
             </Button>
             <Button onClick={submit} disabled={saving}>
-              {saving ? "Сохранение..." : "Сохранить"}
+              {saving ? (
+                <span className="flex items-center gap-2">
+                  <InlineLoader />
+                  Сохранение...
+                </span>
+              ) : (
+                "Сохранить"
+              )}
             </Button>
           </div>
         </DialogFooter>

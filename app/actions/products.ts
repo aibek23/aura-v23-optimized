@@ -16,6 +16,27 @@ async function requireProfile() {
 }
 
 /**
+ * Возвращает АКТИВНЫЙ shop_id так, как его видят RLS-политики.
+ *
+ * RLS проверяет `shop_id = public.current_shop_id()`, а current_shop_id()
+ * это COALESCE(impersonated_shop_id для super_admin, profiles.shop_id).
+ * Раньше INSERT писал profile.shop_id: для суперадмина в режиме
+ * имперсонации (и для профиля без магазина) значения расходились и Postgres
+ * отклонял вставку с "new row violates row-level security policy".
+ */
+async function requireShopId(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  profile: { shop_id: string | null },
+): Promise<string> {
+  const { data } = await supabase.rpc("current_shop_id")
+  const shopId = (typeof data === "string" ? data : null) ?? profile.shop_id
+  if (!shopId) {
+    throw new Error("Ваш аккаунт не привязан к магазину — обратитесь к администратору")
+  }
+  return shopId
+}
+
+/**
  * Дополняет товары коротким числовым ID магазина (shop_settings.seq_id).
  * Без него QR-ссылка теряет идентификатор магазина и превращается в /q//SKU.
  */
@@ -123,6 +144,9 @@ export async function createProduct(input: ProductInput): Promise<Product> {
   const { supabase, user, profile } = await requireProfile()
   validate(input)
 
+  // shop_id берём из того же источника, что и RLS-политика (см. requireShopId).
+  const shopId = await requireShopId(supabase, profile)
+
   const prefix = extractPrefix(input.sku)
 
   const { data: artData, error: artErr } = await supabase.rpc("next_article", { p_prefix: prefix }).single()
@@ -138,7 +162,7 @@ export async function createProduct(input: ProductInput): Promise<Product> {
       sku: art.article,
       article_prefix: art.prefix,
       article_seq: art.seq,
-      shop_id: profile.shop_id,
+      shop_id: shopId,
       created_by: user.id,
       status: "in_stock",
     })

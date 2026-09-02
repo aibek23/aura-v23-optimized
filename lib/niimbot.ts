@@ -5,6 +5,7 @@
  */
 export type JewelryLabelSizeKey =
   | "T25x30_45"    // T25*30+45 — бирка вертикальная
+  | "T30x25_45"    // T30*25+45 — бирка с коротким хвостиком
   | "T30x25_50"    // T30*25+50 — бирка с длинным хвостиком
   | "T50x30_rect"  // T50*30-230 — прямоугольная бирка
 
@@ -41,6 +42,12 @@ export const LABEL_SIZES: Record<JewelryLabelSizeKey, LabelSizeDef> = {
     label: "T25*30+45",
     w_px: 200,
     h_px: 600,
+  },
+  T30x25_45: {
+    key: "T30x25_45",
+    label: "T30*25+45",
+    w_px: 240,
+    h_px: 560,
   },
   T30x25_50: {
     key: "T30x25_50",

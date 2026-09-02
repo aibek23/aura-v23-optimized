@@ -9,6 +9,7 @@ import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { useState } from "react"
 import { AuthShell } from "@/components/auth/auth-shell"
+import { InlineLoader } from "@/components/ui/page-loader"
 
 function signUpErrorMessage(error: unknown): string {
   const { code, status } = (error ?? {}) as { code?: string; status?: number }
@@ -131,7 +132,14 @@ export default function SignUpPage() {
         </div>
         {error && <p className="text-sm text-destructive">{error}</p>}
         <Button type="submit" className="w-full" disabled={isLoading}>
-          {isLoading ? "Создание..." : "Зарегистрироваться"}
+          {isLoading ? (
+            <span className="flex items-center gap-2">
+              <InlineLoader />
+              Создание...
+            </span>
+          ) : (
+            "Зарегистрироваться"
+          )}
         </Button>
         <p className="text-center text-sm text-muted-foreground">
           Уже есть аккаунт?{" "}

@@ -25,7 +25,8 @@ interface ShapeMeta {
 
 const META: Record<JewelryLabelSizeKey | "T50x30_rect", ShapeMeta> = {
   T25x30_45: { vbW: 25.12487, vbH: 74.945435, bodyW: 25.12487, bodyH: 30.02 },
-  T30x25_50: { vbW: 30, vbH: 70, bodyW: 30, bodyH: 25 },
+  T30x25_45: { vbW: 30, vbH: 70, bodyW: 30, bodyH: 25 },
+  T30x25_50: { vbW: 30, vbH: 75, bodyW: 30, bodyH: 25 },
   T50x30_rect: { vbW: 50, vbH: 30, bodyW: 50, bodyH: 30 },
 }
 
@@ -35,6 +36,9 @@ function getMeta(key: JewelryLabelSizeKey | "T50x30_rect"): ShapeMeta {
 
 /** Поле вокруг бумаги (экранные px) — место под тень */
 const PAD = 24
+
+/** Ширина хвостика бирки, мм */
+const TAIL_W_MM = 3
 
 // ---------------------------------------------------------------------------
 // Раскладка: размер SVG и позиция Fabric-холста внутри него
@@ -53,6 +57,17 @@ export function getSvgLayout(
     canvasY: PAD,
     pxPerMm,
   }
+}
+
+/**
+ * Размер тела бирки (печатная зона без хвостика) в пикселях холста.
+ * Макет строится по этим размерам, чтобы текст не уезжал на хвостик.
+ */
+export function getBodyPx(sizeDef: LabelSizeDef): { w: number; h: number } {
+  const key = sizeDef.key as JewelryLabelSizeKey | "T50x30_rect"
+  const m = getMeta(key)
+  const { pxPerMm } = getSvgLayout(key, sizeDef)
+  return { w: Math.round(m.bodyW * pxPerMm), h: Math.round(m.bodyH * pxPerMm) }
 }
 
 // ---------------------------------------------------------------------------
@@ -104,15 +119,13 @@ function ShapeT25x30_45() {
         <g clipPath="url(#clip-t25)">
           <TagBody />
         </g>
-        {/* Хвостик */}
-        <path d="M 113,52.3386 V 41 h 170.079 v 11.3386 z" fill="#d9d9d9" />
       </g>
     </g>
   )
 }
 
-/** T30*25+50 — исходный вектор без поворота, хвостик вниз */
-function ShapeT30x25_50() {
+/** T30*25+45 и T30*25+50 — исходный вектор без поворота, хвостик вниз */
+function ShapeT30x25() {
   return (
     <g
       style={{ fill: "none" }}
@@ -120,8 +133,6 @@ function ShapeT30x25_50() {
     >
       <g clipPath="url(#clip-t30)">
         <TagBody />
-        {/* Хвостик */}
-        <path d="M 90.7087,94.4882 H 79.3701 V 264.567 h 11.3386 z" fill="#d9d9d9" />
       </g>
     </g>
   )
@@ -182,12 +193,23 @@ export function LabelBackground({ sizeDef, className, showPrintArea = true }: Bg
         </defs>
 
         <g filter="url(#paper-shadow)">
-          {key === "T30x25_50" ? (
-            <ShapeT30x25_50 />
+          {key === "T30x25_50" || key === "T30x25_45" ? (
+            <ShapeT30x25 />
           ) : key === "T50x30_rect" ? (
             <ShapeT50x30_rect />
           ) : (
             <ShapeT25x30_45 />
+          )}
+          {/* Хвостик — рисуем в мм-координатах, чтобы длина всегда совпадала
+              с реальным форматом (T…+45 / T…+50) */}
+          {m.vbH > m.bodyH && (
+            <rect
+              x={(m.vbW - TAIL_W_MM) / 2}
+              y={m.bodyH}
+              width={TAIL_W_MM}
+              height={m.vbH - m.bodyH}
+              fill="#d9d9d9"
+            />
           )}
         </g>
 

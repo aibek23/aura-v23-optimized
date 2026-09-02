@@ -368,6 +368,7 @@ export function SkladScreen({
       {/* Диалог этикетки — корректные размеры на десктопе и full-screen на мобильных */}
       <Dialog open={labelDialogOpen} onOpenChange={setLabelDialogOpen}>
         <DialogContent
+          showCloseButton={false}
           className={[
             "p-0 gap-0",
             // Мобильные: во весь экран

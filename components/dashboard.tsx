@@ -20,6 +20,7 @@ import type { CashData } from "@/app/actions/cash"
 import type { ShopBillingRow } from "@/app/actions/superadmin"
 import { impersonateShop } from "@/app/actions/superadmin"
 import { useRouter } from "next/navigation"
+import { createClient as createSupabaseBrowserClient } from "@/lib/supabase/client"
 import { toast } from "sonner"
 
 // ---------------------------------------------------------------------------
@@ -31,11 +32,11 @@ import { toast } from "sonner"
 //      проходит по ним, не покидая CRM.
 //   2. Когда пользователь на главном экране (начало истории CRM) и нажимает
 //      «Назад» — перехватываем событие popstate.
-//      • 1-е нажатие: показываем toast-подсказку, возвращаем шаг через
+//      • 1-е нажатие: ничего не происходит — шаг восстанавливается через
 //        history.pushState, счётчик = 1.
 //      • 2-е нажатие: показываем модальное окно подтверждения выхода.
 //      • «Отмена» → закрываем модал, сбрасываем счётчик.
-//      • «Выйти» → перенаправляем на маркетплейс ("/").
+//      • «Выйти» → разлогиниваем пользователя и уводим на /auth/login.
 // ---------------------------------------------------------------------------
 
 const CRM_HISTORY_KEY = "crm_nav"
@@ -61,9 +62,9 @@ function ExitConfirmModal({
       onClick={(e) => { if (e.target === e.currentTarget) onCancel() }}
     >
       <div className="w-full max-w-sm rounded-2xl border border-border bg-background p-6 shadow-xl">
-        <h2 className="text-base font-semibold">Выйти из CRM?</h2>
+        <h2 className="text-base font-semibold">Вы действительно хотите выйти из CRM?</h2>
         <p className="mt-1.5 text-sm text-muted-foreground">
-          Вы действительно хотите покинуть CRM и перейти на витрину?
+          Текущая сессия будет завершена, и потребуется повторный вход.
         </p>
         <div className="mt-5 flex gap-3">
           <button
@@ -116,6 +117,8 @@ export function Dashboard({
   const crmHistoryRef = useRef<ScreenId[]>([])
   // Счётчик нажатий «Назад» с главного экрана (0 или 1)
   const backCountRef = useRef(0)
+  // Открыт ли модал подтверждения выхода (для обработчика popstate)
+  const exitModalOpenRef = useRef(false)
 
   const canSeePurchasePrice = viewRole === "admin" || viewRole === "super_admin"
   const isAdmin = viewRole === "admin" || viewRole === "super_admin"
@@ -139,38 +142,38 @@ export function Dashboard({
 
   /** Обработка нажатия «Назад» браузера. */
   useEffect(() => {
-    const onPopState = (e: PopStateEvent) => {
-      const state = e.state as Record<string, unknown> | null
-
-      // Если в стеке истории есть предыдущий CRM-экран — возвращаемся к нему
+    const onPopState = () => {
+      // Любое нажатие «Назад» внутри CRM НЕ должно уводить пользователя из
+      // приложения: сразу возвращаем «сторожевой» шаг в стек истории.
+      // Если в стеке CRM есть предыдущий экран — просто возвращаемся к нему.
       if (crmHistoryRef.current.length > 0) {
         const prev = crmHistoryRef.current.pop()!
         setScreen(prev)
-        pushCrmState(prev) // восстанавливаем «сторожевой» шаг
+        pushCrmState(prev)
         backCountRef.current = 0
         return
       }
 
-      // Находимся на главном экране CRM
-      if (state && state[CRM_HISTORY_KEY]) {
-        // Это наш собственный pushState — не реагируем
+      // Мы на главном экране CRM.
+      pushCrmState("kassa")
+
+      // Если модал уже открыт — повторное «Назад» его просто закрывает.
+      if (exitModalOpenRef.current) {
+        exitModalOpenRef.current = false
+        setShowExitModal(false)
+        backCountRef.current = 0
         return
       }
 
-      // 1-е нажатие: toast-подсказка
+      // 1-е нажатие: ничего не происходит, остаёмся на месте.
       if (backCountRef.current === 0) {
         backCountRef.current = 1
-        pushCrmState("kassa") // восстанавливаем «сторожевой» шаг
-        toast.info("Нажмите «Назад» ещё раз, чтобы выйти из CRM", {
-          duration: 3000,
-          id: "crm-back-hint",
-        })
         return
       }
 
-      // 2-е нажатие: модал подтверждения
-      pushCrmState("kassa") // снова восстанавливаем, чтобы не «провалиться»
+      // 2-е нажатие: модальное окно подтверждения выхода.
       backCountRef.current = 0
+      exitModalOpenRef.current = true
       setShowExitModal(true)
     }
 
@@ -178,12 +181,22 @@ export function Dashboard({
     return () => window.removeEventListener("popstate", onPopState)
   }, [])
 
-  const handleExitCrm = () => {
+  /** «Выйти» — разлогиниваем пользователя и уводим на страницу входа. */
+  const handleExitCrm = async () => {
+    exitModalOpenRef.current = false
     setShowExitModal(false)
-    router.push("/")
+    try {
+      const supabase = createSupabaseBrowserClient()
+      await supabase.auth.signOut()
+    } catch {
+      // даже при ошибке сети уводим пользователя на экран входа
+    }
+    router.replace("/auth/login")
   }
 
+  /** «Отмена» — закрываем модал и сбрасываем счётчик нажатий «Назад». */
   const handleCancelExit = () => {
+    exitModalOpenRef.current = false
     setShowExitModal(false)
     backCountRef.current = 0
   }

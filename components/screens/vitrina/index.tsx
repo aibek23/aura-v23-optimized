@@ -101,12 +101,19 @@ export function VitrinaScreen({
             const active = isActive(p)
             const hidden = !!p.is_hidden
             return (
-              <button
+              <div
                 key={p.id}
-                type="button"
+                role="button"
+                tabIndex={0}
                 onClick={() => setSelected(p)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault()
+                    setSelected(p)
+                  }
+                }}
                 className={cn(
-                  "group overflow-hidden rounded-2xl border border-border bg-card text-left transition-all hover:border-primary/40 hover:shadow-xl",
+                  "group cursor-pointer overflow-hidden rounded-2xl border border-border bg-card text-left transition-all hover:border-primary/40 hover:shadow-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                   !active && "opacity-70",
                   hidden && isAdmin && "ring-2 ring-amber-400/60",
                 )}
@@ -182,7 +189,7 @@ export function VitrinaScreen({
                     </Button>
                   )}
                 </div>
-              </button>
+              </div>
             )
           })}
         </div>
