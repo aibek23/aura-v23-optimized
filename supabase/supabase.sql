@@ -9,6 +9,10 @@
 -- ============================================================================
 CREATE SCHEMA IF NOT EXISTS public;
 
+-- Последовательность для коротких числовых ID магазинов (QR-ссылки /q/{seq_id}/…)
+CREATE SEQUENCE IF NOT EXISTS public.shop_seq_id_seq
+  START WITH 1 INCREMENT BY 1 NO MINVALUE NO MAXVALUE CACHE 1;
+
 CREATE TYPE public.app_role AS ENUM (
     'seller',
     'admin',
@@ -53,6 +57,7 @@ CREATE TABLE IF NOT EXISTS public.shop_settings (
     frozen_at timestamp with time zone,
     frozen_by uuid,
     notes text,
+    seq_id integer,
     CONSTRAINT shop_settings_subscription_status_check CHECK ((subscription_status = ANY (ARRAY['trial'::text, 'active'::text, 'past_due'::text, 'frozen'::text, 'cancelled'::text])))
 );
 
@@ -395,8 +400,9 @@ begin
   if v_shop is null then
     raise exception 'У профиля не задан магазин' using errcode = '42501';
   end if;
-  if v_prefix !~ '^[А-ЯЁ]{2}$' then
-    raise exception 'Некорректный префикс артикула: %', p_prefix using errcode = '22023';
+  -- Принимаем ровно 2 латинских буквы (новый формат A-Z).
+  if v_prefix !~ '^[A-Z]{2}$' then
+    raise exception 'Некорректный префикс артикула: %. Используйте 2 латинские буквы (A-Z).', p_prefix using errcode = '22023';
   end if;
 
   perform pg_advisory_xact_lock(hashtextextended(v_shop::text || v_prefix, 0));
@@ -443,12 +449,13 @@ begin
     select public.compose_article(v_prefix, v_seq), v_prefix, v_seq, v_reused;
 end $_$;
 
-CREATE OR REPLACE FUNCTION public.public_product(_shop_id uuid, _article text) RETURNS TABLE(id uuid, shop_id uuid, shop_name text, name text, category text, metal text, metal_color text, purity text, weight numeric, size text, sku text, stones text, description text, sale_price numeric, quantity integer, status text, images text[], image_url text, created_at timestamp with time zone)
+CREATE OR REPLACE FUNCTION public.public_product(_shop_id uuid, _article text) RETURNS TABLE(id uuid, shop_id uuid, shop_seq_id integer, shop_name text, name text, category text, metal text, metal_color text, purity text, weight numeric, size text, sku text, stones text, description text, sale_price numeric, quantity integer, status text, images text[], image_url text, created_at timestamp with time zone)
     LANGUAGE sql STABLE SECURITY DEFINER
     AS $$
   select
     p.id,
     p.shop_id,
+    s.seq_id          as shop_seq_id,
     s.shop_name,
     p.name,
     p.category,
@@ -469,17 +476,51 @@ CREATE OR REPLACE FUNCTION public.public_product(_shop_id uuid, _article text) R
   from public.products p
   left join public.shop_settings s on s.shop_id = p.shop_id
   where p.shop_id = _shop_id
-    and p.sku     = _article
+    and p.sku     = upper(btrim(_article))
     and coalesce(p.is_hidden, false) = false
   limit 1;
 $$;
 
-CREATE OR REPLACE FUNCTION public.public_shop_products(_shop_id uuid, _limit integer DEFAULT 24) RETURNS TABLE(id uuid, shop_id uuid, shop_name text, name text, category text, metal text, metal_color text, purity text, weight numeric, size text, sku text, stones text, description text, sale_price numeric, quantity integer, status text, images text[], image_url text, created_at timestamp with time zone)
+CREATE OR REPLACE FUNCTION public.public_product_by_seq(_shop_seq_id integer, _article text) RETURNS TABLE(id uuid, shop_id uuid, shop_seq_id integer, shop_name text, name text, category text, metal text, metal_color text, purity text, weight numeric, size text, sku text, stones text, description text, sale_price numeric, quantity integer, status text, images text[], image_url text, created_at timestamp with time zone)
     LANGUAGE sql STABLE SECURITY DEFINER
     AS $$
   select
     p.id,
     p.shop_id,
+    s.seq_id          as shop_seq_id,
+    s.shop_name,
+    p.name,
+    p.category,
+    p.metal,
+    p.metal_color,
+    p.purity,
+    p.weight,
+    p.size,
+    p.sku,
+    p.stones,
+    p.description,
+    p.sale_price,
+    p.quantity,
+    p.status::text,
+    p.images,
+    p.image_url,
+    p.created_at
+  from public.products p
+  join public.shop_settings s on s.shop_id = p.shop_id
+  where s.seq_id  = _shop_seq_id
+    and p.sku     = upper(btrim(_article))
+    and coalesce(p.is_hidden, false) = false
+    and s.public_enabled = true
+  limit 1;
+$$;
+
+CREATE OR REPLACE FUNCTION public.public_shop_products(_shop_id uuid, _limit integer DEFAULT 24) RETURNS TABLE(id uuid, shop_id uuid, shop_seq_id integer, shop_name text, name text, category text, metal text, metal_color text, purity text, weight numeric, size text, sku text, stones text, description text, sale_price numeric, quantity integer, status text, images text[], image_url text, created_at timestamp with time zone)
+    LANGUAGE sql STABLE SECURITY DEFINER
+    AS $$
+  select
+    p.id,
+    p.shop_id,
+    s.seq_id          as shop_seq_id,
     s.shop_name,
     p.name,
     p.category,
@@ -843,6 +884,21 @@ ALTER TABLE ONLY public.profiles ADD CONSTRAINT profiles_pkey PRIMARY KEY (id);
 ALTER TABLE ONLY public.sales ADD CONSTRAINT sales_pkey PRIMARY KEY (id);
 ALTER TABLE ONLY public.shop_settings ADD CONSTRAINT shop_settings_pkey PRIMARY KEY (shop_id);
 
+-- Триггер: автоматически выдаёт seq_id при создании нового магазина
+CREATE OR REPLACE FUNCTION public.assign_shop_seq_id()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.seq_id IS NULL THEN
+    NEW.seq_id := nextval('public.shop_seq_id_seq');
+  END IF;
+  RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS trg_assign_shop_seq_id ON public.shop_settings;
+CREATE TRIGGER trg_assign_shop_seq_id
+  BEFORE INSERT ON public.shop_settings
+  FOR EACH ROW EXECUTE FUNCTION public.assign_shop_seq_id();
+
 -- ============================================================================
 -- 5. ИНДЕКСЫ
 -- ============================================================================
@@ -870,6 +926,8 @@ CREATE INDEX IF NOT EXISTS sales_shop_created_idx ON public.sales USING btree (s
 
 -- Настройки магазина
 CREATE INDEX IF NOT EXISTS shop_settings_paid_until_idx ON public.shop_settings USING btree (paid_until) WHERE (paid_until IS NOT NULL);
+
+CREATE UNIQUE INDEX IF NOT EXISTS shop_settings_seq_id_idx ON public.shop_settings (seq_id) WHERE seq_id IS NOT NULL;
 
 -- v22: Индексы для таблицы уведомлений
 CREATE INDEX IF NOT EXISTS sn_unread_idx ON public.superadmin_notifications (is_read, created_at DESC) WHERE is_read = false;

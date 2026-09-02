@@ -1,32 +1,37 @@
 import type { Product } from "@/lib/types"
 
-/** Первая буква артикула — тип изделия (по категории карточки). */
+/**
+ * Первая буква артикула — тип изделия (по категории карточки).
+ * Только латиница A-Z для компактных QR-кодов.
+ */
 export const TYPE_CODES: Record<string, string> = {
-  Кольца: "К",
-  Серьги: "С",
-  Цепи: "Ц",
-  Браслеты: "Б",
-  Подвески: "П",
-  Часы: "Ч",
-  Прочее: "И",
-}
-
-/** Вторая буква артикула — металл/цвет металла. */
-export const METAL_CODES: Record<string, string> = {
-  "Жёлтое золото": "Ж",
-  "Желтое золото": "Ж",
-  "Красное золото": "К",
-  "Белое золото": "Б",
-  "Розовое золото": "Р",
-  Комбинированный: "Ж",
-  Палладий: "П",
-  Платина: "П",
-  Серебро: "С",
+  "Кольца":   "R",  // Ring
+  "Серьги":   "E",  // Earring
+  "Цепи":     "C",  // Chain
+  "Браслеты": "B",  // Bracelet
+  "Подвески": "P",  // Pendant
+  "Часы":     "W",  // Watch
+  "Прочее":   "I",  // Item
 }
 
 /**
- * Собирает двухбуквенный префикс из выбранных в модалке значений.
- * metalColor важнее строки металла: «Золото 585» + «Белое золото» → «КБ».
+ * Вторая буква артикула — металл/цвет металла.
+ * Только латиница A-Z для компактных QR-кодов.
+ */
+export const METAL_CODES: Record<string, string> = {
+  "Желтое золото":  "Y",  // Yellow
+  "Красное золото": "R",  // Red
+  "Белое золото":   "W",  // White
+  "Розовое золото": "K",  // rosé/K
+  "Комбинированный": "Y",
+  "Палладий":       "D",  // pallaD
+  "Платина":        "T",  // plaTinum
+  "Серебро":        "S",  // Silver
+}
+
+/**
+ * Собирает двухбуквенный ASCII-префикс из выбранных в модалке значений.
+ * metalColor важнее строки металла: «Золото 585» + «Белое золото» → «WW».
  */
 export function articlePrefix(category: string, metal: string, metalColor?: string | null): string | null {
   const type = TYPE_CODES[category]
@@ -34,12 +39,12 @@ export function articlePrefix(category: string, metal: string, metalColor?: stri
 
   let metalCode = metalColor ? METAL_CODES[metalColor] : undefined
   if (!metalCode) {
-    if (/серебр/i.test(metal)) metalCode = "С"
-    else if (/платин|палладий/i.test(metal)) metalCode = "П"
-    else if (/бел/i.test(metal)) metalCode = "Б"
-    else if (/красн/i.test(metal)) metalCode = "К"
-    else if (/розов/i.test(metal)) metalCode = "Р"
-    else if (/золот/i.test(metal)) metalCode = "Ж"
+    if (/серебр/i.test(metal))           metalCode = "S"
+    else if (/платин|палладий/i.test(metal)) metalCode = "T"
+    else if (/бел/i.test(metal))         metalCode = "W"
+    else if (/красн/i.test(metal))       metalCode = "R"
+    else if (/розов/i.test(metal))       metalCode = "K"
+    else if (/золот/i.test(metal))       metalCode = "Y"
   }
   if (!metalCode) return null
   return `${type}${metalCode}`
@@ -52,7 +57,8 @@ export type GeneratedArticle = {
   reused: boolean
 }
 
-export const ARTICLE_RE = /^[А-ЯЁ]{2}\d{5}$/
+/** Артикул: ровно 2 латинских буквы + 5 цифр, например RY00123. */
+export const ARTICLE_RE = /^[A-Z]{2}\d{5}$/
 
 export function isArticle(value: string): boolean {
   return ARTICLE_RE.test(value.trim().toUpperCase())

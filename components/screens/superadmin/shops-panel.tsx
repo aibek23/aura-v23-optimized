@@ -4,6 +4,7 @@ import { useState, useTransition, useMemo } from "react"
 import {
   getSuperAdminShops,
   updateShopBilling,
+  setShopFrozen,
   impersonateShop,
   type ShopBillingRow,
 } from "@/app/actions/superadmin"
@@ -261,11 +262,8 @@ export function SuperAdminShopsScreen({ initialShops }: { initialShops: ShopBill
     if (!confirm(`${action} магазин «${shop.shop_name ?? shop.shop_id}»?`)) return
     start(async () => {
       try {
-        await updateShopBilling({
-          shop_id:   shop.shop_id,
-          is_frozen: !shop.is_frozen,
-          subscription_status: !shop.is_frozen ? "frozen" : shop.subscription_status,
-        })
+        // Единый эндпоинт: сервер сам восстанавливает статус подписки при разморозке
+        await setShopFrozen(shop.shop_id, !shop.is_frozen)
         toast.success(shop.is_frozen ? "Магазин разморожен" : "Магазин заморожен")
         reload()
       } catch (e) {

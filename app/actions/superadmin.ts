@@ -80,6 +80,30 @@ export async function updateShopBilling(input: UpdateShopBillingInput): Promise<
 }
 
 // ---------------------------------------------------------------------------
+// Заморозка / разморозка магазина (единый эндпоинт-переключатель)
+// ---------------------------------------------------------------------------
+
+/**
+ * Переключает состояние магазина.
+ *  frozen = true  → магазин заморожен (subscription_status = 'frozen')
+ *  frozen = false → магазин разморожен, статус подписки восстанавливается
+ *                   на стороне БД по дате paid_until (active / past_due / trial).
+ */
+export async function setShopFrozen(shopId: string, frozen: boolean): Promise<void> {
+  const { supabase } = await requireSuperAdmin()
+  const { error } = await supabase.rpc("superadmin_set_shop_frozen", {
+    _shop_id: shopId,
+    _frozen: frozen,
+  })
+  if (error) {
+    throw new Error(
+      `Не удалось ${frozen ? "заморозить" : "разморозить"} магазин: ${error.message}`,
+    )
+  }
+  revalidatePath("/crm")
+}
+
+// ---------------------------------------------------------------------------
 // Имперсонация: войти в магазин / выйти
 // ---------------------------------------------------------------------------
 

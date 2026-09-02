@@ -49,10 +49,12 @@ export default async function StorePage({ params }: { params: Promise<Params> })
           <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {products.map((p) => {
               const cover = p.images?.[0] ?? p.image_url
+              // Используем числовой seq_id для компактного QR-маршрута /q/…
+              const shopKey = p.shop_seq_id ?? store_id
               return (
                 <Link
                   key={p.id}
-                  href={`/store/${store_id}/product/${encodeURIComponent(p.sku ?? "")}`}
+                  href={`/q/${shopKey}/${encodeURIComponent((p.sku ?? "").toUpperCase())}`}
                   className="overflow-hidden rounded-xl border border-border bg-card transition-colors hover:border-primary"
                 >
                   <div className="aspect-square bg-muted">

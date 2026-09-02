@@ -96,11 +96,44 @@ function buildJewelryText(data: Product) {
   return { metalLine, weightLine, sizeLine, priceLine }
 }
 
+/**
+ * Строит короткий QR-URL вида /q/{shopSeqId}/{sku} (только ASCII — QR-код
+ * остаётся компактным и легко читается сканерами).
+ * Если seq_id ещё не проставлен (старая запись) — падаем обратно на UUID.
+ */
 function buildQrUrl(data: Product): string {
   const baseUrl = (process.env.NEXT_PUBLIC_BASE_URL ?? "https://aura-gold.kg").replace(/\/$/, "")
-  const skuValue = data.sku || "NO-SKU"
-  const shopId = data.shop_id ?? ""
-  return shopId ? `${baseUrl}/${shopId}/product/${skuValue}` : `${baseUrl}/product/${skuValue}`
+  const skuValue = (data.sku || "").trim().toUpperCase()
+  // Короткий числовой ID магазина, иначе — UUID магазина (обратная совместимость)
+  const shopKey = String(data.shop_seq_id ?? data.shop_id ?? "").trim()
+  // ID самого изделия: попадает в QR как параметр, чтобы сканер всегда получал
+  // однозначный идентификатор записи, даже если артикул позже изменится.
+  const productId = String(data.id ?? "").trim()
+  const hasRealId = Boolean(productId) && productId !== "draft"
+
+  if (!shopKey || !skuValue || !hasRealId) {
+    // Явно сигнализируем о неполных данных вместо тихой генерации битой ссылки
+    throw new Error(
+      "Недостаточно данных для QR-кода: сначала сохраните товар (нужны ID изделия, артикул и магазин).",
+    )
+  }
+
+  return `${baseUrl}/q/${shopKey}/${encodeURIComponent(skuValue)}?id=${productId}`
+}
+
+
+/**
+ * Безопасно генерирует QR-картинку. Если данных не хватает (товар ещё не
+ * сохранён) — возвращает null и показывает понятную ошибку вместо битого QR.
+ */
+async function safeQrDataUrl(data: Product): Promise<string | null> {
+  try {
+    return await QRCode.toDataURL(buildQrUrl(data), { margin: 0 })
+  } catch (e) {
+    console.error("[label] QR build error:", e)
+    toast.error(e instanceof Error ? e.message : "Не удалось сформировать QR-код")
+    return null
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -349,11 +382,13 @@ async function buildDefaultLayout(canvas: Canvas, data: Product, sizeDef: LabelS
       fontSize: Math.max(12, Math.round(H * 0.20)), fontWeight: "bold", data: { role: "price" },
     })
 
-    const qrDataUrl = await QRCode.toDataURL(buildQrUrl(data), { margin: 0 })
+    const qrDataUrl = await safeQrDataUrl(data)
     if (!canvas.lowerCanvasEl) return
-    const qrImg = await FabricImage.fromURL(qrDataUrl)
-    const scale = qrSize / (qrImg.width || qrSize)
-    qrImg.set({ left: colLeft + 4, top: Math.round((H - qrSize) / 2), scaleX: scale, scaleY: scale, data: { role: "qr" } })
+    const qrImg = qrDataUrl ? await FabricImage.fromURL(qrDataUrl) : null
+    if (qrImg) {
+      const scale = qrSize / (qrImg.width || qrSize)
+      qrImg.set({ left: colLeft + 4, top: Math.round((H - qrSize) / 2), scaleX: scale, scaleY: scale, data: { role: "qr" } })
+    }
 
     const skuText = new Textbox(skuValue, {
       left: colLeft, top: Math.round(H * 0.84), width: W - colLeft - 4,
@@ -361,7 +396,8 @@ async function buildDefaultLayout(canvas: Canvas, data: Product, sizeDef: LabelS
     })
 
     if (!canvas.lowerCanvasEl) return
-    canvas.add(metal, specs, price, qrImg, skuText)
+    canvas.add(metal, specs, price, skuText)
+    if (qrImg) canvas.add(qrImg)
   } else {
     // Вертикальный макет (бирки с хвостиком)
     const qrSize = Math.min(Math.round(W * 0.55), Math.round(H * 0.22))
@@ -379,14 +415,16 @@ async function buildDefaultLayout(canvas: Canvas, data: Product, sizeDef: LabelS
       fontSize: Math.max(10, Math.round(W * 0.12)), fontWeight: "bold", data: { role: "price" },
     })
 
-    const qrDataUrl = await QRCode.toDataURL(buildQrUrl(data), { margin: 0 })
+    const qrDataUrl = await safeQrDataUrl(data)
     if (!canvas.lowerCanvasEl) return
-    const qrImg = await FabricImage.fromURL(qrDataUrl)
-    const scale = qrSize / (qrImg.width || qrSize)
-    qrImg.set({
-      left: Math.round((W - qrSize) / 2), top: Math.round(H * 0.52),
-      scaleX: scale, scaleY: scale, data: { role: "qr" },
-    })
+    const qrImg = qrDataUrl ? await FabricImage.fromURL(qrDataUrl) : null
+    if (qrImg) {
+      const scale = qrSize / (qrImg.width || qrSize)
+      qrImg.set({
+        left: Math.round((W - qrSize) / 2), top: Math.round(H * 0.52),
+        scaleX: scale, scaleY: scale, data: { role: "qr" },
+      })
+    }
 
     const skuText = new Textbox(skuValue, {
       left: 4, top: Math.round(H * 0.76), width: W - 8,
@@ -394,7 +432,8 @@ async function buildDefaultLayout(canvas: Canvas, data: Product, sizeDef: LabelS
     })
 
     if (!canvas.lowerCanvasEl) return
-    canvas.add(metal, specs, price, qrImg, skuText)
+    canvas.add(metal, specs, price, skuText)
+    if (qrImg) canvas.add(qrImg)
   }
 
   canvas.renderAll()

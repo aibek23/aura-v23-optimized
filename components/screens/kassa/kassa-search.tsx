@@ -28,24 +28,33 @@ interface KassaSearchProps {
   recent?: Product[]
 }
 
-// Извлекает SKU из QR-URL вида https://aura-gold.kg/{shop_id}/product/{sku}
-// или https://aura-gold.kg/product/{sku}. Если текст не является URL этого
-// домена — возвращает оригинальный текст (штрихкод / произвольная строка).
+/**
+ * Извлекает SKU из QR-URL.
+ *
+ * Поддерживаемые форматы:
+ *   • Новый:    https://aura-gold.kg/q/{shopSeqId}/{SKU}
+ *   • Старый:   https://aura-gold.kg/{store_id}/product/{sku}
+ *   • Без домена (штрихкод / произвольная строка) → возвращается как есть.
+ */
 function extractSkuFromScan(raw: string): string {
-  const base = (process.env.NEXT_PUBLIC_BASE_URL ?? "https://aura-gold.kg/").replace(/\/$/, "")
+  const base = (process.env.NEXT_PUBLIC_BASE_URL ?? "https://aura-gold.kg").replace(/\/$/, "")
   if (!raw.includes(base)) return raw
   try {
     const url = new URL(raw)
     const segments = url.pathname.split("/").filter(Boolean)
-    // …/product/{sku}  →  last segment after "product"
+    // Новый маршрут: /q/{shopId}/{SKU}
+    if (segments[0] === "q" && segments.length >= 3) {
+      return decodeURIComponent(segments[2]).toUpperCase()
+    }
+    // Старый маршрут: …/product/{sku}
     const productIdx = segments.lastIndexOf("product")
     if (productIdx !== -1 && segments[productIdx + 1]) {
-      return decodeURIComponent(segments[productIdx + 1])
+      return decodeURIComponent(segments[productIdx + 1]).toUpperCase()
     }
   } catch {
     // не валидный URL — берём последний сегмент пути как fallback
     const parts = raw.split("/").filter(Boolean)
-    if (parts.length) return decodeURIComponent(parts[parts.length - 1])
+    if (parts.length) return decodeURIComponent(parts[parts.length - 1]).toUpperCase()
   }
   return raw
 }

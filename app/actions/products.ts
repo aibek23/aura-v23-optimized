@@ -15,12 +15,36 @@ async function requireProfile() {
   return { supabase, user, profile }
 }
 
+/**
+ * Дополняет товары коротким числовым ID магазина (shop_settings.seq_id).
+ * Без него QR-ссылка теряет идентификатор магазина и превращается в /q//SKU.
+ */
+async function withShopSeqId(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  rows: Product[],
+): Promise<Product[]> {
+  const shopIds = [...new Set(rows.map((p) => p.shop_id).filter(Boolean))]
+  if (shopIds.length === 0) return rows
+
+  const { data: shops } = await supabase
+    .from("shop_settings")
+    .select("shop_id, seq_id")
+    .in("shop_id", shopIds)
+
+  const seqByShop = new Map<string, number | null>(
+    (shops ?? []).map((s: { shop_id: string; seq_id: number | null }) => [s.shop_id, s.seq_id]),
+  )
+
+  return rows.map((p) => ({ ...p, shop_seq_id: seqByShop.get(p.shop_id) ?? null }))
+}
+
 export async function getProducts(): Promise<Product[]> {
   const { supabase } = await requireProfile()
   const { data, error } = await supabase.from("products").select("*").order("created_at", { ascending: false })
   if (error) throw error
-  return (data as Product[]) ?? []
+  return withShopSeqId(supabase, (data as Product[]) ?? [])
 }
+
 
 export type ProductInput = {
   name: string
@@ -78,12 +102,24 @@ function normalizeArticle(row: Record<string, unknown>): ArticleRow {
   }
 }
 
+/**
+ * Извлекает двухбуквенный ASCII-префикс из артикула или строки-префикса.
+ * Принимает только латинские буквы A-Z. Если передан кириллический
+ * префикс (наследие старых данных) — возвращает безопасный дефолт "RY".
+ */
 function extractPrefix(value: string | null | undefined): string {
-  const match = (value ?? "").match(/^[А-ЯЁа-яёA-Za-z]{2}/)
-  return match ? match[0].toUpperCase() : "КЖ"
+  const match = (value ?? "").match(/^[A-Za-z]{2}/)
+  if (match) return match[0].toUpperCase()
+  return "RY" // дефолт: Кольцо / Жёлтое золото → Ring Yellow
 }
 
-export async function createProduct(input: ProductInput) {
+/**
+ * Создаёт товар и ВОЗВРАЩАЕТ сохранённую строку (с реальными id / sku /
+ * shop_id / shop_seq_id). Раньше экшн ничего не возвращал, поэтому этикетка
+ * печаталась по черновику (id: "draft", shop_id отсутствовал) — и ID не
+ * попадал в QR-код.
+ */
+export async function createProduct(input: ProductInput): Promise<Product> {
   const { supabase, user, profile } = await requireProfile()
   validate(input)
 
@@ -94,16 +130,20 @@ export async function createProduct(input: ProductInput) {
 
   const art = normalizeArticle((artData ?? {}) as Record<string, unknown>)
 
-  const { error } = await supabase.from("products").insert({
-    ...input,
-    name: input.name.trim(),
-    sku: art.article,
-    article_prefix: art.prefix,
-    article_seq: art.seq,
-    shop_id: profile.shop_id,
-    created_by: user.id,
-    status: "in_stock",
-  })
+  const { data, error } = await supabase
+    .from("products")
+    .insert({
+      ...input,
+      name: input.name.trim(),
+      sku: art.article,
+      article_prefix: art.prefix,
+      article_seq: art.seq,
+      shop_id: profile.shop_id,
+      created_by: user.id,
+      status: "in_stock",
+    })
+    .select("*")
+    .single()
 
   if (error) {
     if (error.code === "23505") {
@@ -113,15 +153,30 @@ export async function createProduct(input: ProductInput) {
   }
 
   revalidatePath("/crm")
+
+  const [saved] = await withShopSeqId(supabase, [data as Product])
+  return saved
 }
 
-export async function updateProduct(id: string, input: Partial<ProductInput> & { is_hidden?: boolean; is_secondary?: never }) {
+/** Обновляет товар и возвращает актуальную строку (нужна для печати этикетки). */
+export async function updateProduct(
+  id: string,
+  input: Partial<ProductInput> & { is_hidden?: boolean; is_secondary?: never },
+): Promise<Product> {
   const { supabase } = await requireProfile()
   validate(input)
-  const { error } = await supabase.from("products").update(input).eq("id", id)
+  const { data, error } = await supabase
+    .from("products")
+    .update(input)
+    .eq("id", id)
+    .select("*")
+    .single()
   if (error) throw new Error(`Не удалось обновить товар: ${error.message}`)
   revalidatePath("/crm")
+  const [saved] = await withShopSeqId(supabase, [data as Product])
+  return saved
 }
+
 
 export async function deleteProduct(id: string) {
   const { supabase } = await requireProfile()

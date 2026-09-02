@@ -77,6 +77,8 @@ export type ProfileWithImpersonation = Profile & {
 export type Product = {
   id: string
   shop_id: string
+  /** Короткий числовой ID магазина для QR-ссылок (seq_id из shop_settings). */
+  shop_seq_id?: number | null
   created_by: string
   name: string
   category: string | null
@@ -86,6 +88,8 @@ export type Product = {
   weight: number
   size: string | null
   sku: string | null
+  /** Порядковый номер артикула внутри префикса (1–99999). */
+  article_seq?: number | null
   quantity: number
   is_hidden: boolean | null
   purchase_price: number

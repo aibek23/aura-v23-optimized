@@ -33,6 +33,9 @@ export function ProductDialog({
   const router = useRouter()
   const [, startTransition] = useTransition()
   const [saving, setSaving] = useState(false)
+  /** Подтверждение печати после успешного сохранения. */
+  const [printConfirmOpen, setPrintConfirmOpen] = useState(false)
+  const [savedProduct, setSavedProduct] = useState<Product | null>(null)
 
   const {
     form,
@@ -79,26 +82,28 @@ export function ProductDialog({
         supplier_phone: form.supplier_phone.trim() || null,
       }
 
-      // Сначала печать этикетки, затем сохранение товара.
-      await onPrintLabel?.({
-        ...(product ?? {}),
-        ...form,
-        id: product?.id ?? "draft",
-        name: form.name.trim(),
-        image_url: form.images[0] ?? null,
-      } as unknown as Product)
-
+      // 1) Сначала сохраняем в БД и получаем реальную строку товара
+      //    (с id / sku / shop_id / shop_seq_id) — именно она нужна для QR-кода.
+      let saved: Product
       if (product) {
-        await updateProduct(product.id, payload)
+        saved = await updateProduct(product.id, payload)
         toast.success("Товар обновлён")
       } else {
-        await createProduct(payload)
+        saved = await createProduct(payload)
         clearDraft()
         toast.success("Товар добавлен")
       }
+
       setNameHistory(pushNameHistory(form.name))
-      onOpenChange(false)
       startTransition(() => router.refresh())
+
+      // 2) Данные уже в БД — спрашиваем про печать этикетки.
+      if (onPrintLabel) {
+        setSavedProduct(saved)
+        setPrintConfirmOpen(true)
+      } else {
+        onOpenChange(false)
+      }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Не удалось сохранить")
     } finally {
@@ -106,7 +111,22 @@ export function ProductDialog({
     }
   }
 
+  const closeAll = () => {
+    setPrintConfirmOpen(false)
+    setSavedProduct(null)
+    onOpenChange(false)
+  }
+
+  const confirmPrint = async () => {
+    const target = savedProduct
+    setPrintConfirmOpen(false)
+    setSavedProduct(null)
+    onOpenChange(false)
+    if (target) await onPrintLabel?.(target)
+  }
+
   return (
+    <>
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
@@ -288,5 +308,24 @@ export function ProductDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+
+    {/* Подтверждение печати — показывается ТОЛЬКО после успешного сохранения */}
+    <Dialog open={printConfirmOpen} onOpenChange={(v) => { if (!v) closeAll() }}>
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Печать этикетки</DialogTitle>
+        </DialogHeader>
+        <p className="text-sm text-muted-foreground">
+          Товар сохранён. Хотите распечатать этикетку сейчас?
+        </p>
+        <DialogFooter className="gap-2">
+          <Button variant="outline" onClick={closeAll}>
+            Нет
+          </Button>
+          <Button onClick={() => void confirmPrint()}>Да, печатать</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+    </>
   )
 }
