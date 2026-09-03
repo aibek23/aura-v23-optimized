@@ -3,6 +3,7 @@ import type { Metadata } from "next"
 import { notFound } from "next/navigation"
 import { getPublicProductBySeqId } from "@/app/actions/store"
 import { formatSom, formatWeight } from "@/lib/format"
+import { purityFromMetal } from "@/lib/purity"
 import { AuraMark } from "@/components/brand/aura-mark"
 
 /**
@@ -91,7 +92,7 @@ export default async function QrProductPage({ params }: { params: Promise<Params
             </div>
             <div>
               <dt className="text-muted-foreground">Проба</dt>
-              <dd>{product.purity ?? "—"}</dd>
+              <dd>{purityFromMetal(product.metal) || "—"}</dd>
             </div>
             <div>
               <dt className="text-muted-foreground">Вес</dt>

@@ -72,7 +72,6 @@ export type ProductInput = {
   category: string
   metal: string
   metal_color?: string | null
-  purity: string
   weight: number
   size: string
   sku: string

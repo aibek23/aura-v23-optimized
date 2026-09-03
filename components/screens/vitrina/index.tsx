@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, useTransition } from "react"
 import type { Product } from "@/lib/types"
 import { CATEGORIES } from "@/lib/types"
 import { formatSom, formatWeight } from "@/lib/format"
+import { purityFromMetal } from "@/lib/purity"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -268,7 +269,7 @@ function ProductOverlay({
               <h2 className="font-serif text-2xl">{product.name}</h2>
               <p className="text-sm text-muted-foreground">
                 {product.category} · {product.metal}
-                {product.purity ? ` · проба ${product.purity}` : ""}
+                {purityFromMetal(product.metal) ? ` · проба ${purityFromMetal(product.metal)}` : ""}
               </p>
             </div>
             <div className="flex items-center gap-2 flex-wrap">

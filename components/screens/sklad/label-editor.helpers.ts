@@ -9,7 +9,7 @@ import type { Product } from "@/lib/types"
 // Текстовые данные изделия
 // ---------------------------------------------------------------------------
 export function buildJewelryText(data: Product) {
-  const metalLine = [data.metal, data.purity].filter(Boolean).join(" • ") || "—"
+  const metalLine = data.metal || "—"
   const weightLine = data.weight ? `${data.weight} г` : "—"
   const sizeLine = data.size || "—"
   const priceLine = `${data.sale_price.toLocaleString("ru")} сом`

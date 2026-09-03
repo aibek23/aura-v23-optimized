@@ -13,7 +13,6 @@ export type PublicProduct = {
   category: string | null
   metal: string | null
   metal_color: string | null
-  purity: string | null
   weight: number
   size: string | null
   sku: string | null

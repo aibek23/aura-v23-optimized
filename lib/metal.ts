@@ -88,3 +88,5 @@ export function parseMetal(metal: string | null | undefined): {
   base = base.charAt(0).toUpperCase() + base.slice(1)
   return { condition: secondary ? "secondary" : "new", base, purity }
 }
+
+export { purityFromMetal } from "@/lib/purity"

@@ -1,4 +1,5 @@
 import type { Product } from "@/lib/types"
+import { purityFromMetal } from "@/lib/purity"
 
 /**
  * Первая буква артикула — тип изделия (по категории карточки).
@@ -84,7 +85,7 @@ export function buildLabelPayload(p: {
   name: string
   weight: number
   sale_price: number
-  purity?: string | null
+  metal?: string | null
 }): LabelPayload {
   const article = (p.sku ?? "").trim().toUpperCase()
   return {
@@ -92,7 +93,7 @@ export function buildLabelPayload(p: {
     name: p.name.trim(),
     weight: `${Number(p.weight || 0).toFixed(2)} г`,
     price: `${Math.round(Number(p.sale_price || 0)).toLocaleString("ru-RU")} с`,
-    purity: p.purity ?? "",
+    purity: purityFromMetal(p.metal),
     barcode: article,
     widthMm: 50,
     heightMm: 30,

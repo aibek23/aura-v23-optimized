@@ -3,6 +3,7 @@ import type { Metadata } from "next"
 import { notFound } from "next/navigation"
 import { getPublicProduct } from "@/app/actions/store"
 import { formatSom, formatWeight } from "@/lib/format"
+import { purityFromMetal } from "@/lib/purity"
 import { AuraMark } from "@/components/brand/aura-mark"
 
 type Params = { store_id: string; article: string }
@@ -49,7 +50,7 @@ export default async function ProductPage({ params }: { params: Promise<Params> 
           <p className="font-mono text-2xl font-semibold text-primary">{formatSom(product.sale_price)}</p>
           <dl className="grid grid-cols-2 gap-3 text-sm">
             <div><dt className="text-muted-foreground">Металл</dt><dd>{product.metal ?? "—"}</dd></div>
-            <div><dt className="text-muted-foreground">Проба</dt><dd>{product.purity ?? "—"}</dd></div>
+            <div><dt className="text-muted-foreground">Проба</dt><dd>{purityFromMetal(product.metal) || "—"}</dd></div>
             <div><dt className="text-muted-foreground">Вес</dt><dd>{formatWeight(product.weight)}</dd></div>
             <div><dt className="text-muted-foreground">Размер</dt><dd>{product.size ?? "—"}</dd></div>
           </dl>

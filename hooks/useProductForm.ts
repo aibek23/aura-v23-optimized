@@ -17,6 +17,7 @@ import { useCalculator } from "@/hooks/useCalculator"
 import { toast } from "sonner"
 
 export type FormState = {
+  /** UI-поле: в БД не пишется, входит в состав строки metal. */
   name: string
   category: string
   metal: string
@@ -102,7 +103,7 @@ export function useProductForm(open: boolean, product: Product | null) {
         category: product.category ?? "Кольца",
         metal: product.metal ?? "Золото 585",
         metal_color: product.metal_color ?? "",
-        purity: product.purity ?? "",
+        purity: parsed.purity,
         weight: product.weight,
         size: product.size ?? "",
         sku: product.sku ?? "",
@@ -227,6 +228,23 @@ export function useProductForm(open: boolean, product: Product | null) {
     },
     [product]
   )
+
+  /**
+   * Автогенерация артикула: как только выбраны «Категория» и «Цвет металла»,
+   * артикул запрашивается с сервера. Поле в UI доступно только для чтения.
+   */
+  useEffect(() => {
+    if (!open || product) return
+    if (!form.category || !form.metal_color) return
+    const prefix = articlePrefix(form.category, form.metal, form.metal_color)
+    if (!prefix) return
+    if (!skuAuto.current) return
+    const id = setTimeout(() => {
+      void requestArticle(form.category, form.metal, form.metal_color)
+    }, 250)
+    return () => clearTimeout(id)
+    // sku намеренно не в зависимостях — иначе перегенерация зациклится
+  }, [open, product, form.category, form.metal, form.metal_color, requestArticle])
 
   return {
     form,

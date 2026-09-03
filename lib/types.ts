@@ -84,7 +84,7 @@ export type Product = {
   category: string | null
   metal: string | null
   metal_color: string | null
-  purity: string | null
+  /** Колонка purity удалена из БД — проба вычисляется из metal (purityFromMetal). */
   weight: number
   size: string | null
   sku: string | null

@@ -145,7 +145,7 @@ export function KassaScrap({
         category,
         metal,
         metal_color: null,
-        purity,
+        // проба входит в строку metal (колонка purity удалена из БД)
         weight: w,
         size: "",
         sku: "",

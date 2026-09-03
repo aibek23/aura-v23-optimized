@@ -134,8 +134,8 @@ export function ProductGeneralInfo({
         </div>
       </div>
 
-      {/* Категория и Проба */}
-      <div className="grid grid-cols-2 gap-3">
+      {/* Категория (проба выбирается один раз — рядом с «Состояние изделия») */}
+      <div className="grid gap-3">
         <div className="grid gap-2">
           <Label>Категория</Label>
           <Select
@@ -155,10 +155,6 @@ export function ProductGeneralInfo({
             </SelectContent>
           </Select>
         </div>
-        <div className="grid gap-2">
-          <Label>Проба</Label>
-          <Input value={form.purity || "—"} readOnly className="bg-muted/40 font-mono" />
-        </div>
       </div>
 
       {/* Артикул */}
@@ -168,12 +164,14 @@ export function ProductGeneralInfo({
           <Input
             id="p-sku"
             value={form.sku}
-            placeholder={skuLoading ? "Генерируем…" : "КЖ50001"}
-            onChange={(e) => {
-              skuAutoRef.current = false
-              setField("sku", e.target.value.toUpperCase())
-            }}
-            className={cn("font-mono tracking-wide", skuError && "border-destructive")}
+            readOnly
+            aria-readonly="true"
+            tabIndex={-1}
+            placeholder={skuLoading ? "Генерируем…" : "Выберите категорию и цвет металла"}
+            className={cn(
+              "cursor-not-allowed bg-muted/40 font-mono tracking-wide",
+              skuError && "border-destructive",
+            )}
           />
           <Button
             type="button"
@@ -185,6 +183,9 @@ export function ProductGeneralInfo({
             <RefreshCw className={cn("size-4", skuLoading && "animate-spin")} />
           </Button>
         </div>
+        <p className="text-[11px] text-muted-foreground">
+          Артикул создаётся автоматически по категории и цвету металла и недоступен для ручного ввода.
+        </p>
         {skuError ? <p className="text-xs text-destructive">{skuError}</p> : null}
       </div>
     </>

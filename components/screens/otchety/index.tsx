@@ -108,8 +108,8 @@ function previousRange(range: { from: Date; to: Date }): { from: Date; to: Date 
 /* ------------------------------------------------------------------ */
 
 /** Normalises free-text metal/purity fields into a purity bucket ("585", "925"…). */
-function purityOf(p: Pick<Product, "purity" | "metal">): string {
-  const raw = `${p.purity ?? ""} ${p.metal ?? ""}`
+function purityOf(p: Pick<Product, "metal">): string {
+  const raw = `${p.metal ?? ""}`
   const match = raw.match(/\b(375|500|585|750|900|916|925|958|999)\b/)
   if (match) return match[1]
   if (/платин/i.test(raw)) return "950"
@@ -355,7 +355,7 @@ export function OtchetyScreen({
       for (const item of s.items ?? []) {
         const product = productById.get(item.product_id ?? "")
         const category = categoryOf(item, productById)
-        const purity = purityOf({ purity: product?.purity ?? null, metal: item.metal ?? product?.metal ?? null })
+        const purity = purityOf({ metal: item.metal ?? product?.metal ?? null })
         const key = `${category}|${purity}`
         const row = rows.get(key) ?? { key, category, purity, count: 0, revenue: 0, cost: 0 }
         row.count += item.quantity

@@ -68,8 +68,10 @@ export function ProductDialog({
     }
     setSaving(true)
     try {
+      // purity — только UI-состояние: в БД колонки нет, проба живёт внутри metal.
+      const { purity: _purity, ...formData } = form
       const payload: ProductInput = {
-        ...form,
+        ...formData,
         name: form.name.trim(),
         metal_color: form.metal_color || null,
         purchase_price_visible: form.purchase_price_visible || null,
@@ -240,6 +242,37 @@ export function ProductDialog({
                     onChange={(e) => changePurchasePrice(Number(e.target.value))}
                   />
                 </div>
+              </div>
+
+              {/* Закупочная цена, видимая продавцу */}
+              <div className="grid gap-2">
+                <div className="text-xs font-medium text-muted-foreground">Цена для продавца (закупка «с»)</div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="grid gap-2">
+                    <Label htmlFor="p-gram-buy-vis">За грамм (с)</Label>
+                    <Input
+                      id="p-gram-buy-vis"
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={form.price_per_gram_purchase_visible || ""}
+                      onChange={(e) => changeGramPurchaseVisible(Number(e.target.value))}
+                    />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="p-buy-vis">Итого (с)</Label>
+                    <Input
+                      id="p-buy-vis"
+                      type="number"
+                      min={0}
+                      value={form.purchase_price_visible || ""}
+                      onChange={(e) => changePurchasePriceVisible(Number(e.target.value))}
+                    />
+                  </div>
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  Продавец видит только эту закупочную цену; реальная закупка доступна администратору.
+                </p>
               </div>
             </div>
           )}
