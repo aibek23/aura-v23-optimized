@@ -31,7 +31,7 @@ import { cn } from "@/lib/utils"
 
 // Загружаем LabelEditor строго на клиенте для корректного связывания пакетов Bluetooth
 const LabelEditor = dynamic(
-  () => import("./label-editor").then((mod) => mod.LabelEditor),
+  () => import("./label/label-editor").then((mod) => mod.LabelEditor),
   { ssr: false }
 )
 

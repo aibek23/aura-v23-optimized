@@ -16,6 +16,7 @@ import {
   Square,
   ChevronDown,
   ChevronUp,
+  RotateCw,
 } from "lucide-react"
 import { FONTS, SIZE_OPTIONS } from "./label-editor.types"
 import { LABEL_SIZES } from "@/lib/niimbot"
@@ -58,6 +59,8 @@ interface LabelEditorToolbarProps {
   onFontChange: (font: string) => void
   onFontSizeChange: (size: number) => void
   onPrint: () => void
+  /** Поворот холста этикетки на 90° */
+  onRotateCanvas: () => void
   /** Свёрнута ли панель настроек (только для zone="bottom") */
   collapsed?: boolean
   /** Переключение свёрнутого состояния */
@@ -70,13 +73,14 @@ export function LabelEditorToolbar(props: LabelEditorToolbarProps) {
 }
 
 // ---------------------------------------------------------------------------
-// Header zone: лента форматов + Сохранить / Сброс
+// Header zone: лента форматов + Повернуть + Сохранить / Сброс
 // ---------------------------------------------------------------------------
 function HeaderZone({
   sizeKey,
   onSizeChange,
   onSaveTemplate,
   onResetTemplate,
+  onRotateCanvas,
 }: LabelEditorToolbarProps) {
   return (
     <div className="flex items-center gap-2 px-3 pb-2 pt-0.5">
@@ -100,6 +104,17 @@ function HeaderZone({
           ))}
         </div>
       </div>
+
+      {/* 🔄 Повернуть на 90° */}
+      <button
+        type="button"
+        onClick={onRotateCanvas}
+        className="shrink-0 flex items-center gap-1 rounded-md border border-border bg-background px-2.5 py-1 text-[11px] font-medium hover:bg-muted transition-colors"
+        title="Повернуть холст на 90°"
+      >
+        <RotateCw className="h-3.5 w-3.5" />
+        <span className="hidden sm:inline">90°</span>
+      </button>
 
       {/* Сохранить */}
       <button
@@ -127,7 +142,7 @@ function HeaderZone({
 }
 
 // ---------------------------------------------------------------------------
-// Bottom zone: Текст | Рамка (с вариантами) | Удалить | Шрифт | Размер + Печать
+// Bottom zone: Текст | Рамка (с вариантами) | Повернуть | Удалить | Шрифт | Размер + Печать
 // ---------------------------------------------------------------------------
 function BottomZone({
   sizeDef,
@@ -138,6 +153,7 @@ function BottomZone({
   onAddText,
   onAddBorder,
   onRemoveSelected,
+  onRotateCanvas,
   onFontChange,
   onFontSizeChange,
   onPrint,
@@ -226,6 +242,12 @@ function BottomZone({
             </div>
           )}
         </div>
+
+        {/* 🔄 Повернуть холст на 90° */}
+        <ToolBtn onClick={onRotateCanvas} title="Повернуть холст этикетки на 90°">
+          <RotateCw className="h-4 w-4" />
+          <span className="text-[11px]">Повернуть</span>
+        </ToolBtn>
 
         {/* Удалить */}
         <ToolBtn onClick={onRemoveSelected} title="Удалить выделенное" destructive>

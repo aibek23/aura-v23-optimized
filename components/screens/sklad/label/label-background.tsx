@@ -161,11 +161,9 @@ interface BgProps {
   sizeDef: LabelSizeDef
   className?: string
   style?: React.CSSProperties
-  /** Показывать синюю пунктирную рамку печатной области */
-  showPrintArea?: boolean
 }
 
-export function LabelBackground({ sizeDef, className, style, showPrintArea = true }: BgProps) {
+export function LabelBackground({ sizeDef, className, style }: BgProps) {
   const key = (sizeDef.key as JewelryLabelSizeKey | "T50x30_rect") ?? "T25x30_45"
   const m = getMeta(key)
   const { svgW, svgH, pxPerMm } = getSvgLayout(key, sizeDef)
@@ -214,18 +212,8 @@ export function LabelBackground({ sizeDef, className, style, showPrintArea = tru
           )}
         </g>
 
-        {showPrintArea && (
-          <rect
-            x={0.15}
-            y={0.15}
-            width={m.bodyW - 0.3}
-            height={m.bodyH - 0.3}
-            fill="none"
-            stroke="#2563eb"
-            strokeWidth={0.25}
-            strokeDasharray="1.2,1"
-          />
-        )}
+        {/* Полупрозрачная рамка печатной области удалена — контент
+            больше не ограничен визуальной зоной печати. */}
       </svg>
     </div>
   )

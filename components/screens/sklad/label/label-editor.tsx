@@ -20,14 +20,13 @@ import {
   type LabelEditorProps,
 } from "./label-editor.types"
 import { applyBgRect, applyTemplate, parseTemplate, serializeLayout } from "./label-editor.template"
-import { buildDefaultLayout, cropPrintArea, refreshLiveData, attachSmartGuides, addBorderToCanvas } from "./label-editor.canvas"
+import { buildDefaultLayout, cropPrintArea, refreshLiveData, attachSmartGuides, addBorderToCanvas, attachTextAutoHeight, createTextbox, fitTextboxHeight } from "./label-editor.canvas"
 import type { BorderStyleKey } from "./label-editor-toolbar"
 import { LabelEditorToolbar } from "./label-editor-toolbar"
 import { LabelEditorCanvasArea } from "./label-editor-canvas-area"
 
 // ---------------------------------------------------------------------------
 // LabelEditor — оркестратор: Mobile-First Layout
-// Структура: [Sticky Header] > [Scrollable Canvas Area] > [Sticky Bottom Toolbar]
 // ---------------------------------------------------------------------------
 export function LabelEditor({
   product,
@@ -62,13 +61,15 @@ export function LabelEditor({
     if (!canvasRef.current) return
     const canvas = new Canvas(canvasRef.current, {
       width: stageW, height: stageH, backgroundColor: "",
+      clipPath: undefined,
+      controlsAboveOverlay: true,
     })
     canvas.setViewportTransform([1, 0, 0, 1, offsetX, offsetY])
     fabricRef.current = canvas
     setReady(true)
 
-    // Подключаем Smart Guides / Snapping (возвращает функцию отписки)
     const detachGuides = attachSmartGuides(canvas, sizeDef)
+    const detachAutoHeight = attachTextAutoHeight(canvas)
 
     ;(async () => {
       try {
@@ -94,6 +95,7 @@ export function LabelEditor({
 
     return () => {
       detachGuides()
+      detachAutoHeight()
       fabricRef.current = null
       setReady(false)
       canvas.dispose()
@@ -137,7 +139,32 @@ export function LabelEditor({
     void handlePrint()
   }, [autoPrint, ready, handlePrint])
 
-  // ---- Зум ----------------------------------------------------------------
+  // ---- Поворот холста этикетки на 90° ------------------------------------
+  const handleRotateCanvas = useCallback(() => {
+    const canvas = fabricRef.current
+    if (!canvas) return
+    const newW = sizeDef.h_px
+    const newH = sizeDef.w_px
+    const cx = sizeDef.w_px / 2
+    const cy = sizeDef.h_px / 2
+    canvas.getObjects().forEach((obj) => {
+      const ox = (obj.left ?? 0) + (obj.getScaledWidth?.() ?? obj.width ?? 0) / 2
+      const oy = (obj.top ?? 0) + (obj.getScaledHeight?.() ?? obj.height ?? 0) / 2
+      const nx = cy - oy
+      const ny = ox - cx
+      const newAngle = ((obj.angle ?? 0) + 90) % 360
+      obj.set({
+        left: nx + newH / 2 - (obj.getScaledWidth?.() ?? obj.width ?? 0) / 2,
+        top:  ny + newW / 2 - (obj.getScaledHeight?.() ?? obj.height ?? 0) / 2,
+        angle: newAngle,
+      })
+      obj.setCoords()
+    })
+    canvas.renderAll()
+    toast.success("Холст этикетки повёрнут на 90°")
+  }, [sizeDef])
+
+  // ---- Изменение зума ----------------------------------------------------
   const handleZoom = useCallback((delta: number) => {
     setZoom((z) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, parseFloat((z + delta).toFixed(2)))))
   }, [])
@@ -147,14 +174,17 @@ export function LabelEditor({
     const canvas = fabricRef.current
     const objects = canvas?.getActiveObjects() ?? []
     if (!canvas || !objects.length) { toast.info("Выделите элемент на холсте"); return }
-    objects.forEach((o) => o.set(patch))
+    objects.forEach((o) => {
+      o.set(patch)
+      if (o.type === "textbox") fitTextboxHeight(o as Textbox)
+    })
     canvas.renderAll()
   }
 
   const addText = () => {
     const canvas = fabricRef.current
     if (!canvas) return
-    const t = new Textbox("Текст", {
+    const t = createTextbox("Текст", {
       left: 20, top: 20, width: Math.round(sizeDef.w_px * 0.5),
       fontSize, fontFamily: font, fill: "#000000",
       data: { role: `custom-t-${Date.now()}` },
@@ -204,14 +234,13 @@ export function LabelEditor({
     toast.success("Возвращён стандартный эскиз")
   }
 
-  // ---- Рендер: Mobile-First -----------------------------------------------
-  // [Sticky Header] → [Flex-1 scrollable canvas] → [Sticky Bottom Toolbar]
+  // ---- Рендер: Flex-структура -----------------------------------------------
   return (
-    <div className="relative flex h-full flex-col overflow-hidden bg-background">
+    <div className="relative flex h-full w-full flex-col overflow-hidden bg-background">
 
       {/* ── Лоадер во время печати ── */}
       {isPrinting && (
-        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-background/80 backdrop-blur-sm rounded-2xl">
+        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-background/80 backdrop-blur-sm">
           <div className="relative flex items-center justify-center">
             <span className="absolute h-11 w-11 rounded-full border-[3px] border-primary/30 border-t-primary animate-spin" />
             <span className="rotate-45 rounded-sm bg-primary/20 border border-primary/40 h-4 w-4" />
@@ -221,34 +250,10 @@ export function LabelEditor({
       )}
 
       {/* ═══════════════════════════════════════════════════════════════
-          ХОЛСТ — занимает весь экран, свободное перемещение
+          ВЕРХНЯЯ ПАНЕЛЬ
       ═══════════════════════════════════════════════════════════════ */}
-      <div className="absolute inset-0 z-0">
-        <LabelEditorCanvasArea
-          canvasRef={canvasRef}
-          fabricRef={fabricRef}
-          sizeDef={sizeDef}
-          stageW={stageW}
-          stageH={stageH}
-          offsetX={offsetX}
-          offsetY={offsetY}
-          zoom={zoom}
-          sizeKey={sizeKey}
-          onZoom={handleZoom}
-        />
-      </div>
-
-      {/* ═══════════════════════════════════════════════════════════════
-          ВЕРХНЯЯ ПАНЕЛЬ — плавающая, скрывается вместе с настройками
-      ═══════════════════════════════════════════════════════════════ */}
-      <div
-        className={[
-          "pointer-events-none absolute inset-x-0 top-0 z-20 transition-all duration-300 ease-out",
-          collapsed ? "-translate-y-full opacity-0" : "translate-y-0 opacity-100",
-        ].join(" ")}
-      >
-        <div className="pointer-events-auto border-b bg-background/90 backdrop-blur-md">
-          {/* Строка: заголовок + закрытие */}
+      {!collapsed && (
+        <div className="z-20 border-b bg-background/90 backdrop-blur-md shrink-0">
           <div className="flex items-center justify-between px-3 py-2">
             <span className="text-sm font-semibold truncate max-w-[70vw] leading-tight">
               Этикетка · <span className="text-primary">{sizeDef.label}</span>
@@ -277,6 +282,7 @@ export function LabelEditor({
             onAddText={addText}
             onAddBorder={addBorder}
             onRemoveSelected={removeSelected}
+            onRotateCanvas={handleRotateCanvas}
             onSaveTemplate={handleSaveTemplate}
             onResetTemplate={() => void handleResetTemplate()}
             onFontChange={(f) => { setFont(f); applyToSelection({ fontFamily: f }) }}
@@ -284,9 +290,9 @@ export function LabelEditor({
             onPrint={() => void handlePrint()}
           />
         </div>
-      </div>
+      )}
 
-      {/* Кнопка закрытия остаётся доступной в свёрнутом режиме */}
+      {/* Кнопка закрытия в свёрнутом режиме */}
       {collapsed && onClose && (
         <button
           type="button"
@@ -299,64 +305,48 @@ export function LabelEditor({
       )}
 
       {/* ═══════════════════════════════════════════════════════════════
-          НИЖНЯЯ ПАНЕЛЬ — настройки + «Свернуть» / компактная карточка
+          ОБЛАСТЬ ХОЛСТА И ЛИНЕЕК (Занимает всё свободное пространство)
       ═══════════════════════════════════════════════════════════════ */}
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20">
-        <div
-          className={[
-            "transition-all duration-300 ease-out",
-            collapsed ? "translate-y-full opacity-0 h-0 overflow-hidden" : "translate-y-0 opacity-100",
-          ].join(" ")}
-        >
-          <LabelEditorToolbar
-            zone="bottom"
-            sizeKey={sizeKey}
-            sizeDef={sizeDef}
-            font={font}
-            fontSize={fontSize}
-            isPrinting={isPrinting}
-            status={status}
-            collapsed={false}
-            onToggleCollapse={() => setCollapsed(true)}
-            onSizeChange={setSizeKey}
-            onAddText={addText}
-            onAddBorder={addBorder}
-            onRemoveSelected={removeSelected}
-            onSaveTemplate={handleSaveTemplate}
-            onResetTemplate={() => void handleResetTemplate()}
-            onFontChange={(f) => { setFont(f); applyToSelection({ fontFamily: f }) }}
-            onFontSizeChange={(s) => { setFontSize(s); applyToSelection({ fontSize: s }) }}
-            onPrint={() => void handlePrint()}
-          />
-        </div>
+      <div className="relative flex-1 w-full overflow-hidden z-0">
+        <LabelEditorCanvasArea
+          canvasRef={canvasRef}
+          fabricRef={fabricRef}
+          sizeDef={sizeDef}
+          stageW={stageW}
+          stageH={stageH}
+          offsetX={offsetX}
+          offsetY={offsetY}
+          zoom={zoom}
+          sizeKey={sizeKey}
+          onZoom={handleZoom}
+        />
+      </div>
 
-        <div
-          className={[
-            "transition-all duration-300 ease-out",
-            collapsed ? "translate-y-0 opacity-100" : "pointer-events-none translate-y-full opacity-0 h-0 overflow-hidden",
-          ].join(" ")}
-        >
-          <LabelEditorToolbar
-            zone="bottom"
-            sizeKey={sizeKey}
-            sizeDef={sizeDef}
-            font={font}
-            fontSize={fontSize}
-            isPrinting={isPrinting}
-            status={status}
-            collapsed
-            onToggleCollapse={() => setCollapsed(false)}
-            onSizeChange={setSizeKey}
-            onAddText={addText}
-            onAddBorder={addBorder}
-            onRemoveSelected={removeSelected}
-            onSaveTemplate={handleSaveTemplate}
-            onResetTemplate={() => void handleResetTemplate()}
-            onFontChange={(f) => { setFont(f); applyToSelection({ fontFamily: f }) }}
-            onFontSizeChange={(s) => { setFontSize(s); applyToSelection({ fontSize: s }) }}
-            onPrint={() => void handlePrint()}
-          />
-        </div>
+      {/* ═══════════════════════════════════════════════════════════════
+          НИЖНЯЯ ПАНЕЛЬ
+      ═══════════════════════════════════════════════════════════════ */}
+      <div className="z-20 shrink-0">
+        <LabelEditorToolbar
+          zone="bottom"
+          sizeKey={sizeKey}
+          sizeDef={sizeDef}
+          font={font}
+          fontSize={fontSize}
+          isPrinting={isPrinting}
+          status={status}
+          collapsed={collapsed}
+          onToggleCollapse={() => setCollapsed(!collapsed)}
+          onSizeChange={setSizeKey}
+          onAddText={addText}
+          onAddBorder={addBorder}
+          onRemoveSelected={removeSelected}
+          onRotateCanvas={handleRotateCanvas}
+          onSaveTemplate={handleSaveTemplate}
+          onResetTemplate={() => void handleResetTemplate()}
+          onFontChange={(f) => { setFont(f); applyToSelection({ fontFamily: f }) }}
+          onFontSizeChange={(s) => { setFontSize(s); applyToSelection({ fontSize: s }) }}
+          onPrint={() => void handlePrint()}
+        />
       </div>
     </div>
   )

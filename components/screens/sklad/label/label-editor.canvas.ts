@@ -18,6 +18,97 @@ import { BORDER_STYLES } from "./label-editor-toolbar"
 // ---------------------------------------------------------------------------
 const SNAP_THRESHOLD = 6
 
+
+// ---------------------------------------------------------------------------
+// Текстовые блоки: нулевые отступы, перенос строк, авто-высота по контенту
+// ---------------------------------------------------------------------------
+/** Базовые опции ЛЮБОГО текстового объекта на холсте. */
+export const TEXT_DEFAULTS = {
+  padding: 0,          // границы рамки прилегают вплотную к символам
+  splitByGrapheme: true, // перенос даже длинных слов без сжатия текста
+  objectCaching: false,  // корректная перерисовка при auto-height
+  lockScalingFlip: true,
+} as const
+
+/**
+ * Приводит высоту Textbox к фактической высоте текста при текущей ширине.
+ * Убирает «мёртвую» пустую зону снизу рамки.
+ */
+export function fitTextboxHeight(tb: Textbox): void {
+  tb.set({ padding: 0, scaleY: 1 })
+  // Пересчёт разбивки строк под текущую ширину
+  tb.initDimensions()
+  const h = tb.calcTextHeight()
+  if (h > 0) tb.set({ height: h })
+  tb.setCoords()
+}
+
+/** Textbox с нулевыми отступами и высотой, подогнанной под текст. */
+export function createTextbox(text: string, options: Record<string, unknown>): Textbox {
+  const tb = new Textbox(text, { ...TEXT_DEFAULTS, ...options })
+  fitTextboxHeight(tb)
+  return tb
+}
+
+/**
+ * Привязывает высоту текстовых блоков к объёму текста:
+ *   • тянем правую сторону  → меняется ШИРИНА, текст переносится, высота = высота текста
+ *   • тянем нижний правый угол → то же (без пропорционального сжатия текста)
+ *   • правим текст (вход/выход из редактирования) → высота пересчитывается
+ */
+export function attachTextAutoHeight(canvas: Canvas): () => void {
+  const normalize = (obj?: FabricObject) => {
+    if (!obj || obj.type !== "textbox") return
+    const tb = obj as Textbox
+    const sx = tb.scaleX ?? 1
+    if (sx !== 1) {
+      const newWidth = Math.max(4, (tb.width ?? 0) * sx)
+      tb.set({ width: newWidth, scaleX: 1 })
+    }
+    fitTextboxHeight(tb)
+  }
+
+  const onScaling = (e: { target?: FabricObject }) => {
+    normalize(e.target)
+    canvas.requestRenderAll()
+  }
+  const onModified = (e: { target?: FabricObject }) => {
+    normalize(e.target)
+    canvas.requestRenderAll()
+  }
+  const onChanged = (e: { target?: FabricObject }) => {
+    normalize(e.target)
+    canvas.requestRenderAll()
+  }
+  const onAdded = (e: { target?: FabricObject }) => {
+    if (e.target?.type === "textbox") {
+      const tb = e.target as Textbox
+      tb.set({ ...TEXT_DEFAULTS })
+      fitTextboxHeight(tb)
+    }
+  }
+
+  const bus = canvas as unknown as {
+    on: (n: string, h: (e: { target?: FabricObject }) => void) => void
+    off: (n: string, h: (e: { target?: FabricObject }) => void) => void
+  }
+  bus.on("object:scaling", onScaling)
+  bus.on("object:modified", onModified)
+  bus.on("text:changed", onChanged)
+  bus.on("editing:exited", onChanged)
+  bus.on("object:added", onAdded)
+
+  canvas.getObjects().forEach((o) => { if (o.type === "textbox") { (o as Textbox).set({ ...TEXT_DEFAULTS }); fitTextboxHeight(o as Textbox) } })
+
+  return () => {
+    bus.off("object:scaling", onScaling)
+    bus.off("object:modified", onModified)
+    bus.off("text:changed", onChanged)
+    bus.off("editing:exited", onChanged)
+    bus.off("object:added", onAdded)
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Применить ограничения трансформации к объекту:
 //   • масштаб — только нижний правый угол
@@ -209,17 +300,17 @@ async function buildHorizontalLayout(
   const qrSize = Math.min(Math.round(W * 0.32), H - 16)
 
   // Строка «Вес + Размер» (без «Металл»)
-  const specs = new Textbox(`Вес: ${weightLine}  Разм: ${sizeLine}`, {
+  const specs = createTextbox(`Вес: ${weightLine}  Разм: ${sizeLine}`, {
     left: 8, top: Math.round(H * 0.06), width: colLeft - 12,
     fontSize: Math.max(8, Math.round(H * 0.13)), data: { role: "specs" },
   })
   // Подпись «Цена:» — тот же шрифт, что у «Размер» (параметр specs)
-  const priceLabel = new Textbox("Цена:", {
+  const priceLabel = createTextbox("Цена:", {
     left: 8, top: Math.round(H * 0.40), width: colLeft - 12,
     fontSize: Math.max(8, Math.round(H * 0.13)), data: { role: "price-label" },
   })
   // Сама цена — жирным
-  const price = new Textbox(priceLine, {
+  const price = createTextbox(priceLine, {
     left: 8, top: Math.round(H * 0.58), width: colLeft - 12,
     fontSize: Math.max(12, Math.round(H * 0.20)), fontWeight: "bold",
     data: { role: "price" },
@@ -238,7 +329,7 @@ async function buildHorizontalLayout(
     })
   }
 
-  const skuText = new Textbox(skuValue, {
+  const skuText = createTextbox(skuValue, {
     left: colLeft, top: Math.round(H * 0.84), width: W - colLeft - 4,
     fontSize: Math.max(7, Math.round(H * 0.09)), textAlign: "center",
     data: { role: "sku" },
@@ -262,17 +353,17 @@ async function buildVerticalLayout(
   const qrSize = Math.min(Math.round(W * 0.55), Math.round(H * 0.22))
 
   // Вес + Размер (без «Металл»)
-  const specs = new Textbox(`Вес: ${weightLine}\nРазм: ${sizeLine}`, {
+  const specs = createTextbox(`Вес: ${weightLine}\nРазм: ${sizeLine}`, {
     left: 6, top: Math.round(H * 0.06), width: W - 12,
     fontSize: Math.max(7, Math.round(W * 0.08)), data: { role: "specs" },
   })
   // Подпись «Цена:»
-  const priceLabel = new Textbox("Цена:", {
+  const priceLabel = createTextbox("Цена:", {
     left: 6, top: Math.round(H * 0.28), width: W - 12,
     fontSize: Math.max(7, Math.round(W * 0.08)), data: { role: "price-label" },
   })
   // Цена — жирным
-  const price = new Textbox(priceLine, {
+  const price = createTextbox(priceLine, {
     left: 6, top: Math.round(H * 0.37), width: W - 12,
     fontSize: Math.max(10, Math.round(W * 0.12)), fontWeight: "bold",
     data: { role: "price" },
@@ -291,7 +382,7 @@ async function buildVerticalLayout(
     })
   }
 
-  const skuText = new Textbox(skuValue, {
+  const skuText = createTextbox(skuValue, {
     left: 4, top: Math.round(H * 0.76), width: W - 8,
     fontSize: Math.max(6, Math.round(W * 0.07)), textAlign: "center",
     data: { role: "sku" },
@@ -306,7 +397,7 @@ async function buildVerticalLayout(
 // Обновление живых данных без сдвига позиций
 // ---------------------------------------------------------------------------
 export async function refreshLiveData(canvas: Canvas, data: Product): Promise<void> {
-  const { weightLine, sizeLine, priceLine } = buildJewelryText(data)
+  const { metalLine, weightLine, sizeLine, priceLine } = buildJewelryText(data)
   const skuValue = data.sku || "NO-SKU"
 
   for (const obj of canvas.getObjects()) {
@@ -314,10 +405,13 @@ export async function refreshLiveData(canvas: Canvas, data: Product): Promise<vo
     if (!role || obj.type !== "textbox") continue
     const tb = obj as Textbox
     switch (role) {
+      // Металл — строго только содержимое поля, без подписи «Металл:»
+      case "metal": tb.set({ text: metalLine }); break
       case "specs": tb.set({ text: `Вес: ${weightLine}  Разм: ${sizeLine}` }); break
       case "price": tb.set({ text: priceLine }); break
       case "sku":   tb.set({ text: skuValue }); break
     }
+    fitTextboxHeight(tb)
   }
   canvas.renderAll()
 }

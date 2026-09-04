@@ -3,6 +3,7 @@
 // ---------------------------------------------------------------------------
 import { Canvas, Textbox, Rect, type FabricObject } from "fabric"
 import type { LabelSizeDef } from "@/lib/niimbot"
+import { createTextbox, fitTextboxHeight } from "./label-editor.canvas"
 import {
   TEMPLATE_VERSION,
   LIVE_ROLES,
@@ -127,7 +128,7 @@ export function applyTemplate(canvas: Canvas, tpl: LabelTemplate): void {
   // Пересоздаём пользовательские элементы, которых нет на холсте
   for (const item of byRole.values()) {
     if (item.kind === "textbox") {
-      const tb = new Textbox(item.text ?? "Текст", {
+      const tb = createTextbox(item.text ?? "Текст", {
         left: item.left,
         top: item.top,
         width: item.width || 80,
@@ -138,9 +139,10 @@ export function applyTemplate(canvas: Canvas, tpl: LabelTemplate): void {
         fill: item.fill ?? "#000000",
         angle: item.angle ?? 0,
         scaleX: item.scaleX ?? 1,
-        scaleY: item.scaleY ?? 1,
+        scaleY: 1,
         data: { role: item.role },
       })
+      fitTextboxHeight(tb)
       canvas.add(tb)
     } else if (item.kind === "rect") {
       const rect = new Rect({
@@ -177,7 +179,10 @@ export function applyItemToObject(obj: FabricObject, item: TemplateItem): void {
 
   if (obj.type === "textbox") {
     const tb = obj as Textbox
+    // высота текста считается по контенту, сохранённое значение не применяем
     tb.set({
+      scaleY: 1,
+      padding: 0,
       width: item.width || tb.width,
       fontSize: item.fontSize ?? tb.fontSize,
       fontFamily: item.fontFamily ?? tb.fontFamily,
@@ -185,6 +190,7 @@ export function applyItemToObject(obj: FabricObject, item: TemplateItem): void {
       textAlign: (item.textAlign as Textbox["textAlign"]) ?? tb.textAlign,
       fill: item.fill ?? tb.fill,
     })
+    fitTextboxHeight(tb)
   }
 
   if (obj.type === "rect") {
