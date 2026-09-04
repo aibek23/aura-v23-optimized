@@ -81,42 +81,42 @@ export function LabelEditorCanvasArea({
   const totalW = stageW
   const totalH = stageH
 
-  // Начало координат самой этикетки на экране (строго 0,0 мм внутренней этикетки)
+  // Начало координат самой этикетки на экране (строго 0,0 мм = левый верхний угол белой этикетки)
+  // Вычисляется через pan, zoom, offsetX/offsetY — не через getBoundingClientRect,
+  // чтобы значение было синхронным и не отставало от RAF.
   const getContainerLabelOrigin = useCallback((): { x: number; y: number } | null => {
     const el = containerRef.current
     if (!el) return null
-    const rect = el.getBoundingClientRect()
-
-    const layer = labelLayerRef.current
-    if (layer) {
-      const lr = layer.getBoundingClientRect()
-      return { x: lr.left - rect.left, y: lr.top - rect.top }
+    const { width: cW, height: cH } = el.getBoundingClientRect()
+    // Viewport начинается после линейки
+    const vW = cW - RULER_SIZE
+    const vH = cH - RULER_SIZE
+    // Центр stage в экранных координатах (с учётом pan)
+    const stageCX = RULER_SIZE + vW / 2 + pan.x
+    const stageCY = RULER_SIZE + vH / 2 + pan.y
+    // Левый верхний угол stage (stage позиционируется через translate(-50%,-50%) + scale)
+    const stageLeft = stageCX - (totalW / 2) * zoom
+    const stageTop  = stageCY - (totalH / 2) * zoom
+    // Левый верхний угол белой этикетки = stage + offsetX/offsetY (масштабированные)
+    return {
+      x: stageLeft + offsetX * zoom,
+      y: stageTop  + offsetY * zoom,
     }
-
-    const vW = rect.width - RULER_SIZE
-    const vH = rect.height - RULER_SIZE
-    const x = RULER_SIZE + vW / 2 + pan.x + (offsetX - totalW / 2) * zoom
-    const y = RULER_SIZE + vH / 2 + pan.y + (offsetY - totalH / 2) * zoom
-    return { x, y }
   }, [pan, zoom, totalW, totalH, offsetX, offsetY])
 
-  // Начало координат всей подложки (stage)
+  // Начало координат всей подложки (stage) — левый верхний угол серого фона
   const getStageOrigin = useCallback((): { x: number; y: number } | null => {
     const el = containerRef.current
     if (!el) return null
-    const rect = el.getBoundingClientRect()
-
-    const stage = stageLayerRef.current
-    if (stage) {
-      const sr = stage.getBoundingClientRect()
-      return { x: sr.left - rect.left, y: sr.top - rect.top }
+    const { width: cW, height: cH } = el.getBoundingClientRect()
+    const vW = cW - RULER_SIZE
+    const vH = cH - RULER_SIZE
+    const stageCX = RULER_SIZE + vW / 2 + pan.x
+    const stageCY = RULER_SIZE + vH / 2 + pan.y
+    return {
+      x: stageCX - (totalW / 2) * zoom,
+      y: stageCY - (totalH / 2) * zoom,
     }
-
-    const vW = rect.width - RULER_SIZE
-    const vH = rect.height - RULER_SIZE
-    const x = RULER_SIZE + vW / 2 + pan.x - (totalW / 2) * zoom
-    const y = RULER_SIZE + vH / 2 + pan.y - (totalH / 2) * zoom
-    return { x, y }
   }, [pan, zoom, totalW, totalH])
 
   const prepareFixed = useCallback(
@@ -438,11 +438,9 @@ export function LabelEditorCanvasArea({
     const fabric = fabricRef.current
     if (!fabric) return
 
-    // Включаем отображение элементов за пределами внутренней области
+    // Убираем clipPath — элементы за пределами этикетки остаются видимы
+    fabric.clipPath = undefined
     fabric.preserveObjectStacking = true
-    if (fabric.clipPath) {
-      fabric.clipPath = undefined
-    }
 
     const redraw = () => {
       if (rafRef.current !== null) cancelAnimationFrame(rafRef.current)
@@ -513,36 +511,39 @@ export function LabelEditorCanvasArea({
             transformOrigin: "center center",
             width: totalW,
             height: totalH,
+            // Критично: снимаем обрезание на stageLayer,
+            // чтобы элементы холста, выходящие за границы этикетки,
+            // оставались видимыми и доступными для взаимодействия.
+            overflow: "visible",
           }}
         >
           <canvas ref={staticCanvasRef} className="absolute top-0 left-0 pointer-events-none" style={{ zIndex: 1 }} />
-          <LabelBackground sizeDef={sizeDef} className="absolute pointer-events-none" style={{ top: offsetY, left: offsetX, zIndex: 2 }} />
-          
-          {/* Слой Fabric.js с физической шириной всего stageW / stageH, чтобы элементы не обрезались */}
+          {/* Белая этикетка — ref=labelLayerRef, именно отсюда берём origin (0,0) мм */}
           <div
             ref={labelLayerRef}
+            className="absolute pointer-events-none"
+            style={{ top: offsetY, left: offsetX, zIndex: 2, overflow: "visible" }}
+          >
+            <LabelBackground sizeDef={sizeDef} style={{ position: "absolute", top: 0, left: 0 }} />
+          </div>
+
+          {/* Слой Fabric.js покрывает ВЕСЬ stage (stageW × stageH),
+              начиная от (0,0) stage, чтобы рамки выделения элементов
+              не обрезались по границам этикетки */}
+          <div
             data-fabric-layer
             className="absolute"
             style={{
-              top: offsetY,
-              left: offsetX,
+              top: 0,
+              left: 0,
+              width: stageW,
+              height: stageH,
               zIndex: 3,
               touchAction: "none",
               overflow: "visible",
             }}
           >
-            <div
-              style={{
-                position: "absolute",
-                top: -offsetY,
-                left: -offsetX,
-                width: stageW,
-                height: stageH,
-                overflow: "visible",
-              }}
-            >
-              <canvas ref={canvasRef} />
-            </div>
+            <canvas ref={canvasRef} style={{ display: "block", overflow: "visible" }} />
           </div>
         </div>
       </div>

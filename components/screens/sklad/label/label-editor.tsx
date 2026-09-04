@@ -139,30 +139,50 @@ export function LabelEditor({
     void handlePrint()
   }, [autoPrint, ready, handlePrint])
 
-  // ---- Поворот холста этикетки на 90° ------------------------------------
+  // ---- Поворот всей печатной области (этикетки + всех объектов) на 90° ----
   const handleRotateCanvas = useCallback(() => {
     const canvas = fabricRef.current
     if (!canvas) return
-    const newW = sizeDef.h_px
-    const newH = sizeDef.w_px
-    const cx = sizeDef.w_px / 2
-    const cy = sizeDef.h_px / 2
+
+    // Текущие размеры печатной зоны
+    const oldW = sizeDef.w_px
+    const oldH = sizeDef.h_px
+    // После поворота ширина и высота меняются местами
+    const newW = oldH
+    const newH = oldW
+
+    // Центр старой печатной зоны (система координат холста Fabric)
+    const cx = oldW / 2
+    const cy = oldH / 2
+
+    // Поворачиваем все объекты относительно центра этикетки на +90°
+    // Формула поворота: x' = cy - y,  y' = x - cx
     canvas.getObjects().forEach((obj) => {
-      const ox = (obj.left ?? 0) + (obj.getScaledWidth?.() ?? obj.width ?? 0) / 2
-      const oy = (obj.top ?? 0) + (obj.getScaledHeight?.() ?? obj.height ?? 0) / 2
-      const nx = cy - oy
-      const ny = ox - cx
+      const w = obj.getScaledWidth?.() ?? obj.width ?? 0
+      const h = obj.getScaledHeight?.() ?? obj.height ?? 0
+      // Центр объекта в системе координат холста
+      const ocx = (obj.left ?? 0) + w / 2
+      const ocy = (obj.top ?? 0) + h / 2
+      // Центр объекта после поворота (координаты в новой системе с центром newW/2, newH/2)
+      const ncx = cy - ocy + newW / 2
+      const ncy = ocx - cx  + newH / 2
       const newAngle = ((obj.angle ?? 0) + 90) % 360
       obj.set({
-        left: nx + newH / 2 - (obj.getScaledWidth?.() ?? obj.width ?? 0) / 2,
-        top:  ny + newW / 2 - (obj.getScaledHeight?.() ?? obj.height ?? 0) / 2,
+        left:   ncx - w / 2,
+        top:    ncy - h / 2,
         angle: newAngle,
       })
       obj.setCoords()
     })
+
+    // Новые размеры холста Fabric (v6+ API)
+    canvas.setDimensions({ width: stageW, height: stageH })
+
+    // Сдвигаем viewport под новый offsetX/offsetY (пересчитывается через sizeKey)
+    canvas.setViewportTransform([1, 0, 0, 1, offsetX, offsetY])
     canvas.renderAll()
-    toast.success("Холст этикетки повёрнут на 90°")
-  }, [sizeDef])
+    toast.success("Печатная область повёрнута на 90°")
+  }, [sizeDef, stageW, stageH, offsetX, offsetY])
 
   // ---- Изменение зума ----------------------------------------------------
   const handleZoom = useCallback((delta: number) => {
@@ -323,9 +343,10 @@ export function LabelEditor({
       </div>
 
       {/* ═══════════════════════════════════════════════════════════════
-          НИЖНЯЯ ПАНЕЛЬ
+          НИЖНЯЯ ПАНЕЛЬ — overflow: visible чтобы выпадающее меню «Рамка»
+          отображалось поверх холста, а не обрезалось контейнером
       ═══════════════════════════════════════════════════════════════ */}
-      <div className="z-20 shrink-0">
+      <div className="shrink-0" style={{ zIndex: 9990, position: "relative" }}>
         <LabelEditorToolbar
           zone="bottom"
           sizeKey={sizeKey}

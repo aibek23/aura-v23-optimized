@@ -82,61 +82,84 @@ function HeaderZone({
   onResetTemplate,
   onRotateCanvas,
 }: LabelEditorToolbarProps) {
+  const [expanded, setExpanded] = useState(false)
+
+  // Все доступные ключи форматов из реестра LABEL_SIZES
+  const allKeys = Object.keys(LABEL_SIZES) as (keyof typeof LABEL_SIZES)[]
+
+  // В свёрнутом виде показываем только SIZE_OPTIONS; при expanded — все форматы
+  const visibleKeys = expanded ? allKeys : SIZE_OPTIONS
+
   return (
-    <div className="flex items-center gap-2 px-3 pb-2 pt-0.5">
-      {/* Горизонтально скроллируемая лента форматов */}
-      <div className="flex-1 overflow-x-auto no-scrollbar">
-        <div className="flex gap-1.5 whitespace-nowrap pr-1">
-          {SIZE_OPTIONS.map((key) => (
-            <button
-              key={key}
-              type="button"
-              onClick={() => onSizeChange(key)}
-              className={[
-                "rounded-md border px-2.5 py-1 text-[11px] font-mono transition-colors shrink-0",
-                key === sizeKey
-                  ? "border-primary bg-primary text-primary-foreground"
-                  : "border-border bg-background text-foreground hover:bg-muted",
-              ].join(" ")}
-            >
-              {LABEL_SIZES[key].label}
-            </button>
-          ))}
+    <div className="flex flex-col gap-1 px-3 pb-2 pt-0.5">
+      <div className="flex items-center gap-2">
+        {/* Горизонтально скроллируемая лента форматов с аккуратным скроллбаром */}
+        <div
+          className="flex-1 overflow-x-auto"
+          style={{ scrollbarWidth: "thin", scrollbarColor: "rgba(0,0,0,0.15) transparent" }}
+        >
+          <div className="flex gap-1.5 whitespace-nowrap pr-1">
+            {visibleKeys.map((key) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => onSizeChange(key)}
+                className={[
+                  "rounded-md border px-2.5 py-1 text-[11px] font-mono transition-colors shrink-0",
+                  key === sizeKey
+                    ? "border-primary bg-primary text-primary-foreground"
+                    : "border-border bg-background text-foreground hover:bg-muted",
+                ].join(" ")}
+              >
+                {LABEL_SIZES[key].label}
+              </button>
+            ))}
+          </div>
         </div>
+
+        {/* Кнопка развернуть/свернуть список пресетов */}
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="shrink-0 flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted transition-colors"
+          title={expanded ? "Скрыть форматы" : "Все форматы"}
+        >
+          {expanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+        </button>
+
+        {/* 🔄 Повернуть на 90° */}
+        <button
+          type="button"
+          onClick={onRotateCanvas}
+          className="shrink-0 flex items-center gap-1 rounded-md border border-border bg-background px-2.5 py-1 text-[11px] font-medium hover:bg-muted transition-colors"
+          title="Повернуть печатную область на 90°"
+        >
+          <RotateCw className="h-3.5 w-3.5" />
+          <span className="hidden sm:inline">90°</span>
+        </button>
+
+        {/* Сохранить */}
+        <button
+          type="button"
+          onClick={onSaveTemplate}
+          className="shrink-0 flex items-center gap-1 rounded-md border border-border bg-background px-2.5 py-1 text-[11px] font-medium hover:bg-muted transition-colors"
+          title="Сохранить расположение"
+        >
+          <Save className="h-3.5 w-3.5" />
+          <span className="hidden sm:inline">Сохранить</span>
+        </button>
+
+        {/* Сброс */}
+        <button
+          type="button"
+          onClick={onResetTemplate}
+          className="shrink-0 flex items-center gap-1 rounded-md border border-border bg-background px-2.5 py-1 text-[11px] text-muted-foreground hover:bg-muted transition-colors"
+          title="Сбросить шаблон"
+        >
+          <RefreshCw className="h-3.5 w-3.5" />
+          <span className="hidden sm:inline">Сброс</span>
+        </button>
       </div>
-
-      {/* 🔄 Повернуть на 90° */}
-      <button
-        type="button"
-        onClick={onRotateCanvas}
-        className="shrink-0 flex items-center gap-1 rounded-md border border-border bg-background px-2.5 py-1 text-[11px] font-medium hover:bg-muted transition-colors"
-        title="Повернуть холст на 90°"
-      >
-        <RotateCw className="h-3.5 w-3.5" />
-        <span className="hidden sm:inline">90°</span>
-      </button>
-
-      {/* Сохранить */}
-      <button
-        type="button"
-        onClick={onSaveTemplate}
-        className="shrink-0 flex items-center gap-1 rounded-md border border-border bg-background px-2.5 py-1 text-[11px] font-medium hover:bg-muted transition-colors"
-        title="Сохранить расположение"
-      >
-        <Save className="h-3.5 w-3.5" />
-        <span className="hidden sm:inline">Сохранить</span>
-      </button>
-
-      {/* Сброс */}
-      <button
-        type="button"
-        onClick={onResetTemplate}
-        className="shrink-0 flex items-center gap-1 rounded-md border border-border bg-background px-2.5 py-1 text-[11px] text-muted-foreground hover:bg-muted transition-colors"
-        title="Сбросить шаблон"
-      >
-        <RefreshCw className="h-3.5 w-3.5" />
-        <span className="hidden sm:inline">Сброс</span>
-      </button>
     </div>
   )
 }
@@ -197,8 +220,8 @@ function BottomZone({
 
   return (
     <div
-      className="pointer-events-auto shrink-0 border-t bg-background/95 backdrop-blur-sm z-10"
-      style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
+      className="pointer-events-auto shrink-0 border-t bg-background/95 backdrop-blur-sm"
+      style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)", zIndex: 9990, position: "relative" }}
     >
       {/* ── Строка 1: Инструменты редактирования ── */}
       <div className="flex items-center gap-1 overflow-x-auto no-scrollbar px-3 pt-2 pb-1">
@@ -221,7 +244,8 @@ function BottomZone({
 
           {borderMenuOpen && (
             <div
-              className="absolute bottom-full left-0 mb-1 z-30 min-w-[140px] rounded-lg border border-border bg-background shadow-lg py-1"
+              className="absolute bottom-full left-0 mb-1 min-w-[140px] rounded-lg border border-border bg-background shadow-xl py-1"
+              style={{ zIndex: 9999 }}
               onPointerDown={(e) => e.stopPropagation()}
             >
               {BORDER_STYLES.map((bs) => (

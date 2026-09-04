@@ -5,18 +5,24 @@ import QRCode from "qrcode"
 import { toast } from "sonner"
 import type { Product } from "@/lib/types"
 
+
 // ---------------------------------------------------------------------------
 // Текстовые данные изделия
 // ---------------------------------------------------------------------------
 export function buildJewelryText(data: Product) {
-  // Поле «Металл»: выводим СТРОГО только содержимое поля («Золото 585», «Серебро 925»),
-  // без подписи «Металл:» и без служебных заполнителей.
-  const metalLine  = String(data.metal ?? "")
-    .replace(/^\s*металл\s*:?\s*/i, "")
-    .trim()
+  // Берём поле metal напрямую. Если его нет — подставляем прочерк "—".
+  // Метод trim() уберёт лишние пробелы по краям, не повреждая название "Золото 375".
+  const rawMetal = data.metal ? String(data.metal).trim() : ""
+  
+  // Если строка начинается со слова "Металл:", аккуратно убираем только префикс
+  const metalLine = rawMetal.replace(/^металл\s*:?\s*/i, "").trim() || "—"
+  
   const weightLine = data.weight ? `${data.weight} г` : "—"
   const sizeLine   = data.size || "—"
-  const priceLine  = `${data.sale_price.toLocaleString("ru")} сом`
+  const priceLine  = data.sale_price 
+    ? `${data.sale_price.toLocaleString("ru")} сом` 
+    : "—"
+
   return { metalLine, weightLine, sizeLine, priceLine }
 }
 
@@ -28,25 +34,26 @@ export function buildJewelryText(data: Product) {
  * Только ASCII — QR-код остаётся компактным и легко читается сканерами.
  * Если seq_id ещё не проставлен (старая запись) — использует UUID магазина.
  */
+/**
+ * Строит короткий QR-URL вида /q/{shopSeqId}/{sku}.
+ * Только ASCII — QR-код остаётся компактным и легко читается сканерами.
+ * Если seq_id ещё не проставлен (старая запись) — использует UUID магазина.
+ */
 export function buildQrUrl(data: Product): string {
   const baseUrl = (
-    process.env.NEXT_PUBLIC_BASE_URL ?? "https://aura-gold.kg"
+    process.env.NEXT_PUBLIC_BASE_URL ?? "http://localhost:8080/"
   ).replace(/\/$/, "")
   const skuValue = (data.sku || "").trim().toUpperCase()
   // Короткий числовой ID магазина, иначе — UUID магазина (обратная совместимость)
   const shopKey = String(data.shop_seq_id ?? data.shop_id ?? "").trim()
-  // ID самого изделия: попадает в QR как параметр, чтобы сканер всегда получал
-  // однозначный идентификатор записи, даже если артикул позже изменится.
-  const productId = String(data.id ?? "").trim()
-  const hasRealId = Boolean(productId) && productId !== "draft"
 
-  if (!shopKey || !skuValue || !hasRealId) {
+  if (!shopKey || !skuValue) {
     throw new Error(
-      "Недостаточно данных для QR-кода: сначала сохраните товар (нужны ID изделия, артикул и магазин).",
+      "Недостаточно данных для QR-кода: проверьте наличие артикула (SKU) и магазина.",
     )
   }
 
-  return `${baseUrl}/q/${shopKey}/${encodeURIComponent(skuValue)}?id=${productId}`
+  return `${baseUrl}/q/${shopKey}/${encodeURIComponent(skuValue)}`
 }
 
 /**

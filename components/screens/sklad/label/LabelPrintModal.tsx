@@ -25,7 +25,6 @@ export function LabelPrintModal({ open, onClose, article, name, weight, price, p
   const [copies, setCopies] = useState(1)
   const [status, setStatus] = useState<string | null>(null)
   const [isPrinting, setIsPrinting] = useState(false)
-
   const sizeDef: LabelSizeDef = LABEL_SIZES[sizeKey]
 
   // Закрытие по Escape

@@ -260,7 +260,7 @@ export function addBorderToCanvas(
 }
 
 // ---------------------------------------------------------------------------
-// Дефолтный макет (без названия изделия)
+// Дефолтный макет (включая металл, характеристики, цену и QR)
 // ---------------------------------------------------------------------------
 export async function buildDefaultLayout(
   canvas: Canvas,
@@ -274,13 +274,13 @@ export async function buildDefaultLayout(
   const body = getBodyPx(sizeDef)
   const W = body.w
   const H = body.h
-  const { weightLine, sizeLine, priceLine } = buildJewelryText(data)
+  const { metalLine, weightLine, sizeLine, priceLine } = buildJewelryText(data)
   const skuValue = data.sku || "NO-SKU"
 
   if (W >= H) {
-    await buildHorizontalLayout(canvas, data, W, H, weightLine, sizeLine, priceLine, skuValue)
+    await buildHorizontalLayout(canvas, data, W, H, metalLine, weightLine, sizeLine, priceLine, skuValue)
   } else {
-    await buildVerticalLayout(canvas, data, W, H, weightLine, sizeLine, priceLine, skuValue)
+    await buildVerticalLayout(canvas, data, W, H, metalLine, weightLine, sizeLine, priceLine, skuValue)
   }
 
   canvas.renderAll()
@@ -291,6 +291,7 @@ async function buildHorizontalLayout(
   data: Product,
   W: number,
   H: number,
+  metalLine: string,
   weightLine: string,
   sizeLine: string,
   priceLine: string,
@@ -299,20 +300,29 @@ async function buildHorizontalLayout(
   const colLeft = Math.round(W * 0.63)
   const qrSize = Math.min(Math.round(W * 0.32), H - 16)
 
-  // Строка «Вес + Размер» (без «Металл»)
+  // Металл (полужирный префикс)
+  const metal = createTextbox(metalLine || "—", {
+    left: 8, top: Math.round(H * 0.04), width: colLeft - 12,
+    fontSize: Math.max(8, Math.round(H * 0.12)), fontWeight: "bold",
+    data: { role: "metal" },
+  })
+
+  // Строка «Вес + Размер»
   const specs = createTextbox(`Вес: ${weightLine}  Разм: ${sizeLine}`, {
-    left: 8, top: Math.round(H * 0.06), width: colLeft - 12,
-    fontSize: Math.max(8, Math.round(H * 0.13)), data: { role: "specs" },
+    left: 8, top: Math.round(H * 0.22), width: colLeft - 12,
+    fontSize: Math.max(7, Math.round(H * 0.11)), data: { role: "specs" },
   })
-  // Подпись «Цена:» — тот же шрифт, что у «Размер» (параметр specs)
+
+  // Подпись «Цена:»
   const priceLabel = createTextbox("Цена:", {
-    left: 8, top: Math.round(H * 0.40), width: colLeft - 12,
-    fontSize: Math.max(8, Math.round(H * 0.13)), data: { role: "price-label" },
+    left: 8, top: Math.round(H * 0.44), width: colLeft - 12,
+    fontSize: Math.max(7, Math.round(H * 0.11)), data: { role: "price-label" },
   })
+
   // Сама цена — жирным
   const price = createTextbox(priceLine, {
-    left: 8, top: Math.round(H * 0.58), width: colLeft - 12,
-    fontSize: Math.max(12, Math.round(H * 0.20)), fontWeight: "bold",
+    left: 8, top: Math.round(H * 0.60), width: colLeft - 12,
+    fontSize: Math.max(11, Math.round(H * 0.18)), fontWeight: "bold",
     data: { role: "price" },
   })
 
@@ -336,7 +346,7 @@ async function buildHorizontalLayout(
   })
 
   if (!canvas.lowerCanvasEl) return
-  canvas.add(specs, priceLabel, price, skuText)
+  canvas.add(metal, specs, priceLabel, price, skuText)
   if (qrImg) canvas.add(qrImg)
 }
 
@@ -345,6 +355,7 @@ async function buildVerticalLayout(
   data: Product,
   W: number,
   H: number,
+  metalLine: string,
   weightLine: string,
   sizeLine: string,
   priceLine: string,
@@ -352,20 +363,29 @@ async function buildVerticalLayout(
 ): Promise<void> {
   const qrSize = Math.min(Math.round(W * 0.55), Math.round(H * 0.22))
 
-  // Вес + Размер (без «Металл»)
-  const specs = createTextbox(`Вес: ${weightLine}\nРазм: ${sizeLine}`, {
-    left: 6, top: Math.round(H * 0.06), width: W - 12,
-    fontSize: Math.max(7, Math.round(W * 0.08)), data: { role: "specs" },
+  // Металл
+  const metal = createTextbox(metalLine || "—", {
+    left: 6, top: Math.round(H * 0.03), width: W - 12,
+    fontSize: Math.max(7, Math.round(W * 0.08)), fontWeight: "bold",
+    data: { role: "metal" },
   })
+
+  // Вес + Размер
+  const specs = createTextbox(`Вес: ${weightLine}\nРазм: ${sizeLine}`, {
+    left: 6, top: Math.round(H * 0.12), width: W - 12,
+    fontSize: Math.max(7, Math.round(W * 0.07)), data: { role: "specs" },
+  })
+
   // Подпись «Цена:»
   const priceLabel = createTextbox("Цена:", {
-    left: 6, top: Math.round(H * 0.28), width: W - 12,
-    fontSize: Math.max(7, Math.round(W * 0.08)), data: { role: "price-label" },
+    left: 6, top: Math.round(H * 0.30), width: W - 12,
+    fontSize: Math.max(7, Math.round(W * 0.07)), data: { role: "price-label" },
   })
+
   // Цена — жирным
   const price = createTextbox(priceLine, {
-    left: 6, top: Math.round(H * 0.37), width: W - 12,
-    fontSize: Math.max(10, Math.round(W * 0.12)), fontWeight: "bold",
+    left: 6, top: Math.round(H * 0.39), width: W - 12,
+    fontSize: Math.max(10, Math.round(W * 0.11)), fontWeight: "bold",
     data: { role: "price" },
   })
 
@@ -389,7 +409,7 @@ async function buildVerticalLayout(
   })
 
   if (!canvas.lowerCanvasEl) return
-  canvas.add(specs, priceLabel, price, skuText)
+  canvas.add(metal, specs, priceLabel, price, skuText)
   if (qrImg) canvas.add(qrImg)
 }
 
@@ -399,14 +419,13 @@ async function buildVerticalLayout(
 export async function refreshLiveData(canvas: Canvas, data: Product): Promise<void> {
   const { metalLine, weightLine, sizeLine, priceLine } = buildJewelryText(data)
   const skuValue = data.sku || "NO-SKU"
-
   for (const obj of canvas.getObjects()) {
     const role = getRole(obj)
     if (!role || obj.type !== "textbox") continue
     const tb = obj as Textbox
     switch (role) {
       // Металл — строго только содержимое поля, без подписи «Металл:»
-      case "metal": tb.set({ text: metalLine }); break
+      case "metal": tb.set({ text: `${metalLine}` }); break
       case "specs": tb.set({ text: `Вес: ${weightLine}  Разм: ${sizeLine}` }); break
       case "price": tb.set({ text: priceLine }); break
       case "sku":   tb.set({ text: skuValue }); break
