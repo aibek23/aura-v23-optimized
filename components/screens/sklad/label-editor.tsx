@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import { Canvas, Textbox, Rect } from "fabric"
+import { Canvas, Textbox } from "fabric"
 import { X } from "lucide-react"
 import { toast } from "sonner"
 import {
@@ -13,23 +13,21 @@ import {
 import { deleteLabelTemplate, getLabelTemplate, saveLabelTemplate } from "@/app/actions/labels"
 import { getSvgLayout } from "./label-background"
 
-// Модули рефакторинга
 import {
   FONTS,
   ZOOM_MIN,
   ZOOM_MAX,
-  ZOOM_STEP,
   type LabelEditorProps,
 } from "./label-editor.types"
 import { applyBgRect, applyTemplate, parseTemplate, serializeLayout } from "./label-editor.template"
-import { buildDefaultLayout, cropPrintArea, refreshLiveData } from "./label-editor.canvas"
+import { buildDefaultLayout, cropPrintArea, refreshLiveData, attachSmartGuides, addBorderToCanvas } from "./label-editor.canvas"
+import type { BorderStyleKey } from "./label-editor-toolbar"
 import { LabelEditorToolbar } from "./label-editor-toolbar"
 import { LabelEditorCanvasArea } from "./label-editor-canvas-area"
 
-
-
 // ---------------------------------------------------------------------------
-// Компонент LabelEditor — оркестратор (только состояние + логика)
+// LabelEditor — оркестратор: Mobile-First Layout
+// Структура: [Sticky Header] > [Scrollable Canvas Area] > [Sticky Bottom Toolbar]
 // ---------------------------------------------------------------------------
 export function LabelEditor({
   product,
@@ -46,11 +44,9 @@ export function LabelEditor({
   const [status, setStatus] = useState("")
   const [font, setFont] = useState(FONTS[0])
   const [fontSize, setFontSize] = useState(16)
-  const [textColor, setTextColor] = useState("#000000")
-  const [bgColor, setBgColor] = useState("#ffffff")
-  const [bgTransparent, setBgTransparent] = useState(true)
   const [sizeKey, setSizeKey] = useState<JewelryLabelSizeKey>(initialSizeKey)
   const [zoom, setZoom] = useState(1)
+  const [collapsed, setCollapsed] = useState(false)
 
   const sizeDef = LABEL_SIZES[sizeKey]
   const category = product.category || "Прочее"
@@ -71,6 +67,9 @@ export function LabelEditor({
     fabricRef.current = canvas
     setReady(true)
 
+    // Подключаем Smart Guides / Snapping (возвращает функцию отписки)
+    const detachGuides = attachSmartGuides(canvas, sizeDef)
+
     ;(async () => {
       try {
         const saved = parseTemplate(getLabelTemplate(category, sizeKey))
@@ -80,9 +79,7 @@ export function LabelEditor({
         if (saved) {
           applyTemplate(canvas, saved)
           await refreshLiveData(canvas, product)
-          setBgTransparent(!saved.bg)
-          if (saved.bg) setBgColor(saved.bg)
-          applyBgRect(canvas, sizeDef, saved.bg)
+          applyBgRect(canvas, sizeDef, saved.bg ?? null)
         }
         canvas.setViewportTransform([1, 0, 0, 1, offsetX, offsetY])
         canvas.renderAll()
@@ -96,6 +93,7 @@ export function LabelEditor({
     })()
 
     return () => {
+      detachGuides()
       fabricRef.current = null
       setReady(false)
       canvas.dispose()
@@ -158,7 +156,7 @@ export function LabelEditor({
     if (!canvas) return
     const t = new Textbox("Текст", {
       left: 20, top: 20, width: Math.round(sizeDef.w_px * 0.5),
-      fontSize, fontFamily: font, fill: textColor,
+      fontSize, fontFamily: font, fill: "#000000",
       data: { role: `custom-t-${Date.now()}` },
     })
     canvas.add(t)
@@ -166,15 +164,10 @@ export function LabelEditor({
     canvas.renderAll()
   }
 
-  const addBorder = () => {
+  const addBorder = (styleKey: BorderStyleKey) => {
     const canvas = fabricRef.current
     if (!canvas) return
-    canvas.add(new Rect({
-      left: 4, top: 4, width: sizeDef.w_px - 10, height: sizeDef.h_px - 10,
-      fill: "transparent", stroke: textColor, strokeWidth: 2,
-      data: { role: `custom-r-${Date.now()}` },
-    }))
-    canvas.renderAll()
+    addBorderToCanvas(canvas, sizeDef, styleKey)
   }
 
   const removeSelected = () => {
@@ -186,19 +179,6 @@ export function LabelEditor({
     canvas.renderAll()
   }
 
-  const changeBg = (color: string) => {
-    setBgColor(color)
-    setBgTransparent(false)
-    const canvas = fabricRef.current
-    if (canvas) applyBgRect(canvas, sizeDef, color)
-  }
-
-  const toggleBgTransparent = (transparent: boolean) => {
-    setBgTransparent(transparent)
-    const canvas = fabricRef.current
-    if (canvas) applyBgRect(canvas, sizeDef, transparent ? null : bgColor)
-  }
-
   // ---- Сохранение / сброс -------------------------------------------------
   const handleSaveTemplate = () => {
     const canvas = fabricRef.current
@@ -206,7 +186,7 @@ export function LabelEditor({
     try {
       canvas.discardActiveObject()
       canvas.renderAll()
-      const tpl = serializeLayout(canvas, sizeKey, bgTransparent ? null : bgColor)
+      const tpl = serializeLayout(canvas, sizeKey, null)
       saveLabelTemplate(category, JSON.stringify(tpl), sizeKey)
       toast.success(`Расположение сохранено для «${category}» / ${sizeKey}`)
     } catch (err) {
@@ -218,52 +198,79 @@ export function LabelEditor({
     const canvas = fabricRef.current
     if (!canvas) return
     deleteLabelTemplate(category, sizeKey)
-    setBgColor("#ffffff")
-    setBgTransparent(true)
     await buildDefaultLayout(canvas, product, sizeDef)
     canvas.setViewportTransform([1, 0, 0, 1, offsetX, offsetY])
     canvas.renderAll()
     toast.success("Возвращён стандартный эскиз")
   }
 
-  // ---- Рендер -------------------------------------------------------------
+  // ---- Рендер: Mobile-First -----------------------------------------------
+  // [Sticky Header] → [Flex-1 scrollable canvas] → [Sticky Bottom Toolbar]
   return (
-    <div className="flex h-full flex-col overflow-hidden bg-background">
-      {/* Лоадер во время печати */}
+    <div className="relative flex h-full flex-col overflow-hidden bg-background">
+
+      {/* ── Лоадер во время печати ── */}
       {isPrinting && (
         <div className="absolute inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-background/80 backdrop-blur-sm rounded-2xl">
           <div className="relative flex items-center justify-center">
             <span className="absolute h-11 w-11 rounded-full border-[3px] border-primary/30 border-t-primary animate-spin" />
             <span className="rotate-45 rounded-sm bg-primary/20 border border-primary/40 h-4 w-4" />
           </div>
-          {status && <p className="text-xs text-muted-foreground">{status}</p>}
+          {status && <p className="text-xs text-muted-foreground animate-pulse">{status}</p>}
         </div>
       )}
 
-      {/* Шапка */}
-      {onClose && (
-        <div className="flex items-center justify-between border-b px-3 py-2 shrink-0">
-          <span className="text-sm font-semibold truncate max-w-[70vw]">
-            Этикетка · {sizeDef.label}
-          </span>
-          <button type="button" onClick={onClose}
-            className="rounded-full p-1.5 hover:bg-muted transition-colors" aria-label="Закрыть">
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-      )}
+      {/* ═══════════════════════════════════════════════════════════════
+          ХОЛСТ — занимает весь экран, свободное перемещение
+      ═══════════════════════════════════════════════════════════════ */}
+      <div className="absolute inset-0 z-0">
+        <LabelEditorCanvasArea
+          canvasRef={canvasRef}
+          fabricRef={fabricRef}
+          sizeDef={sizeDef}
+          stageW={stageW}
+          stageH={stageH}
+          offsetX={offsetX}
+          offsetY={offsetY}
+          zoom={zoom}
+          sizeKey={sizeKey}
+          onZoom={handleZoom}
+        />
+      </div>
 
-      {/* Скроллируемое тело */}
-      <div className="flex-1 overflow-y-auto overflow-x-hidden">
-        <div className="flex flex-col gap-3 p-3">
+      {/* ═══════════════════════════════════════════════════════════════
+          ВЕРХНЯЯ ПАНЕЛЬ — плавающая, скрывается вместе с настройками
+      ═══════════════════════════════════════════════════════════════ */}
+      <div
+        className={[
+          "pointer-events-none absolute inset-x-0 top-0 z-20 transition-all duration-300 ease-out",
+          collapsed ? "-translate-y-full opacity-0" : "translate-y-0 opacity-100",
+        ].join(" ")}
+      >
+        <div className="pointer-events-auto border-b bg-background/90 backdrop-blur-md">
+          {/* Строка: заголовок + закрытие */}
+          <div className="flex items-center justify-between px-3 py-2">
+            <span className="text-sm font-semibold truncate max-w-[70vw] leading-tight">
+              Этикетка · <span className="text-primary">{sizeDef.label}</span>
+            </span>
+            {onClose && (
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-full p-1.5 hover:bg-muted transition-colors shrink-0"
+                aria-label="Закрыть"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            )}
+          </div>
+
           <LabelEditorToolbar
+            zone="header"
             sizeKey={sizeKey}
             sizeDef={sizeDef}
             font={font}
             fontSize={fontSize}
-            textColor={textColor}
-            bgColor={bgColor}
-            bgTransparent={bgTransparent}
             isPrinting={isPrinting}
             status={status}
             onSizeChange={setSizeKey}
@@ -274,28 +281,81 @@ export function LabelEditor({
             onResetTemplate={() => void handleResetTemplate()}
             onFontChange={(f) => { setFont(f); applyToSelection({ fontFamily: f }) }}
             onFontSizeChange={(s) => { setFontSize(s); applyToSelection({ fontSize: s }) }}
-            onTextColorChange={(c) => { setTextColor(c); applyToSelection({ fill: c }) }}
-            onBgColorChange={changeBg}
-            onBgTransparentChange={toggleBgTransparent}
             onPrint={() => void handlePrint()}
           />
+        </div>
+      </div>
 
-          <LabelEditorCanvasArea
-            canvasRef={canvasRef}
-            sizeDef={sizeDef}
-            stageW={stageW}
-            stageH={stageH}
-            offsetX={offsetX}
-            offsetY={offsetY}
-            zoom={zoom}
+      {/* Кнопка закрытия остаётся доступной в свёрнутом режиме */}
+      {collapsed && onClose && (
+        <button
+          type="button"
+          onClick={onClose}
+          className="absolute right-3 top-3 z-30 rounded-full border border-white/20 bg-black/35 p-1.5 text-white/90 backdrop-blur-md transition-colors hover:bg-black/50"
+          aria-label="Закрыть"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      )}
+
+      {/* ═══════════════════════════════════════════════════════════════
+          НИЖНЯЯ ПАНЕЛЬ — настройки + «Свернуть» / компактная карточка
+      ═══════════════════════════════════════════════════════════════ */}
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20">
+        <div
+          className={[
+            "transition-all duration-300 ease-out",
+            collapsed ? "translate-y-full opacity-0 h-0 overflow-hidden" : "translate-y-0 opacity-100",
+          ].join(" ")}
+        >
+          <LabelEditorToolbar
+            zone="bottom"
             sizeKey={sizeKey}
-            onZoom={handleZoom}
+            sizeDef={sizeDef}
+            font={font}
+            fontSize={fontSize}
+            isPrinting={isPrinting}
+            status={status}
+            collapsed={false}
+            onToggleCollapse={() => setCollapsed(true)}
+            onSizeChange={setSizeKey}
+            onAddText={addText}
+            onAddBorder={addBorder}
+            onRemoveSelected={removeSelected}
+            onSaveTemplate={handleSaveTemplate}
+            onResetTemplate={() => void handleResetTemplate()}
+            onFontChange={(f) => { setFont(f); applyToSelection({ fontFamily: f }) }}
+            onFontSizeChange={(s) => { setFontSize(s); applyToSelection({ fontSize: s }) }}
+            onPrint={() => void handlePrint()}
           />
+        </div>
 
-          <p className="text-center text-[10px] text-muted-foreground">
-            Перетаскивайте элементы мышкой. Позиции сохраняются кнопкой «Сохранить» и
-            применяются при следующем открытии. Всё, что вне синей рамки, показано тускло и не печатается.
-          </p>
+        <div
+          className={[
+            "transition-all duration-300 ease-out",
+            collapsed ? "translate-y-0 opacity-100" : "pointer-events-none translate-y-full opacity-0 h-0 overflow-hidden",
+          ].join(" ")}
+        >
+          <LabelEditorToolbar
+            zone="bottom"
+            sizeKey={sizeKey}
+            sizeDef={sizeDef}
+            font={font}
+            fontSize={fontSize}
+            isPrinting={isPrinting}
+            status={status}
+            collapsed
+            onToggleCollapse={() => setCollapsed(false)}
+            onSizeChange={setSizeKey}
+            onAddText={addText}
+            onAddBorder={addBorder}
+            onRemoveSelected={removeSelected}
+            onSaveTemplate={handleSaveTemplate}
+            onResetTemplate={() => void handleResetTemplate()}
+            onFontChange={(f) => { setFont(f); applyToSelection({ fontFamily: f }) }}
+            onFontSizeChange={(s) => { setFontSize(s); applyToSelection({ fontSize: s }) }}
+            onPrint={() => void handlePrint()}
+          />
         </div>
       </div>
     </div>

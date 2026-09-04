@@ -1,7 +1,8 @@
 import { updateSession } from "@/lib/supabase/proxy"
 import { type NextRequest } from "next/server"
 
-export async function middleware(request: NextRequest) {
+// Экспортируем как default (самый надежный вариант для Next.js)
+export default async function proxy(request: NextRequest) {
   return await updateSession(request)
 }
 

@@ -9,12 +9,6 @@ const nextConfig = {
   },
 
   transpilePackages: ['niimbot-web-bluetooth'],
-
-  experimental: {
-    turbo: {
-      // Настройки Turbopack
-    },
-  },
 }
 
 export default nextConfig

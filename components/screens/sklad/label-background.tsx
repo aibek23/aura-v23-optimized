@@ -160,11 +160,12 @@ function ShapeT50x30_rect() {
 interface BgProps {
   sizeDef: LabelSizeDef
   className?: string
+  style?: React.CSSProperties
   /** Показывать синюю пунктирную рамку печатной области */
   showPrintArea?: boolean
 }
 
-export function LabelBackground({ sizeDef, className, showPrintArea = true }: BgProps) {
+export function LabelBackground({ sizeDef, className, style, showPrintArea = true }: BgProps) {
   const key = (sizeDef.key as JewelryLabelSizeKey | "T50x30_rect") ?? "T25x30_45"
   const m = getMeta(key)
   const { svgW, svgH, pxPerMm } = getSvgLayout(key, sizeDef)
@@ -173,7 +174,7 @@ export function LabelBackground({ sizeDef, className, showPrintArea = true }: Bg
   const padMm = PAD / pxPerMm
 
   return (
-    <div className={className} style={{ pointerEvents: "none", userSelect: "none" }}>
+    <div className={className} style={{ pointerEvents: "none", userSelect: "none", ...style }}>
       <svg
         width={svgW}
         height={svgH}

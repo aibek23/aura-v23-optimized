@@ -9,10 +9,11 @@ import type { Product } from "@/lib/types"
 // Текстовые данные изделия
 // ---------------------------------------------------------------------------
 export function buildJewelryText(data: Product) {
-  const metalLine = data.metal || "—"
+  // «Металл:» убран из автозагрузки — оставляем только вес и размер
+  const metalLine  = data.metal || "—"   // сохраняем для возможного ручного использования
   const weightLine = data.weight ? `${data.weight} г` : "—"
-  const sizeLine = data.size || "—"
-  const priceLine = `${data.sale_price.toLocaleString("ru")} сом`
+  const sizeLine   = data.size || "—"
+  const priceLine  = `${data.sale_price.toLocaleString("ru")} сом`
   return { metalLine, weightLine, sizeLine, priceLine }
 }
 

@@ -133,3 +133,19 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* Скрытие скроллбара — для горизонтальной ленты форматов бирки */
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* GPU-ускорение для редактора этикеток */
+.label-canvas-gpu {
+  transform: translate3d(0, 0, 0);
+  will-change: transform;
+  backface-visibility: hidden;
+}
