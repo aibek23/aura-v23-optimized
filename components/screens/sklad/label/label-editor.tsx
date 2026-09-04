@@ -46,15 +46,19 @@ export function LabelEditor({
   const [sizeKey, setSizeKey] = useState<JewelryLabelSizeKey>(initialSizeKey)
   const [zoom, setZoom] = useState(1)
   const [collapsed, setCollapsed] = useState(false)
+  const [rotation, setRotation] = useState(0)
 
   const sizeDef = LABEL_SIZES[sizeKey]
   const category = product.category || "Прочее"
 
+  // Запас вокруг этикетки: элементы, выходящие за её границы, остаются видимы
+  const STAGE_PAD = 240
+
   const svgLayout = getSvgLayout(sizeKey, sizeDef)
-  const stageW = Math.max(svgLayout.svgW, svgLayout.canvasX * 2 + sizeDef.w_px)
-  const stageH = Math.max(svgLayout.svgH, svgLayout.canvasY * 2 + sizeDef.h_px)
-  const offsetX = svgLayout.canvasX
-  const offsetY = svgLayout.canvasY
+  const stageW = Math.max(svgLayout.svgW, svgLayout.canvasX * 2 + sizeDef.w_px) + STAGE_PAD * 2
+  const stageH = Math.max(svgLayout.svgH, svgLayout.canvasY * 2 + sizeDef.h_px) + STAGE_PAD * 2
+  const offsetX = svgLayout.canvasX + STAGE_PAD
+  const offsetY = svgLayout.canvasY + STAGE_PAD
 
   // ---- Инициализация холста -----------------------------------------------
   useEffect(() => {
@@ -67,6 +71,7 @@ export function LabelEditor({
     canvas.setViewportTransform([1, 0, 0, 1, offsetX, offsetY])
     fabricRef.current = canvas
     setReady(true)
+    setRotation(0)
 
     const detachGuides = attachSmartGuides(canvas, sizeDef)
     const detachAutoHeight = attachTextAutoHeight(canvas)
@@ -139,50 +144,36 @@ export function LabelEditor({
     void handlePrint()
   }, [autoPrint, ready, handlePrint])
 
-  // ---- Поворот всей печатной области (этикетки + всех объектов) на 90° ----
+  // ---- Поворот ориентации холста (этикетки) на 90°: W ↔ H ----------------
   const handleRotateCanvas = useCallback(() => {
     const canvas = fabricRef.current
     if (!canvas) return
 
-    // Текущие размеры печатной зоны
-    const oldW = sizeDef.w_px
-    const oldH = sizeDef.h_px
-    // После поворота ширина и высота меняются местами
-    const newW = oldH
-    const newH = oldW
-
-    // Центр старой печатной зоны (система координат холста Fabric)
-    const cx = oldW / 2
-    const cy = oldH / 2
-
-    // Поворачиваем все объекты относительно центра этикетки на +90°
-    // Формула поворота: x' = cy - y,  y' = x - cx
-    canvas.getObjects().forEach((obj) => {
-      const w = obj.getScaledWidth?.() ?? obj.width ?? 0
-      const h = obj.getScaledHeight?.() ?? obj.height ?? 0
-      // Центр объекта в системе координат холста
-      const ocx = (obj.left ?? 0) + w / 2
-      const ocy = (obj.top ?? 0) + h / 2
-      // Центр объекта после поворота (координаты в новой системе с центром newW/2, newH/2)
-      const ncx = cy - ocy + newW / 2
-      const ncy = ocx - cx  + newH / 2
-      const newAngle = ((obj.angle ?? 0) + 90) % 360
-      obj.set({
-        left:   ncx - w / 2,
-        top:    ncy - h / 2,
-        angle: newAngle,
+    try {
+      const cur = LABEL_SIZES[sizeKey]
+      const rotatedKey = (Object.keys(LABEL_SIZES) as (keyof typeof LABEL_SIZES)[]).find((k) => {
+        const d = LABEL_SIZES[k]
+        return d.w_px === cur.h_px && d.h_px === cur.w_px && k !== sizeKey
       })
-      obj.setCoords()
-    })
 
-    // Новые размеры холста Fabric (v6+ API)
-    canvas.setDimensions({ width: stageW, height: stageH })
+      if (rotatedKey) {
+        // Есть готовый «повёрнутый» формат — переключаемся на него
+        setSizeKey(rotatedKey)
+        setRotation(0)
+        toast.success(`Ориентация изменена: ${LABEL_SIZES[rotatedKey].label}`)
+        return
+      }
 
-    // Сдвигаем viewport под новый offsetX/offsetY (пересчитывается через sizeKey)
-    canvas.setViewportTransform([1, 0, 0, 1, offsetX, offsetY])
-    canvas.renderAll()
-    toast.success("Печатная область повёрнута на 90°")
-  }, [sizeDef, stageW, stageH, offsetX, offsetY])
+      // Готового «повёрнутого» формата нет — поворачиваем весь холст на 90°
+      setRotation((r) => (r + 90) % 360)
+      canvas.setViewportTransform([1, 0, 0, 1, offsetX, offsetY])
+      canvas.requestRenderAll()
+      toast.success("Холст повёрнут на 90°")
+    } catch (err) {
+      console.error("[Rotate Canvas]:", err)
+      toast.error("Не удалось повернуть холст")
+    }
+  }, [offsetX, offsetY, sizeKey])
 
   // ---- Изменение зума ----------------------------------------------------
   const handleZoom = useCallback((delta: number) => {
@@ -338,6 +329,7 @@ export function LabelEditor({
           offsetY={offsetY}
           zoom={zoom}
           sizeKey={sizeKey}
+          rotation={rotation}
           onZoom={handleZoom}
         />
       </div>

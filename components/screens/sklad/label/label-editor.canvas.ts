@@ -14,9 +14,11 @@ import type { BorderStyleKey } from "./label-editor-toolbar"
 import { BORDER_STYLES } from "./label-editor-toolbar"
 
 // ---------------------------------------------------------------------------
-// Порог магнитного прилипания (px на холсте без масштаба)
+// Snap hysteresis thresholds (canvas px, unscaled)
+// Snaps when distance <= SNAP_ENGAGE; releases only when distance > SNAP_RELEASE
 // ---------------------------------------------------------------------------
-const SNAP_THRESHOLD = 6
+const SNAP_ENGAGE  = 6
+const SNAP_RELEASE = 10
 
 
 // ---------------------------------------------------------------------------
@@ -110,6 +112,22 @@ export function attachTextAutoHeight(canvas: Canvas): () => void {
 }
 
 // ---------------------------------------------------------------------------
+// applyBgRect — патч: bg-rect всегда отправляется вниз стека (sendToBack),
+// все остальные объекты остаются выше.
+// ---------------------------------------------------------------------------
+
+/**
+ * После добавления любого объекта убеждаемся, что bg-rect остаётся
+ * первым (самым нижним) в стеке.  Вызывается из attachSmartGuides.
+ */
+export function ensureBgAtBottom(canvas: Canvas): void {
+  const bgObj = canvas.getObjects().find(
+    (o) => (o as unknown as { data?: { role?: string } }).data?.role === "bg",
+  )
+  if (bgObj) canvas.sendObjectToBack(bgObj)
+}
+
+// ---------------------------------------------------------------------------
 // Применить ограничения трансформации к объекту:
 //   • масштаб — только нижний правый угол
 //   • растяжение по X — только правая сторона
@@ -144,38 +162,157 @@ export function snapRotationTo90(obj: FabricObject) {
 }
 
 // ---------------------------------------------------------------------------
+// Snap state per object: tracks which axis/line is currently snapped
+// ---------------------------------------------------------------------------
+type SnapAxisState = { snapped: false } | { snapped: true; line: number; edge: "lo" | "cx" | "hi" }
+
+interface ObjSnapState {
+  x: SnapAxisState
+  y: SnapAxisState
+}
+
+const snapStateMap = new WeakMap<FabricObject, ObjSnapState>()
+
+function getSnapState(obj: FabricObject): ObjSnapState {
+  let s = snapStateMap.get(obj)
+  if (!s) { s = { x: { snapped: false }, y: { snapped: false } }; snapStateMap.set(obj, s) }
+  return s
+}
+
+// ---------------------------------------------------------------------------
 // Подключение Smart Guides + Snapping + Rotate-90 к Fabric-инстансу
+// FIX 1: hysteresis — snap at <=SNAP_ENGAGE, release only at >SNAP_RELEASE
+// FIX 2: delta positioning — shift by delta instead of recalculating from center
 // ---------------------------------------------------------------------------
 export function attachSmartGuides(canvas: Canvas, sizeDef: LabelSizeDef): () => void {
   const { w_px, h_px } = sizeDef
   const centerX = w_px / 2
   const centerY = h_px / 2
 
-  const snapPointsX = [0, centerX, w_px]
-  const snapPointsY = [0, centerY, h_px]
+  const snapLinesX = [0, centerX, w_px]
+  const snapLinesY = [0, centerY, h_px]
+
+  // FIX 2: track previous position to compute delta
+  const prevPos = new WeakMap<FabricObject, { left: number; top: number }>()
 
   const onMoving = (e: { target?: FabricObject }) => {
     const obj = e.target
     if (!obj) return
 
-    const objW = obj.getScaledWidth?.() ?? obj.width ?? 0
-    const objH = obj.getScaledHeight?.() ?? obj.height ?? 0
-    const objCX = (obj.left ?? 0) + objW / 2
-    const objCY = (obj.top ?? 0) + objH / 2
-    const objR = (obj.left ?? 0) + objW
-    const objB = (obj.top ?? 0) + objH
+    // --- FIX 2: compute delta from last known position ----------------------
+    const curLeft = obj.left ?? 0
+    const curTop  = obj.top  ?? 0
+    const prev = prevPos.get(obj)
+    const deltaLeft = prev ? curLeft - prev.left : 0
+    const deltaTop  = prev ? curTop  - prev.top  : 0
 
-    for (const snapX of snapPointsX) {
-      if (Math.abs((obj.left ?? 0) - snapX) < SNAP_THRESHOLD) { obj.set({ left: snapX }); break }
-      if (Math.abs(objCX - snapX) < SNAP_THRESHOLD) { obj.set({ left: snapX - objW / 2 }); break }
-      if (Math.abs(objR - snapX) < SNAP_THRESHOLD) { obj.set({ left: snapX - objW }); break }
+    // getBoundingRect() accounts for rotation — real screen bounds
+    const br   = obj.getBoundingRect()
+    const brCX = br.left + br.width  / 2
+    const brCY = br.top  + br.height / 2
+
+    // Offset from object origin to bounding-rect centre
+    const ox = curLeft - brCX
+    const oy = curTop  - brCY
+
+    const state = getSnapState(obj)
+
+    // --- FIX 1: hysteresis on X axis ----------------------------------------
+    let newLeft = curLeft
+    if (state.x.snapped) {
+      // Already snapped — only release if object moved far enough from snap line
+      const snapLine = state.x.line
+      let edgePx: number
+      switch (state.x.edge) {
+        case "lo": edgePx = br.left;  break
+        case "cx": edgePx = brCX;     break
+        case "hi": edgePx = br.left + br.width; break
+      }
+      const dist = Math.abs(edgePx + deltaLeft - snapLine)
+      if (dist <= SNAP_RELEASE) {
+        // Stay snapped — reapply snap position
+        switch (state.x.edge) {
+          case "lo": newLeft = snapLine + ox + br.width  / 2; break
+          case "cx": newLeft = snapLine + ox;                 break
+          case "hi": newLeft = snapLine + ox - br.width  / 2; break
+        }
+      } else {
+        state.x = { snapped: false }
+        newLeft = curLeft
+      }
+    } else {
+      // Not snapped — find single nearest line within engage threshold
+      let bestDist = SNAP_ENGAGE + 1
+      let bestLine = 0
+      let bestEdge: "lo" | "cx" | "hi" = "lo"
+      for (const line of snapLinesX) {
+        for (const [edgePx, edge] of [[br.left, "lo"], [brCX, "cx"], [br.left + br.width, "hi"]] as [number, "lo" | "cx" | "hi"][]) {
+          const d = Math.abs(edgePx - line)
+          if (d <= SNAP_ENGAGE && d < bestDist) { bestDist = d; bestLine = line; bestEdge = edge }
+        }
+      }
+      if (bestDist <= SNAP_ENGAGE) {
+        state.x = { snapped: true, line: bestLine, edge: bestEdge }
+        switch (bestEdge) {
+          case "lo": newLeft = bestLine + ox + br.width  / 2; break
+          case "cx": newLeft = bestLine + ox;                 break
+          case "hi": newLeft = bestLine + ox - br.width  / 2; break
+        }
+      }
     }
-    for (const snapY of snapPointsY) {
-      if (Math.abs((obj.top ?? 0) - snapY) < SNAP_THRESHOLD) { obj.set({ top: snapY }); break }
-      if (Math.abs(objCY - snapY) < SNAP_THRESHOLD) { obj.set({ top: snapY - objH / 2 }); break }
-      if (Math.abs(objB - snapY) < SNAP_THRESHOLD) { obj.set({ top: snapY - objH }); break }
+
+    // --- FIX 1: hysteresis on Y axis ----------------------------------------
+    let newTop = curTop
+    if (state.y.snapped) {
+      const snapLine = state.y.line
+      let edgePy: number
+      switch (state.y.edge) {
+        case "lo": edgePy = br.top;  break
+        case "cx": edgePy = brCY;    break
+        case "hi": edgePy = br.top + br.height; break
+      }
+      const dist = Math.abs(edgePy + deltaTop - snapLine)
+      if (dist <= SNAP_RELEASE) {
+        switch (state.y.edge) {
+          case "lo": newTop = snapLine + oy + br.height / 2; break
+          case "cx": newTop = snapLine + oy;                 break
+          case "hi": newTop = snapLine + oy - br.height / 2; break
+        }
+      } else {
+        state.y = { snapped: false }
+        newTop = curTop
+      }
+    } else {
+      let bestDist = SNAP_ENGAGE + 1
+      let bestLine = 0
+      let bestEdge: "lo" | "cx" | "hi" = "lo"
+      for (const line of snapLinesY) {
+        for (const [edgePy, edge] of [[br.top, "lo"], [brCY, "cx"], [br.top + br.height, "hi"]] as [number, "lo" | "cx" | "hi"][]) {
+          const d = Math.abs(edgePy - line)
+          if (d <= SNAP_ENGAGE && d < bestDist) { bestDist = d; bestLine = line; bestEdge = edge }
+        }
+      }
+      if (bestDist <= SNAP_ENGAGE) {
+        state.y = { snapped: true, line: bestLine, edge: bestEdge }
+        switch (bestEdge) {
+          case "lo": newTop = bestLine + oy + br.height / 2; break
+          case "cx": newTop = bestLine + oy;                 break
+          case "hi": newTop = bestLine + oy - br.height / 2; break
+        }
+      }
     }
+
+    // FIX 2: apply computed position and record as new previous
+    obj.set({ left: newLeft, top: newTop })
+    prevPos.set(obj, { left: newLeft, top: newTop })
     obj.setCoords()
+  }
+
+  // Clear snap state + prevPos when drag ends to avoid stale hysteresis
+  const onModified = (e: { target?: FabricObject }) => {
+    if (!e.target) return
+    snapStateMap.delete(e.target)
+    prevPos.delete(e.target)
   }
 
   // После завершения поворота — округляем до ближайшего 90°
@@ -187,23 +324,27 @@ export function attachSmartGuides(canvas: Canvas, sizeDef: LabelSizeDef): () => 
   canvas.getObjects().forEach(applyTransformConstraints)
 
   // Применяем к новым объектам при добавлении
+  // и гарантируем, что bg-rect остаётся в самом низу стека
   const onAdded = (e: { target?: FabricObject }) => {
-    if (e.target) applyTransformConstraints(e.target)
+    if (e.target) {
+      applyTransformConstraints(e.target)
+      ensureBgAtBottom(canvas)
+    }
   }
 
-  // Fabric v7 использует строго типизированные сигнатуры событий — приводим
-  // холст к безопасному минимальному интерфейсу подписки/отписки.
   const bus = canvas as unknown as {
     on: (name: string, handler: (e: { target?: FabricObject }) => void) => void
     off: (name: string, handler: (e: { target?: FabricObject }) => void) => void
   }
 
   bus.on("object:moving", onMoving)
+  bus.on("object:modified", onModified)
   bus.on("object:rotating", onRotated)
   bus.on("object:added", onAdded)
 
   return () => {
     bus.off("object:moving", onMoving)
+    bus.off("object:modified", onModified)
     bus.off("object:rotating", onRotated)
     bus.off("object:added", onAdded)
   }
@@ -211,8 +352,8 @@ export function attachSmartGuides(canvas: Canvas, sizeDef: LabelSizeDef): () => 
 
 // ---------------------------------------------------------------------------
 // Добавление рамки выбранного стиля
-// Рамка НЕ перекрывает объекты внутри: evented=false, selectable=false
-// при клике фокус сразу идёт на внутренний элемент
+// Рамка рендерится ПОВЕРХ фона (bg) и всегда кликабельна.
+// ИСПРАВЛЕНО: явный stroke/strokeColor/strokeWidth, bringToFront после добавления
 // ---------------------------------------------------------------------------
 export function addBorderToCanvas(
   canvas: Canvas,
@@ -221,6 +362,8 @@ export function addBorderToCanvas(
 ) {
   const bs = BORDER_STYLES.find((s) => s.key === styleKey) ?? BORDER_STYLES[0]
   const margin = styleKey === "double" ? 6 : 4
+
+  // ИСПРАВЛЕНО: stroke обязателен и видим; objectCaching: false — корректный рендер
   const rect = new Rect({
     left: margin,
     top: margin,
@@ -232,8 +375,9 @@ export function addBorderToCanvas(
     strokeDashArray: bs.strokeDashArray ?? undefined,
     rx: bs.rx,
     ry: bs.rx,
-    // Рамка НЕ блокирует клики на объекты внутри
-    evented: false,
+    objectCaching: false,
+    evented: true,
+    selectable: true,
     data: { role: `border-${styleKey}-${Date.now()}` },
   })
 
@@ -247,16 +391,23 @@ export function addBorderToCanvas(
       fill: "transparent",
       stroke: "#000000",
       strokeWidth: 1,
-      evented: false,
+      objectCaching: false,
+      evented: true,
+      selectable: true,
       data: { role: `border-double-inner-${Date.now()}` },
     })
     canvas.add(inner)
     applyTransformConstraints(inner)
+    // ИСПРАВЛЕНО: явный bringObjectToFront гарантирует z-index поверх bg
+    canvas.bringObjectToFront(inner)
   }
 
   canvas.add(rect)
   applyTransformConstraints(rect)
-  canvas.renderAll()
+  // ИСПРАВЛЕНО: явный bringObjectToFront — рамка всегда поверх bg
+  canvas.bringObjectToFront(rect)
+  ensureBgAtBottom(canvas)
+  canvas.requestRenderAll()
 }
 
 // ---------------------------------------------------------------------------

@@ -41,7 +41,13 @@ const PAD = 24
 const TAIL_W_MM = 3
 
 // ---------------------------------------------------------------------------
-// Раскладка: размер SVG и позиция Fabric-холста внутри него
+// Раскладка: размер SVG и позиция Fabric-холста внутри него.
+// ВАЖНО: canvasX/canvasY — это ровно PAD пикселей от края SVG.
+// Фоновый SVG рисуется с viewBox начиная с (-padMm, -padMm),
+// поэтому левый верхний угол тела бирки (0,0 мм) попадает
+// ровно в точку (PAD, PAD) = (canvasX, canvasY) пикселей SVG.
+// Fabric viewport сдвигается на (canvasX, canvasY), так что
+// координаты объектов на холсте совпадают с мм-координатами.
 // ---------------------------------------------------------------------------
 export function getSvgLayout(
   key: JewelryLabelSizeKey | "T50x30_rect",
@@ -53,6 +59,7 @@ export function getSvgLayout(
   return {
     svgW: Math.round(m.vbW * pxPerMm + PAD * 2),
     svgH: Math.round(m.vbH * pxPerMm + PAD * 2),
+    // canvasX/canvasY = PAD всегда — 0,0 холста = 0,0 мм тела бирки
     canvasX: PAD,
     canvasY: PAD,
     pxPerMm,
@@ -168,14 +175,21 @@ export function LabelBackground({ sizeDef, className, style }: BgProps) {
   const m = getMeta(key)
   const { svgW, svgH, pxPerMm } = getSvgLayout(key, sizeDef)
 
-  // Поле в единицах viewBox (мм)
+  // Поле в единицах viewBox (мм): PAD px / pxPerMm мм/px
   const padMm = PAD / pxPerMm
+
+  // Печатная зона = тело бирки без хвостика
+  const bodyW = sizeDef.w_px   // = m.bodyW * pxPerMm
+  const bodyH = sizeDef.h_px   // = m.bodyH * pxPerMm
 
   return (
     <div className={className} style={{ pointerEvents: "none", userSelect: "none", ...style }}>
       <svg
         width={svgW}
         height={svgH}
+        // viewBox начинается с (-padMm, -padMm), поэтому точка (0мм,0мм)
+        // тела бирки попадает ровно в (PAD, PAD) пикселей SVG-элемента —
+        // то есть в canvasX/canvasY холста Fabric. Нулевая точка сетки совпадает.
         viewBox={`${-padMm} ${-padMm} ${m.vbW + padMm * 2} ${m.vbH + padMm * 2}`}
         style={{ display: "block" }}
       >
@@ -199,8 +213,7 @@ export function LabelBackground({ sizeDef, className, style }: BgProps) {
           ) : (
             <ShapeT25x30_45 />
           )}
-          {/* Хвостик — рисуем в мм-координатах, чтобы длина всегда совпадала
-              с реальным форматом (T…+45 / T…+50) */}
+          {/* Хвостик в мм-координатах (ниже тела бирки) */}
           {m.vbH > m.bodyH && (
             <rect
               x={(m.vbW - TAIL_W_MM) / 2}
@@ -212,8 +225,42 @@ export function LabelBackground({ sizeDef, className, style }: BgProps) {
           )}
         </g>
 
-        {/* Полупрозрачная рамка печатной области удалена — контент
-            больше не ограничен визуальной зоной печати. */}
+        {/* ── Технические линии зон (в мм-координатах viewBox) ──
+            Все линии привязаны к (0,0) тела бирки — точно совпадают
+            с системой координат Fabric-холста.                      */}
+
+        {/* Граница печатной зоны (синяя пунктир) — ТОНЬШЕ */}
+        <rect
+          x={0} y={0}
+          width={m.bodyW} height={m.bodyH}
+          fill="none"
+          stroke="rgba(59,130,246,0.7)"
+          strokeWidth={0.18}
+          strokeDasharray="1.5 1.2"
+        />
+
+        {/* Зелёная линия сгиба УДАЛЕНА */}
+
+        {/* Линия обреза (красная) — внутрь 1 мм от края тела — ТОНЬШЕ */}
+        <rect
+          x={1} y={1}
+          width={m.bodyW - 2} height={m.bodyH - 2}
+          fill="none"
+          stroke="rgba(239,68,68,0.65)"
+          strokeWidth={0.16}
+          strokeDasharray="2 1.5"
+        />
+
+        {/* Линия перфорации (серая) — по нижнему краю тела, если есть хвостик */}
+        {m.vbH > m.bodyH && (
+          <line
+            x1={0} y1={m.bodyH}
+            x2={m.bodyW} y2={m.bodyH}
+            stroke="rgba(156,163,175,0.8)"
+            strokeWidth={0.3}
+            strokeDasharray="1 1.5"
+          />
+        )}
       </svg>
     </div>
   )

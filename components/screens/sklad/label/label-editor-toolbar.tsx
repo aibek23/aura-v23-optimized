@@ -18,7 +18,7 @@ import {
   ChevronUp,
   RotateCw,
 } from "lucide-react"
-import { FONTS, SIZE_OPTIONS } from "./label-editor.types"
+import { FONTS } from "./label-editor.types"
 import { LABEL_SIZES } from "@/lib/niimbot"
 import type { JewelryLabelSizeKey, LabelSizeDef } from "@/lib/niimbot"
 
@@ -73,69 +73,32 @@ export function LabelEditorToolbar(props: LabelEditorToolbarProps) {
 }
 
 // ---------------------------------------------------------------------------
-// Header zone: лента форматов + Повернуть + Сохранить / Сброс
+// Header zone: выпадающий список форматов + Сохранить / Сброс
+// Кнопка «Повернуть» УДАЛЕНА — она только в нижней панели
 // ---------------------------------------------------------------------------
 function HeaderZone({
   sizeKey,
   onSizeChange,
   onSaveTemplate,
   onResetTemplate,
-  onRotateCanvas,
 }: LabelEditorToolbarProps) {
   const [expanded, setExpanded] = useState(false)
 
   // Все доступные ключи форматов из реестра LABEL_SIZES
   const allKeys = Object.keys(LABEL_SIZES) as (keyof typeof LABEL_SIZES)[]
 
-  // В свёрнутом виде показываем только SIZE_OPTIONS; при expanded — все форматы
-  const visibleKeys = expanded ? allKeys : SIZE_OPTIONS
-
   return (
     <div className="flex flex-col gap-1 px-3 pb-2 pt-0.5">
+      {/* Кнопка-гармошка для выбора формата этикетки */}
       <div className="flex items-center gap-2">
-        {/* Горизонтально скроллируемая лента форматов с аккуратным скроллбаром */}
-        <div
-          className="flex-1 overflow-x-auto"
-          style={{ scrollbarWidth: "thin", scrollbarColor: "rgba(0,0,0,0.15) transparent" }}
-        >
-          <div className="flex gap-1.5 whitespace-nowrap pr-1">
-            {visibleKeys.map((key) => (
-              <button
-                key={key}
-                type="button"
-                onClick={() => onSizeChange(key)}
-                className={[
-                  "rounded-md border px-2.5 py-1 text-[11px] font-mono transition-colors shrink-0",
-                  key === sizeKey
-                    ? "border-primary bg-primary text-primary-foreground"
-                    : "border-border bg-background text-foreground hover:bg-muted",
-                ].join(" ")}
-              >
-                {LABEL_SIZES[key].label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Кнопка развернуть/свернуть список пресетов */}
         <button
           type="button"
           onClick={() => setExpanded((v) => !v)}
-          className="shrink-0 flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted transition-colors"
-          title={expanded ? "Скрыть форматы" : "Все форматы"}
+          className="flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-[11px] font-medium hover:bg-muted transition-colors"
+          title={expanded ? "Скрыть форматы" : "Выбрать формат"}
         >
           {expanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
-        </button>
-
-        {/* 🔄 Повернуть на 90° */}
-        <button
-          type="button"
-          onClick={onRotateCanvas}
-          className="shrink-0 flex items-center gap-1 rounded-md border border-border bg-background px-2.5 py-1 text-[11px] font-medium hover:bg-muted transition-colors"
-          title="Повернуть печатную область на 90°"
-        >
-          <RotateCw className="h-3.5 w-3.5" />
-          <span className="hidden sm:inline">90°</span>
+          <span>Формат: <span className="text-primary font-mono">{LABEL_SIZES[sizeKey]?.label ?? sizeKey}</span></span>
         </button>
 
         {/* Сохранить */}
@@ -160,6 +123,32 @@ function HeaderZone({
           <span className="hidden sm:inline">Сброс</span>
         </button>
       </div>
+
+      {/* Выпадающая гармошка со списком форматов */}
+      {expanded && (
+        <div
+          className="overflow-x-auto rounded-md border border-border bg-background/95 shadow-md p-1.5"
+          style={{ scrollbarWidth: "thin", scrollbarColor: "rgba(0,0,0,0.15) transparent" }}
+        >
+          <div className="flex gap-1.5 whitespace-nowrap">
+            {allKeys.map((key) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => { onSizeChange(key); setExpanded(false) }}
+                className={[
+                  "rounded-md border px-2.5 py-1 text-[11px] font-mono transition-colors shrink-0",
+                  key === sizeKey
+                    ? "border-primary bg-primary text-primary-foreground"
+                    : "border-border bg-background text-foreground hover:bg-muted",
+                ].join(" ")}
+              >
+                {LABEL_SIZES[key].label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -309,23 +298,19 @@ function BottomZone({
         </div>
       </div>
 
-      {/* ── Строка 2: Легенда линий ── */}
+      {/* ── Строка 2: Легенда линий (зелёная линия сгиба удалена) ── */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 px-3 py-1 text-[9px] text-muted-foreground">
         <span className="font-medium text-foreground/60">Линии:</span>
         <span className="flex items-center gap-1">
-          <span className="inline-block h-0.5 w-4 border-t-2 border-dashed border-blue-500" />
+          <span className="inline-block h-px w-4 border-t border-dashed border-blue-500" />
           печать
         </span>
         <span className="flex items-center gap-1">
-          <span className="inline-block h-0.5 w-4 border-t-2 border-dashed border-green-600" />
-          сгиб
-        </span>
-        <span className="flex items-center gap-1">
-          <span className="inline-block h-0.5 w-4 border-t-2 border-dashed border-red-500" />
+          <span className="inline-block h-px w-4 border-t border-dashed border-red-500" />
           обрез
         </span>
         <span className="flex items-center gap-1">
-          <span className="inline-block h-0.5 w-4 border-t border-dashed border-gray-400" />
+          <span className="inline-block h-px w-4 border-t border-dashed border-gray-400" />
           перфорация
         </span>
       </div>

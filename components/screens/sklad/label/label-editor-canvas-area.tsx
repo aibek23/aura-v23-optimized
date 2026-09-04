@@ -23,12 +23,23 @@ function getPxPerMm(sizeDef: LabelSizeDef): number {
   return 8
 }
 
+// ИСПРАВЛЕНО: getBoundingRect() учитывает угол поворота объекта
 function objBounds(o: FabricObject) {
-  const left = o.left ?? 0
-  const top = o.top ?? 0
-  const w = o.getScaledWidth?.() ?? o.width ?? 0
-  const h = o.getScaledHeight?.() ?? o.height ?? 0
-  return { left, top, right: left + w, bottom: top + h }
+  try {
+    const br = o.getBoundingRect()
+    return {
+      left: br.left,
+      top: br.top,
+      right: br.left + br.width,
+      bottom: br.top + br.height,
+    }
+  } catch {
+    const left = o.left ?? 0
+    const top = o.top ?? 0
+    const w = o.getScaledWidth?.() ?? o.width ?? 0
+    const h = o.getScaledHeight?.() ?? o.height ?? 0
+    return { left, top, right: left + w, bottom: top + h }
+  }
 }
 
 function measurableObjects(canvas: FabricCanvas | null): FabricObject[] {
@@ -50,6 +61,7 @@ interface LabelEditorCanvasAreaProps {
   offsetY: number
   zoom: number
   sizeKey: string
+  rotation?: number
   onZoom: (delta: number) => void
 }
 
@@ -63,6 +75,7 @@ export function LabelEditorCanvasArea({
   offsetY,
   zoom,
   sizeKey,
+  rotation = 0,
   onZoom,
 }: LabelEditorCanvasAreaProps) {
   const staticCanvasRef = useRef<HTMLCanvasElement>(null)
@@ -331,6 +344,10 @@ export function LabelEditorCanvasArea({
     const ctx = prepareFixed(el, cW, cH)
     if (!ctx) return
 
+    // При повороте холста линейки/направляющие считаются в неповёрнутых
+    // координатах — отключаем их, чтобы не показывать неверные значения
+    if (rotation % 360 !== 0) return
+
     const fabric = fabricRef.current
     const activeObj = fabric?.getActiveObject()
     if (!activeObj) return
@@ -338,32 +355,35 @@ export function LabelEditorCanvasArea({
     const origin = getContainerLabelOrigin()
     if (!origin) return
 
+    // ИСПРАВЛЕНО: getBoundingRect() — реальные края с учётом угла поворота
     const b = objBounds(activeObj)
     const accent = "rgba(99,102,241,0.95)"
     const accentSoft = "rgba(99,102,241,0.45)"
     const pxPerMm = getPxPerMm(sizeDef)
 
-    const leftMm = b.left / pxPerMm
-    const rightMm = b.right / pxPerMm
-    const topMm = b.top / pxPerMm
+    // ИСПРАВЛЕНО: координаты краёв объекта в мм от (0,0) этикетки
+    const leftMm   = b.left   / pxPerMm
+    const rightMm  = b.right  / pxPerMm
+    const topMm    = b.top    / pxPerMm
     const bottomMm = b.bottom / pxPerMm
 
-    const labelRight = origin.x + sizeDef.w_px * zoom
+    const labelRight  = origin.x + sizeDef.w_px * zoom
     const labelBottom = origin.y + sizeDef.h_px * zoom
 
     ctx.save()
     ctx.font = "8px system-ui, sans-serif"
     ctx.textAlign = "center"
 
-    // ── Вертикальные направляющие ──
+    // ── Вертикальные направляющие (левый и правый КРАЙ объекта) ──
     for (const mm of [leftMm, rightMm]) {
+      // ИСПРАВЛЕНО: x = origin + мм * pxPerMm * zoom (привязка к краю, не центру)
       const x = origin.x + mm * pxPerMm * zoom
       if (x < RULER_SIZE || x > cW) continue
       const labelStr = mm.toFixed(1)
       const tw = ctx.measureText(labelStr).width + 6
 
       ctx.strokeStyle = accentSoft
-      ctx.lineWidth = 1
+      ctx.lineWidth = 0.75
       ctx.setLineDash([4, 4])
       ctx.beginPath()
       ctx.moveTo(x, RULER_SIZE)
@@ -377,14 +397,15 @@ export function LabelEditorCanvasArea({
       ctx.fillText(labelStr, x, 10)
     }
 
-    // ── Горизонтальные направляющие ──
+    // ── Горизонтальные направляющие (верхний и нижний КРАЙ объекта) ──
     for (const mm of [topMm, bottomMm]) {
+      // ИСПРАВЛЕНО: y = origin + мм * pxPerMm * zoom (привязка к краю)
       const y = origin.y + mm * pxPerMm * zoom
       if (y < RULER_SIZE || y > cH) continue
       const labelStr = mm.toFixed(1)
 
       ctx.strokeStyle = accentSoft
-      ctx.lineWidth = 1
+      ctx.lineWidth = 0.75
       ctx.setLineDash([4, 4])
       ctx.beginPath()
       ctx.moveTo(RULER_SIZE, y)
@@ -399,7 +420,7 @@ export function LabelEditorCanvasArea({
     }
 
     ctx.restore()
-  }, [prepareFixed, sizeDef, zoom, fabricRef, getContainerLabelOrigin])
+  }, [prepareFixed, sizeDef, zoom, rotation, fabricRef, getContainerLabelOrigin])
 
   useEffect(() => {
     drawStatic()
@@ -432,20 +453,35 @@ export function LabelEditorCanvasArea({
       drawEdgeIndicators()
     })
     return () => cancelAnimationFrame(id)
-  }, [pan, zoom, offsetX, offsetY, sizeKey, drawRulers, drawEdgeIndicators])
+  }, [pan, zoom, rotation, offsetX, offsetY, sizeKey, drawRulers, drawEdgeIndicators])
 
   useEffect(() => {
     const fabric = fabricRef.current
     if (!fabric) return
 
-    // Убираем clipPath — элементы за пределами этикетки остаются видимы
+    // ИСПРАВЛЕНО: явно снимаем clipPath и включаем preserveObjectStacking
+    // чтобы элементы за пределами этикетки оставались видимы и кликабельны
     fabric.clipPath = undefined
     fabric.preserveObjectStacking = true
+    // ИСПРАВЛЕНО: отключаем встроенный clip у нижнего canvas-элемента
+    const lce = fabric.lowerCanvasEl as HTMLCanvasElement | undefined
+    if (lce) { lce.style.overflow = "visible"; lce.style.clipPath = "none" }
+    const uce = (fabric as unknown as { upperCanvasEl?: HTMLCanvasElement }).upperCanvasEl
+    if (uce) { uce.style.overflow = "visible"; uce.style.clipPath = "none" }
 
-    const redraw = () => {
+    // FIX 4: rulers re-render only on structural/selection events, not every move frame.
+    // Edge-indicator guides update on move but are throttled to one RAF per frame.
+    const redrawFull = () => {
       if (rafRef.current !== null) cancelAnimationFrame(rafRef.current)
       rafRef.current = requestAnimationFrame(() => {
         drawRulers()
+        drawEdgeIndicators()
+      })
+    }
+    // During active drag: only refresh the guide overlay (cheap), not the full ruler ticks
+    const redrawGuidesOnly = () => {
+      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current)
+      rafRef.current = requestAnimationFrame(() => {
         drawEdgeIndicators()
       })
     }
@@ -457,35 +493,142 @@ export function LabelEditorCanvasArea({
       }
       drawRulers()
     }
-    const events = [
-      "object:moving", "object:scaling", "object:rotating", "object:modified",
-      "object:added", "object:removed",
+    // Structural/selection events → full redraw (rulers + guides)
+    const structuralEvents = [
+      "object:modified", "object:added", "object:removed",
       "selection:created", "selection:updated",
     ] as const
-    events.forEach((ev) => fabric.on(ev, redraw))
+    // Per-frame transform events → guides overlay only (no ruler tick redraw)
+    const movingEvents = [
+      "object:moving", "object:scaling", "object:rotating",
+    ] as const
+    structuralEvents.forEach((ev) => fabric.on(ev, redrawFull))
+    movingEvents.forEach((ev) => fabric.on(ev, redrawGuidesOnly))
     fabric.on("selection:cleared", clearGuides)
-    redraw()
+    redrawFull()
     return () => {
-      events.forEach((ev) => fabric.off(ev, redraw))
+      structuralEvents.forEach((ev) => fabric.off(ev, redrawFull))
+      movingEvents.forEach((ev) => fabric.off(ev, redrawGuidesOnly))
       fabric.off("selection:cleared", clearGuides)
       if (rafRef.current !== null) cancelAnimationFrame(rafRef.current)
     }
   }, [fabricRef, drawRulers, drawEdgeIndicators, prepareFixed, sizeKey])
 
-  const onPanPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    const target = e.target as HTMLElement
-    if (target.closest("[data-fabric-layer]")) return
-    panStartRef.current = { x: pan.x, y: pan.y, px: e.clientX, py: e.clientY }
-    ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
-  }, [pan.x, pan.y])
+  // ИСПРАВЛЕНО: панорамирование через глобальные слушатели окна.
+  // Fabric может перехватывать pointer-события внутри своего слоя (pointer capture),
+  // поэтому move/up слушаем на window — перетаскивание не «теряется».
+  const isPanningRef = useRef(false)
+  // FIX 3: track whether Fabric is currently transforming/dragging an object
+  const isTransformingRef = useRef(false)
+  const panRef = useRef(pan)
+  panRef.current = pan
 
-  const onPanPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    const start = panStartRef.current
-    if (!start) return
-    setPan({ x: start.x + (e.clientX - start.px), y: start.y + (e.clientY - start.py) })
+  const startPan = useCallback((clientX: number, clientY: number) => {
+    // FIX 3: never start canvas pan while an object is being dragged/transformed
+    if (isTransformingRef.current) return
+    isPanningRef.current = true
+    panStartRef.current = { x: panRef.current.x, y: panRef.current.y, px: clientX, py: clientY }
+    if (viewportRef.current) viewportRef.current.style.cursor = "grabbing"
   }, [])
 
-  const onPanPointerUp = useCallback(() => { panStartRef.current = null }, [])
+  // Глобальные слушатели перемещения/отпускания
+  useEffect(() => {
+    const onMove = (ev: PointerEvent | MouseEvent) => {
+      if (!isPanningRef.current) return
+      const start = panStartRef.current
+      if (!start) return
+      ev.preventDefault?.()
+      setPan({ x: start.x + (ev.clientX - start.px), y: start.y + (ev.clientY - start.py) })
+    }
+    const onUp = () => {
+      if (!isPanningRef.current) return
+      isPanningRef.current = false
+      panStartRef.current = null
+      if (viewportRef.current) viewportRef.current.style.cursor = "grab"
+    }
+    window.addEventListener("pointermove", onMove, { passive: false })
+    window.addEventListener("pointerup", onUp)
+    window.addEventListener("pointercancel", onUp)
+    window.addEventListener("mousemove", onMove as EventListener)
+    window.addEventListener("mouseup", onUp)
+    return () => {
+      window.removeEventListener("pointermove", onMove as EventListener)
+      window.removeEventListener("pointerup", onUp)
+      window.removeEventListener("pointercancel", onUp)
+      window.removeEventListener("mousemove", onMove as EventListener)
+      window.removeEventListener("mouseup", onUp)
+    }
+  }, [])
+
+  // Клик по пустому месту рабочей области (вне Fabric-объектов) — начинаем pan
+  const onPanPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    // FIX 3: block canvas pan if an object transform is active
+    if (isTransformingRef.current) return
+    const forcePan = e.button === 1 || e.altKey || e.pointerType === "touch"
+    if (!forcePan) {
+      if (e.button !== 0) return
+      const fabric = fabricRef.current
+      // Если клик пришёл по холсту Fabric и там есть активный/попавший объект — не панорамируем
+      const overFabric = (e.target as HTMLElement)?.tagName === "CANVAS" &&
+        !!(e.target as HTMLElement).closest("[data-fabric-layer]")
+      if (overFabric && fabric) {
+        try {
+          if (fabric.findTarget(e.nativeEvent as unknown as MouseEvent)) return
+        } catch {
+          /* hit-test недоступен — панорамируем */
+        }
+      }
+    }
+    startPan(e.clientX, e.clientY)
+  }, [fabricRef, startPan])
+
+  // FIX 3: track Fabric transform start/end to block canvas pan during object drag
+ useEffect(() => {
+    const fabric = fabricRef.current
+    if (!fabric) return
+
+    const onTransformStart = () => { isTransformingRef.current = true }
+    const onTransformEnd   = () => { isTransformingRef.current = false }
+
+    const transformEvents = ["object:moving", "object:scaling", "object:rotating"] as const
+    
+    transformEvents.forEach((ev) => fabric.on(ev, onTransformStart))
+    fabric.on("object:modified", onTransformEnd)
+    fabric.on("mouse:up", onTransformEnd)
+    
+    // Приводим к any, чтобы TypeScript не ругался на отсутствие в типах
+    fabric.on("touch:end" as any, onTransformEnd)
+
+    return () => {
+      transformEvents.forEach((ev) => fabric.off(ev, onTransformStart))
+      fabric.off("object:modified", onTransformEnd)
+      fabric.off("mouse:up", onTransformEnd)
+      fabric.off("touch:end" as any, onTransformEnd)
+    }
+  }, [fabricRef])
+
+  // Дублируем через события самого Fabric: клик по пустой области холста
+  useEffect(() => {
+    const fabric = fabricRef.current
+    if (!fabric) return
+    const onFabricDown = (opt: { target?: unknown; e: MouseEvent | TouchEvent | PointerEvent }) => {
+      // FIX 3: if a Fabric object was hit, mark transform start and skip pan
+      if (opt.target) {
+        isTransformingRef.current = true
+        return
+      }
+      const ev = opt.e as PointerEvent
+      const cx = ev.clientX ?? (ev as unknown as TouchEvent).touches?.[0]?.clientX
+      const cy = ev.clientY ?? (ev as unknown as TouchEvent).touches?.[0]?.clientY
+      if (typeof cx !== "number" || typeof cy !== "number") return
+      startPan(cx, cy)
+    }
+    fabric.on("mouse:down", onFabricDown as never)
+    return () => {
+      fabric.off("mouse:down", onFabricDown as never)
+    }
+  }, [fabricRef, startPan])
+
   const resetView = useCallback(() => setPan({ x: 0, y: 0 }), [])
 
   return (
@@ -494,42 +637,53 @@ export function LabelEditorCanvasArea({
       className="relative h-full w-full overflow-hidden"
       style={{ background: "linear-gradient(135deg, #a1a1aa 0%, #d4d4d8 50%, #e4e4e7 100%)" }}
     >
+      {/* ИСПРАВЛЕНО: viewport принимает pointer-события для pan.
+          Fabric-слой НЕ блокирует pan — onPointerDown проверяет hittest через findTarget.
+          cursor: grab показывается только когда не тянем объект (isPanningRef). */}
       <div
         ref={viewportRef}
-        className="absolute cursor-grab active:cursor-grabbing"
-        style={{ inset: 0, top: RULER_SIZE, left: RULER_SIZE, touchAction: "none" }}
+        className="absolute"
+        style={{
+          inset: 0,
+          top: RULER_SIZE,
+          left: RULER_SIZE,
+          touchAction: "none",
+          cursor: "grab",
+          userSelect: "none",
+        }}
         onPointerDown={onPanPointerDown}
-        onPointerMove={onPanPointerMove}
-        onPointerUp={onPanPointerUp}
-        onPointerCancel={onPanPointerUp}
       >
         <div
           ref={stageLayerRef}
           className="absolute left-1/2 top-1/2"
           style={{
-            transform: `translate3d(calc(-50% + ${pan.x}px), calc(-50% + ${pan.y}px), 0) scale(${zoom})`,
+            transform: `translate3d(calc(-50% + ${pan.x}px), calc(-50% + ${pan.y}px), 0) scale(${zoom}) rotate(${rotation}deg)`,
             transformOrigin: "center center",
             width: totalW,
             height: totalH,
-            // Критично: снимаем обрезание на stageLayer,
-            // чтобы элементы холста, выходящие за границы этикетки,
-            // оставались видимыми и доступными для взаимодействия.
+            // ИСПРАВЛЕНО: overflow:visible — элементы за пределами этикетки видимы
             overflow: "visible",
           }}
         >
           <canvas ref={staticCanvasRef} className="absolute top-0 left-0 pointer-events-none" style={{ zIndex: 1 }} />
-          {/* Белая этикетка — ref=labelLayerRef, именно отсюда берём origin (0,0) мм */}
+
+          {/* Слой SVG-подложки этикетки */}
           <div
             ref={labelLayerRef}
             className="absolute pointer-events-none"
-            style={{ top: offsetY, left: offsetX, zIndex: 2, overflow: "visible" }}
+            style={{
+              top: offsetY - 24,
+              left: offsetX - 24,
+              zIndex: 2,
+              overflow: "visible",
+            }}
           >
             <LabelBackground sizeDef={sizeDef} style={{ position: "absolute", top: 0, left: 0 }} />
           </div>
 
-          {/* Слой Fabric.js покрывает ВЕСЬ stage (stageW × stageH),
-              начиная от (0,0) stage, чтобы рамки выделения элементов
-              не обрезались по границам этикетки */}
+          {/* ИСПРАВЛЕНО: Fabric-слой покрывает весь stage, overflow:visible.
+              pointer-events:auto — Fabric сам обрабатывает клики по объектам.
+              Pan начинается только при клике в пустую область (см. onPanPointerDown). */}
           <div
             data-fabric-layer
             className="absolute"
