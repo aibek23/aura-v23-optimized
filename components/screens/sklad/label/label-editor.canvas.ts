@@ -579,10 +579,16 @@ async function buildHorizontalLayout(
     data: { role: "metal" },
   })
 
-  // Строка «Вес + Размер»
-  const specs = createTextbox(`Вес: ${weightLine}  Разм: ${sizeLine}`, {
+  // Вес (отдельный текстовый объект)
+  const weightText = createTextbox(`Вес: ${weightLine}`, {
     left: 8, top: Math.round(H * 0.22), width: colLeft - 12,
-    fontSize: Math.max(7, Math.round(H * 0.11)), data: { role: "specs" },
+    fontSize: Math.max(7, Math.round(H * 0.11)), data: { role: "weight" },
+  })
+
+  // Размер (отдельный текстовый объект, под весом)
+  const sizeText = createTextbox(`Разм: ${sizeLine}`, {
+    left: 8, top: Math.round(H * 0.33), width: colLeft - 12,
+    fontSize: Math.max(7, Math.round(H * 0.11)), data: { role: "size" },
   })
 
   // Подпись «Цена:»
@@ -618,7 +624,7 @@ async function buildHorizontalLayout(
   })
 
   if (!canvas.lowerCanvasEl) return
-  canvas.add(metal, specs, priceLabel, price, skuText)
+  canvas.add(metal, weightText, sizeText, priceLabel, price, skuText)
   if (qrImg) canvas.add(qrImg)
 }
 
@@ -642,10 +648,16 @@ async function buildVerticalLayout(
     data: { role: "metal" },
   })
 
-  // Вес + Размер
-  const specs = createTextbox(`Вес: ${weightLine}\nРазм: ${sizeLine}`, {
+  // Вес (отдельный текстовый объект)
+  const weightText = createTextbox(`Вес: ${weightLine}`, {
     left: 6, top: Math.round(H * 0.12), width: W - 12,
-    fontSize: Math.max(7, Math.round(W * 0.07)), data: { role: "specs" },
+    fontSize: Math.max(7, Math.round(W * 0.07)), data: { role: "weight" },
+  })
+
+  // Размер (отдельный текстовый объект, под весом)
+  const sizeText = createTextbox(`Разм: ${sizeLine}`, {
+    left: 6, top: Math.round(H * 0.20), width: W - 12,
+    fontSize: Math.max(7, Math.round(W * 0.07)), data: { role: "size" },
   })
 
   // Подпись «Цена:»
@@ -681,7 +693,7 @@ async function buildVerticalLayout(
   })
 
   if (!canvas.lowerCanvasEl) return
-  canvas.add(metal, specs, priceLabel, price, skuText)
+  canvas.add(metal, weightText, sizeText, priceLabel, price, skuText)
   if (qrImg) canvas.add(qrImg)
 }
 
@@ -698,9 +710,10 @@ export async function refreshLiveData(canvas: Canvas, data: Product): Promise<vo
     switch (role) {
       // Металл — строго только содержимое поля, без подписи «Металл:»
       case "metal": tb.set({ text: `${metalLine}` }); break
-      case "specs": tb.set({ text: `Вес: ${weightLine}  Разм: ${sizeLine}` }); break
-      case "price": tb.set({ text: priceLine }); break
-      case "sku":   tb.set({ text: skuValue }); break
+      case "weight": tb.set({ text: `Вес: ${weightLine}` }); break
+      case "size":   tb.set({ text: `Разм: ${sizeLine}` }); break
+      case "price":  tb.set({ text: priceLine }); break
+      case "sku":    tb.set({ text: skuValue }); break
     }
     refitTextbox(tb)
   }
