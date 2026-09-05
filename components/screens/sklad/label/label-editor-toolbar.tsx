@@ -5,7 +5,8 @@
 // zone="header"  — лента форматов + кнопки Сохранить/Сброс (sticky top)
 // zone="bottom"  — все инструменты + кнопка Печать (sticky bottom)
 // ---------------------------------------------------------------------------
-import { useState } from "react"
+import { useState, useEffect, useRef, useCallback } from "react"
+import { createPortal } from "react-dom"
 import { Button } from "@/components/ui/button"
 import {
   Printer,
@@ -173,6 +174,50 @@ function BottomZone({
   onToggleCollapse,
 }: LabelEditorToolbarProps) {
   const [borderMenuOpen, setBorderMenuOpen] = useState(false)
+  // Позиция выпадающего меню рамок в координатах окна.
+  // Меню рендерится порталом в <body>: панель инструментов — горизонтально
+  // прокручиваемый контейнер (overflow-x: auto), который обрезал абсолютно
+  // спозиционированное меню, из-за чего список рамок не показывался.
+  const borderBtnRef = useRef<HTMLDivElement>(null)
+  const [borderMenuPos, setBorderMenuPos] = useState<{ left: number; bottom: number } | null>(null)
+
+  const updateBorderMenuPos = useCallback(() => {
+    const el = borderBtnRef.current
+    if (!el) return
+    const r = el.getBoundingClientRect()
+    const menuWidth = 170
+    const left = Math.max(8, Math.min(r.left, window.innerWidth - menuWidth - 8))
+    setBorderMenuPos({ left, bottom: Math.max(8, window.innerHeight - r.top + 6) })
+  }, [])
+
+  const toggleBorderMenu = useCallback(() => {
+    setBorderMenuOpen((v) => {
+      if (!v) updateBorderMenuPos()
+      return !v
+    })
+  }, [updateBorderMenuPos])
+
+  // Закрытие по клику вне меню, Escape, прокрутке и ресайзу
+  useEffect(() => {
+    if (!borderMenuOpen) return
+    const onDocDown = (e: MouseEvent | TouchEvent | PointerEvent) => {
+      const t = e.target as HTMLElement | null
+      if (t?.closest("[data-border-menu]") || t?.closest("[data-border-menu-btn]")) return
+      setBorderMenuOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setBorderMenuOpen(false) }
+    const onReflow = () => updateBorderMenuPos()
+    document.addEventListener("pointerdown", onDocDown, true)
+    document.addEventListener("keydown", onKey)
+    window.addEventListener("resize", onReflow)
+    window.addEventListener("scroll", onReflow, true)
+    return () => {
+      document.removeEventListener("pointerdown", onDocDown, true)
+      document.removeEventListener("keydown", onKey)
+      window.removeEventListener("resize", onReflow)
+      window.removeEventListener("scroll", onReflow, true)
+    }
+  }, [borderMenuOpen, updateBorderMenuPos])
 
   // ── Свёрнутое состояние: минималистичная компактная карточка ──────────────
   if (collapsed) {
@@ -222,26 +267,30 @@ function BottomZone({
         </ToolBtn>
 
         {/* Рамка — кнопка с выпадающим меню вариантов */}
-        <div className="relative shrink-0">
+        <div className="relative shrink-0" ref={borderBtnRef} data-border-menu-btn>
           <ToolBtn
-            onClick={() => setBorderMenuOpen((v) => !v)}
+            onClick={toggleBorderMenu}
             title="Добавить рамку"
           >
             <Square className="h-4 w-4" />
-            <span className="text-[11px]">Рамка ▾</span>
+            <span className="text-[11px]">Рамка {borderMenuOpen ? "▴" : "▾"}</span>
           </ToolBtn>
+        </div>
 
-          {borderMenuOpen && (
+        {/* Меню рендерим в <body>, чтобы прокручиваемая панель его не обрезала */}
+        {borderMenuOpen && borderMenuPos && typeof document !== "undefined" &&
+          createPortal(
             <div
-              className="absolute bottom-full left-0 mb-1 min-w-[140px] rounded-lg border border-border bg-background shadow-xl py-1"
-              style={{ zIndex: 9999 }}
+              data-border-menu
+              className="fixed min-w-[170px] max-h-[50vh] overflow-y-auto rounded-lg border border-border bg-background shadow-xl py-1"
+              style={{ left: borderMenuPos.left, bottom: borderMenuPos.bottom, zIndex: 10000 }}
               onPointerDown={(e) => e.stopPropagation()}
             >
               {BORDER_STYLES.map((bs) => (
                 <button
                   key={bs.key}
                   type="button"
-                  className="flex w-full items-center gap-2 px-3 py-1.5 text-[12px] hover:bg-muted transition-colors"
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-[12px] text-foreground hover:bg-muted transition-colors"
                   onClick={() => {
                     onAddBorder(bs.key)
                     setBorderMenuOpen(false)
@@ -252,9 +301,10 @@ function BottomZone({
                   {bs.label}
                 </button>
               ))}
-            </div>
+            </div>,
+            document.body,
           )}
-        </div>
+
 
         {/* 🔄 Повернуть холст на 90° */}
         <ToolBtn onClick={onRotateCanvas} title="Повернуть холст этикетки на 90°">

@@ -587,7 +587,9 @@ export async function refreshLiveData(canvas: Canvas, data: Product): Promise<vo
 }
 
 // ---------------------------------------------------------------------------
-// Кроп печатной области из увеличенного холста
+// Кроп печатной области из Fabric-холста с максимальным качеством
+// Экспортируем через toDataURL с максимальным multiplier, чтобы текст
+// и графика печатались резко на термопринтере Niimbot.
 // ---------------------------------------------------------------------------
 export function cropPrintArea(
   canvas: Canvas,
@@ -595,23 +597,43 @@ export function cropPrintArea(
   offsetX: number,
   offsetY: number,
 ): HTMLCanvasElement {
-  const el = canvas.getElement()
-  const ratio = canvas.getWidth() ? el.width / canvas.getWidth() : 1
+  // Вычисляем необходимый multiplier: хотим минимум 300 dpi при размере этикетки.
+  // Niimbot B1 печатает 203 dpi → нам нужно как минимум ×4 от экранного разрешения.
+  const TARGET_SCALE = 4
+
+  // Временно сбрасываем zoom-трансформацию Fabric, чтобы получить чистые пиксели
+  const origVT = canvas.viewportTransform ? [...canvas.viewportTransform] : [1, 0, 0, 1, 0, 0]
+
+  // Экспортируем весь canvas через toDataURL с высоким multiplier
+  canvas.setViewportTransform([1, 0, 0, 1, offsetX, offsetY])
+  const dataUrl = canvas.toDataURL({
+    format: "png",
+    multiplier: TARGET_SCALE,
+    quality: 1,
+    enableRetinaScaling: true,
+    left: 0,
+    top: 0,
+    width: sizeDef.w_px,
+    height: sizeDef.h_px,
+  })
+
+  // Восстанавливаем исходный viewport
+  canvas.setViewportTransform(origVT as [number, number, number, number, number, number])
+  canvas.requestRenderAll()
+
+  // Создаём выходной canvas с высоким разрешением
   const out = document.createElement("canvas")
-  out.width = Math.round(sizeDef.w_px * ratio)
-  out.height = Math.round(sizeDef.h_px * ratio)
+  out.width  = Math.round(sizeDef.w_px  * TARGET_SCALE)
+  out.height = Math.round(sizeDef.h_px * TARGET_SCALE)
+
   const ctx = out.getContext("2d")
   if (ctx) {
-    ctx.drawImage(
-      el,
-      Math.round(offsetX * ratio),
-      Math.round(offsetY * ratio),
-      out.width,
-      out.height,
-      0, 0,
-      out.width,
-      out.height,
-    )
+    // Отключаем сглаживание: на термопринтере чёткие края лучше
+    ctx.imageSmoothingEnabled = false
+    const img = new Image()
+    img.src = dataUrl
+    // Синхронный рендер — img уже загружен (data URL)
+    ctx.drawImage(img, 0, 0, out.width, out.height)
   }
   return out
 }

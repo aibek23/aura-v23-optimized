@@ -4,7 +4,7 @@
 // Рабочая область редактора этикеток — Многослойный холст
 // ---------------------------------------------------------------------------
 import { useEffect, useRef, useCallback, useState, type RefObject } from "react"
-import { ZoomIn, ZoomOut, Crosshair } from "lucide-react"
+import { ZoomIn, ZoomOut, Crosshair, Hand } from "lucide-react"
 import { LabelBackground } from "./label-background"
 import { ZOOM_MIN, ZOOM_MAX, ZOOM_STEP } from "./label-editor.types"
 import type { LabelSizeDef } from "@/lib/niimbot"
@@ -65,6 +65,17 @@ interface LabelEditorCanvasAreaProps {
   onZoom: (delta: number) => void
 }
 
+// Матрица поворота вокруг центра (cx, cy) на angle градусов
+function makeRotationMatrix(angleDeg: number, cx: number, cy: number): [number, number, number, number, number, number] {
+  const rad = (angleDeg * Math.PI) / 180
+  const cos = Math.cos(rad)
+  const sin = Math.sin(rad)
+  // Аффинная матрица: сдвиг в центр → поворот → сдвиг обратно
+  const tx = cx - cos * cx + sin * cy
+  const ty = cy - sin * cx - cos * cy
+  return [cos, sin, -sin, cos, tx, ty]
+}
+
 export function LabelEditorCanvasArea({
   canvasRef,
   fabricRef,
@@ -91,31 +102,14 @@ export function LabelEditorCanvasArea({
   const [pan, setPan] = useState({ x: 0, y: 0 })
   const panStartRef = useRef<{ x: number; y: number; px: number; py: number } | null>(null)
 
+  // Режим инструмента «Рука»: все касания двигают холст, объекты не выделяются
+  const [isPanMode, setIsPanMode] = useState(false)
+  const isPanModeRef = useRef(false)
+  isPanModeRef.current = isPanMode
+
   const totalW = stageW
   const totalH = stageH
 
-  // Начало координат самой этикетки на экране (строго 0,0 мм = левый верхний угол белой этикетки)
-  // Вычисляется через pan, zoom, offsetX/offsetY — не через getBoundingClientRect,
-  // чтобы значение было синхронным и не отставало от RAF.
-  const getContainerLabelOrigin = useCallback((): { x: number; y: number } | null => {
-    const el = containerRef.current
-    if (!el) return null
-    const { width: cW, height: cH } = el.getBoundingClientRect()
-    // Viewport начинается после линейки
-    const vW = cW - RULER_SIZE
-    const vH = cH - RULER_SIZE
-    // Центр stage в экранных координатах (с учётом pan)
-    const stageCX = RULER_SIZE + vW / 2 + pan.x
-    const stageCY = RULER_SIZE + vH / 2 + pan.y
-    // Левый верхний угол stage (stage позиционируется через translate(-50%,-50%) + scale)
-    const stageLeft = stageCX - (totalW / 2) * zoom
-    const stageTop  = stageCY - (totalH / 2) * zoom
-    // Левый верхний угол белой этикетки = stage + offsetX/offsetY (масштабированные)
-    return {
-      x: stageLeft + offsetX * zoom,
-      y: stageTop  + offsetY * zoom,
-    }
-  }, [pan, zoom, totalW, totalH, offsetX, offsetY])
 
   // Начало координат всей подложки (stage) — левый верхний угол серого фона
   const getStageOrigin = useCallback((): { x: number; y: number } | null => {
@@ -187,6 +181,60 @@ export function LabelEditorCanvasArea({
     }
   }, [prepareStatic, stageW, stageH])
 
+  // ── Преобразование координат этикетки (px в системе Fabric/этикетки)
+  //    в экранные координаты контейнера С УЧЁТОМ поворота холста ──────────────
+  // Порядок: точка этикетки → координаты stage (+offset) → поворот вокруг
+  // центра stage на `rotation` → масштаб zoom → смещение начала stage на экране.
+  const labelPxToScreen = useCallback(
+    (x: number, y: number): { x: number; y: number } | null => {
+      const so = getStageOrigin()
+      if (!so) return null
+      const sx = offsetX + x
+      const sy = offsetY + y
+      const cx = totalW / 2
+      const cy = totalH / 2
+      const rad = (rotation * Math.PI) / 180
+      const cos = Math.cos(rad)
+      const sin = Math.sin(rad)
+      const dx = sx - cx
+      const dy = sy - cy
+      const rx = cx + dx * cos - dy * sin
+      const ry = cy + dx * sin + dy * cos
+      return { x: so.x + rx * zoom, y: so.y + ry * zoom }
+    },
+    [getStageOrigin, offsetX, offsetY, totalW, totalH, rotation, zoom],
+  )
+
+  // Нормализованный угол 0..359
+  const rotNorm = ((rotation % 360) + 360) % 360
+
+  // Какая ось этикетки идёт вдоль экранной горизонтали/вертикали
+  const horizontalAxis: "x" | "y" = rotNorm % 180 === 0 ? "x" : "y"
+  const verticalAxis: "x" | "y" = rotNorm % 180 === 0 ? "y" : "x"
+
+  // Экранный габарит объекта с учётом поворота холста
+  const objScreenBox = useCallback(
+    (o: FabricObject) => {
+      const b = objBounds(o)
+      const pts = [
+        labelPxToScreen(b.left, b.top),
+        labelPxToScreen(b.right, b.top),
+        labelPxToScreen(b.right, b.bottom),
+        labelPxToScreen(b.left, b.bottom),
+      ].filter(Boolean) as { x: number; y: number }[]
+      if (pts.length < 4) return null
+      const xs = pts.map((p) => p.x)
+      const ys = pts.map((p) => p.y)
+      return {
+        x1: Math.min(...xs),
+        x2: Math.max(...xs),
+        y1: Math.min(...ys),
+        y2: Math.max(...ys),
+      }
+    },
+    [labelPxToScreen],
+  )
+
   const drawRulers = useCallback(() => {
     const container = containerRef.current
     if (!container) return
@@ -200,8 +248,7 @@ export function LabelEditorCanvasArea({
     const markColor   = isDark ? "rgba(244,244,245,0.85)" : "rgba(24,24,27,0.75)"
     const markActive  = "rgba(99,102,241,0.95)"
 
-    const pxPerMm = getPxPerMm(sizeDef) * zoom
-    const origin = getContainerLabelOrigin()
+    const pxPerMm = getPxPerMm(sizeDef)
     const stageOrigin = getStageOrigin()
     const fabric = fabricRef.current
     const active = fabric?.getActiveObject() ?? null
@@ -213,12 +260,46 @@ export function LabelEditorCanvasArea({
       return typeof grp.contains === "function" ? Boolean(grp.contains(o)) : false
     }
 
+    // Точка этикетки для значения мм вдоль выбранной оси
+    const axisPoint = (axis: "x" | "y", mm: number) =>
+      axis === "x" ? { x: mm * pxPerMm, y: 0 } : { x: 0, y: mm * pxPerMm }
+
+    // Экранная координата (screenAxis) для значения мм вдоль оси этикетки
+    const axisScreen = (axis: "x" | "y", screenAxis: "x" | "y", mm: number) => {
+      const p = axisPoint(axis, mm)
+      const s = labelPxToScreen(p.x, p.y)
+      return s ? s[screenAxis] : null
+    }
+
+    // Диапазон мм, попадающий на видимую часть линейки
+    const axisRange = (
+      axis: "x" | "y",
+      screenAxis: "x" | "y",
+      from: number,
+      to: number,
+    ): { start: number; end: number; step: number } | null => {
+      const at0 = axisScreen(axis, screenAxis, 0)
+      const at1 = axisScreen(axis, screenAxis, 1)
+      if (at0 === null || at1 === null) return null
+      const perMm = at1 - at0
+      if (Math.abs(perMm) < 1e-6) return null
+      const mmA = (from - at0) / perMm
+      const mmB = (to - at0) / perMm
+      const lo = Math.min(mmA, mmB)
+      const hi = Math.max(mmA, mmB)
+      return {
+        start: Math.floor(lo / 5) * 5 - 5,
+        end: Math.ceil(hi / 5) * 5 + 5,
+        step: TICK_MINOR,
+      }
+    }
+
     // ── Горизонтальная линейка (сверху) ──────────────────────────────────────
     const ctxH = prepareFixed(rulerHRef.current, cW, RULER_SIZE)
-    if (ctxH && origin && stageOrigin) {
+    if (ctxH && stageOrigin) {
       ctxH.fillStyle = rulerBg
       ctxH.fillRect(0, 0, cW, RULER_SIZE)
-      
+
       ctxH.fillStyle = rulerBg
       ctxH.fillRect(0, 0, RULER_SIZE, RULER_SIZE)
 
@@ -227,30 +308,29 @@ export function LabelEditorCanvasArea({
 
       ctxH.font = "8px system-ui, sans-serif"
       ctxH.textAlign = "center"
-      const startMm = Math.floor(-origin.x / pxPerMm / 5) * 5 - 5
-      const endMm   = Math.ceil((cW - origin.x) / pxPerMm / 5) * 5 + 5
 
-      for (let mm = startMm; mm <= endMm; mm += TICK_MINOR) {
-        const x = origin.x + mm * pxPerMm
-        if (x < RULER_SIZE || x > cW) continue
-        const isMajor = mm % TICK_MAJOR === 0
-        const tickH = isMajor ? 7 : 4
-        ctxH.fillStyle = rulerFg
-        ctxH.fillRect(x, RULER_SIZE - tickH, 1, tickH)
-        if (isMajor) {
-          ctxH.fillStyle = rulerText
-          ctxH.fillText(`${mm}`, x, 8)
+      const range = axisRange(horizontalAxis, "x", RULER_SIZE, cW)
+      if (range) {
+        for (let mm = range.start; mm <= range.end; mm += range.step) {
+          const x = axisScreen(horizontalAxis, "x", mm)
+          if (x === null || x < RULER_SIZE || x > cW) continue
+          const isMajor = mm % TICK_MAJOR === 0
+          const tickH = isMajor ? 7 : 4
+          ctxH.fillStyle = rulerFg
+          ctxH.fillRect(x, RULER_SIZE - tickH, 1, tickH)
+          if (isMajor) {
+            ctxH.fillStyle = rulerText
+            ctxH.fillText(`${mm}`, x, 8)
+          }
         }
       }
 
-      // 1. Подсветка активного объекта
+      // 1. Подсветка активного объекта (экранный габарит с учётом поворота)
       if (active) {
-        const b = objBounds(active)
-        const x1 = origin.x + b.left * zoom
-        const x2 = origin.x + b.right * zoom
-        if (x2 > RULER_SIZE && x1 < cW) {
-          const drawX1 = Math.max(x1, RULER_SIZE)
-          const drawX2 = Math.min(x2, cW)
+        const box = objScreenBox(active)
+        if (box && box.x2 > RULER_SIZE && box.x1 < cW) {
+          const drawX1 = Math.max(box.x1, RULER_SIZE)
+          const drawX2 = Math.min(box.x2, cW)
           ctxH.fillStyle = "rgba(99,102,241,0.15)"
           ctxH.fillRect(drawX1, 0, drawX2 - drawX1, RULER_SIZE - 1)
         }
@@ -259,10 +339,10 @@ export function LabelEditorCanvasArea({
       // 2. Засечки всех объектов на линейке
       for (const o of measurableObjects(fabric)) {
         const isActive = isSameOrInside(o)
-        const b = objBounds(o)
+        const box = objScreenBox(o)
+        if (!box) continue
         const thick = isActive ? 2 : 1
-        for (const px of [b.left, b.right]) {
-          const x = origin.x + px * zoom
+        for (const x of [box.x1, box.x2]) {
           if (x < RULER_SIZE - 0.5 || x > cW) continue
           ctxH.fillStyle = isActive ? markActive : markColor
           ctxH.fillRect(x - (thick - 1) / 2, RULER_SIZE - (isActive ? 10 : 7), thick, isActive ? 10 : 7)
@@ -277,7 +357,7 @@ export function LabelEditorCanvasArea({
 
     // ── Вертикальная линейка (слева) ──────────────────────────────────────────
     const ctxV = prepareFixed(rulerVRef.current, RULER_SIZE, cH)
-    if (ctxV && origin && stageOrigin) {
+    if (ctxV && stageOrigin) {
       ctxV.fillStyle = rulerBg
       ctxV.fillRect(0, 0, RULER_SIZE, cH)
 
@@ -286,34 +366,33 @@ export function LabelEditorCanvasArea({
 
       ctxV.font = "8px system-ui, sans-serif"
       ctxV.textAlign = "right"
-      const startMm = Math.floor(-origin.y / pxPerMm / 5) * 5 - 5
-      const endMm   = Math.ceil((cH - origin.y) / pxPerMm / 5) * 5 + 5
 
-      for (let mm = startMm; mm <= endMm; mm += TICK_MINOR) {
-        const y = origin.y + mm * pxPerMm
-        if (y < RULER_SIZE || y > cH) continue
-        const isMajor = mm % TICK_MAJOR === 0
-        const tickW = isMajor ? 7 : 4
-        ctxV.fillStyle = rulerFg
-        ctxV.fillRect(RULER_SIZE - tickW, y, tickW, 1)
-        if (isMajor) {
-          ctxV.save()
-          ctxV.translate(9, y)
-          ctxV.rotate(-Math.PI / 2)
-          ctxV.fillStyle = rulerText
-          ctxV.fillText(`${mm}`, 0, 0)
-          ctxV.restore()
+      const range = axisRange(verticalAxis, "y", RULER_SIZE, cH)
+      if (range) {
+        for (let mm = range.start; mm <= range.end; mm += range.step) {
+          const y = axisScreen(verticalAxis, "y", mm)
+          if (y === null || y < RULER_SIZE || y > cH) continue
+          const isMajor = mm % TICK_MAJOR === 0
+          const tickW = isMajor ? 7 : 4
+          ctxV.fillStyle = rulerFg
+          ctxV.fillRect(RULER_SIZE - tickW, y, tickW, 1)
+          if (isMajor) {
+            ctxV.save()
+            ctxV.translate(9, y)
+            ctxV.rotate(-Math.PI / 2)
+            ctxV.fillStyle = rulerText
+            ctxV.fillText(`${mm}`, 0, 0)
+            ctxV.restore()
+          }
         }
       }
 
       // 1. Подсветка активного объекта
       if (active) {
-        const b = objBounds(active)
-        const y1 = origin.y + b.top * zoom
-        const y2 = origin.y + b.bottom * zoom
-        if (y2 > RULER_SIZE && y1 < cH) {
-          const drawY1 = Math.max(y1, RULER_SIZE)
-          const drawY2 = Math.min(y2, cH)
+        const box = objScreenBox(active)
+        if (box && box.y2 > RULER_SIZE && box.y1 < cH) {
+          const drawY1 = Math.max(box.y1, RULER_SIZE)
+          const drawY2 = Math.min(box.y2, cH)
           ctxV.fillStyle = "rgba(99,102,241,0.15)"
           ctxV.fillRect(0, drawY1, RULER_SIZE - 1, drawY2 - drawY1)
         }
@@ -322,17 +401,26 @@ export function LabelEditorCanvasArea({
       // 2. Засечки всех объектов на линейке
       for (const o of measurableObjects(fabric)) {
         const isActive = isSameOrInside(o)
-        const b = objBounds(o)
+        const box = objScreenBox(o)
+        if (!box) continue
         const thick = isActive ? 2 : 1
-        for (const py of [b.top, b.bottom]) {
-          const y = origin.y + py * zoom
+        for (const y of [box.y1, box.y2]) {
           if (y < RULER_SIZE - 0.5 || y > cH) continue
           ctxV.fillStyle = isActive ? markActive : markColor
           ctxV.fillRect(RULER_SIZE - (isActive ? 10 : 7), y - (thick - 1) / 2, isActive ? 10 : 7, thick)
         }
       }
     }
-  }, [prepareFixed, sizeDef, zoom, fabricRef, getContainerLabelOrigin, getStageOrigin])
+  }, [
+    prepareFixed,
+    sizeDef,
+    fabricRef,
+    getStageOrigin,
+    labelPxToScreen,
+    objScreenBox,
+    horizontalAxis,
+    verticalAxis,
+  ])
 
   const drawEdgeIndicators = useCallback(() => {
     const container = containerRef.current
@@ -344,83 +432,106 @@ export function LabelEditorCanvasArea({
     const ctx = prepareFixed(el, cW, cH)
     if (!ctx) return
 
-    // При повороте холста линейки/направляющие считаются в неповёрнутых
-    // координатах — отключаем их, чтобы не показывать неверные значения
-    if (rotation % 360 !== 0) return
-
     const fabric = fabricRef.current
     const activeObj = fabric?.getActiveObject()
     if (!activeObj) return
 
-    const origin = getContainerLabelOrigin()
-    if (!origin) return
-
-    // ИСПРАВЛЕНО: getBoundingRect() — реальные края с учётом угла поворота
+    // getBoundingRect() — реальные края объекта в координатах этикетки
     const b = objBounds(activeObj)
     const accent = "rgba(99,102,241,0.95)"
     const accentSoft = "rgba(99,102,241,0.45)"
     const pxPerMm = getPxPerMm(sizeDef)
 
-    // ИСПРАВЛЕНО: координаты краёв объекта в мм от (0,0) этикетки
-    const leftMm   = b.left   / pxPerMm
-    const rightMm  = b.right  / pxPerMm
-    const topMm    = b.top    / pxPerMm
-    const bottomMm = b.bottom / pxPerMm
+    // Габариты самой этикетки на экране (с учётом поворота) —
+    // ограничивают длину направляющих линий
+    const labelCorners = [
+      labelPxToScreen(0, 0),
+      labelPxToScreen(sizeDef.w_px, 0),
+      labelPxToScreen(sizeDef.w_px, sizeDef.h_px),
+      labelPxToScreen(0, sizeDef.h_px),
+    ].filter(Boolean) as { x: number; y: number }[]
+    if (labelCorners.length < 4) return
+    const labelLeft   = Math.min(...labelCorners.map((p) => p.x))
+    const labelRight  = Math.max(...labelCorners.map((p) => p.x))
+    const labelTop    = Math.min(...labelCorners.map((p) => p.y))
+    const labelBottom = Math.max(...labelCorners.map((p) => p.y))
 
-    const labelRight  = origin.x + sizeDef.w_px * zoom
-    const labelBottom = origin.y + sizeDef.h_px * zoom
+    // Каждое ребро габарита объекта переводим в экран целиком:
+    // после поворота на 90/270° «левое» ребро этикетки может стать
+    // горизонтальной линией на экране — учитываем это.
+    type Guide = { orientation: "v" | "h"; pos: number; mm: number }
+    const guides: Guide[] = []
+
+    const pushEdge = (
+      p1: { x: number; y: number } | null,
+      p2: { x: number; y: number } | null,
+      mm: number,
+    ) => {
+      if (!p1 || !p2) return
+      const dx = Math.abs(p1.x - p2.x)
+      const dy = Math.abs(p1.y - p2.y)
+      if (dx <= dy) guides.push({ orientation: "v", pos: (p1.x + p2.x) / 2, mm })
+      else guides.push({ orientation: "h", pos: (p1.y + p2.y) / 2, mm })
+    }
+
+    // Вертикальные рёбра этикетки (x = left/right)
+    for (const px of [b.left, b.right]) {
+      pushEdge(labelPxToScreen(px, b.top), labelPxToScreen(px, b.bottom), px / pxPerMm)
+    }
+    // Горизонтальные рёбра этикетки (y = top/bottom)
+    for (const py of [b.top, b.bottom]) {
+      pushEdge(labelPxToScreen(b.left, py), labelPxToScreen(b.right, py), py / pxPerMm)
+    }
 
     ctx.save()
     ctx.font = "8px system-ui, sans-serif"
     ctx.textAlign = "center"
 
-    // ── Вертикальные направляющие (левый и правый КРАЙ объекта) ──
-    for (const mm of [leftMm, rightMm]) {
-      // ИСПРАВЛЕНО: x = origin + мм * pxPerMm * zoom (привязка к краю, не центру)
-      const x = origin.x + mm * pxPerMm * zoom
-      if (x < RULER_SIZE || x > cW) continue
-      const labelStr = mm.toFixed(1)
-      const tw = ctx.measureText(labelStr).width + 6
+    for (const g of guides) {
+      const labelStr = g.mm.toFixed(1)
 
-      ctx.strokeStyle = accentSoft
-      ctx.lineWidth = 0.75
-      ctx.setLineDash([4, 4])
-      ctx.beginPath()
-      ctx.moveTo(x, RULER_SIZE)
-      ctx.lineTo(x, Math.min(labelBottom, cH))
-      ctx.stroke()
-      ctx.setLineDash([])
+      if (g.orientation === "v") {
+        const x = g.pos
+        if (x < RULER_SIZE || x > cW) continue
+        const tw = ctx.measureText(labelStr).width + 6
 
-      ctx.fillStyle = accent
-      ctx.fillRect(x - tw / 2, 2, tw, 11)
-      ctx.fillStyle = "#ffffff"
-      ctx.fillText(labelStr, x, 10)
-    }
+        ctx.strokeStyle = accentSoft
+        ctx.lineWidth = 0.75
+        ctx.setLineDash([4, 4])
+        ctx.beginPath()
+        ctx.moveTo(x, Math.max(RULER_SIZE, Math.min(labelTop, cH)))
+        ctx.lineTo(x, Math.min(labelBottom, cH))
+        ctx.stroke()
+        ctx.setLineDash([])
 
-    // ── Горизонтальные направляющие (верхний и нижний КРАЙ объекта) ──
-    for (const mm of [topMm, bottomMm]) {
-      // ИСПРАВЛЕНО: y = origin + мм * pxPerMm * zoom (привязка к краю)
-      const y = origin.y + mm * pxPerMm * zoom
-      if (y < RULER_SIZE || y > cH) continue
-      const labelStr = mm.toFixed(1)
+        ctx.fillStyle = accent
+        ctx.fillRect(x - tw / 2, 2, tw, 11)
+        ctx.fillStyle = "#ffffff"
+        ctx.fillText(labelStr, x, 10)
+      } else {
+        const y = g.pos
+        if (y < RULER_SIZE || y > cH) continue
 
-      ctx.strokeStyle = accentSoft
-      ctx.lineWidth = 0.75
-      ctx.setLineDash([4, 4])
-      ctx.beginPath()
-      ctx.moveTo(RULER_SIZE, y)
-      ctx.lineTo(Math.min(labelRight, cW), y)
-      ctx.stroke()
-      ctx.setLineDash([])
+        ctx.strokeStyle = accentSoft
+        ctx.lineWidth = 0.75
+        ctx.setLineDash([4, 4])
+        ctx.beginPath()
+        ctx.moveTo(Math.max(RULER_SIZE, Math.min(labelLeft, cW)), y)
+        ctx.lineTo(Math.min(labelRight, cW), y)
+        ctx.stroke()
+        ctx.setLineDash([])
 
-      ctx.fillStyle = accent
-      ctx.fillRect(1, y - 5.5, RULER_SIZE - 2, 11)
-      ctx.fillStyle = "#ffffff"
-      ctx.fillText(labelStr, RULER_SIZE / 2, y + 3)
+        ctx.fillStyle = accent
+        ctx.fillRect(1, y - 5.5, RULER_SIZE - 2, 11)
+        ctx.fillStyle = "#ffffff"
+        ctx.textAlign = "center"
+        ctx.fillText(labelStr, RULER_SIZE / 2, y + 3)
+      }
     }
 
     ctx.restore()
-  }, [prepareFixed, sizeDef, zoom, rotation, fabricRef, getContainerLabelOrigin])
+  }, [prepareFixed, sizeDef, fabricRef, labelPxToScreen])
+
 
   useEffect(() => {
     drawStatic()
@@ -514,17 +625,47 @@ export function LabelEditorCanvasArea({
     }
   }, [fabricRef, drawRulers, drawEdgeIndicators, prepareFixed, sizeKey])
 
-  // ИСПРАВЛЕНО: панорамирование через глобальные слушатели окна.
+  // Применяем поворот к Fabric canvas через viewportTransform (не CSS),
+  // чтобы холст оставался полностью интерактивным при любом угле.
+  useEffect(() => {
+    const fabric = fabricRef.current
+    if (!fabric) return
+    const cx = stageW / 2
+    const cy = stageH / 2
+    // ВАЖНО: базовое смещение всегда offsetX/offsetY (а не текущее значение из
+    // viewportTransform) — иначе повторные повороты накапливают сдвиг и
+    // координаты линеек расходятся с реальным положением объектов.
+    const [a, b, c, d, e, f] = makeRotationMatrix(rotation, cx, cy)
+    const tx = offsetX
+    const ty = offsetY
+    if (rotation % 360 === 0) {
+      fabric.setViewportTransform([1, 0, 0, 1, tx, ty])
+    } else {
+      // Поворот вокруг центра stage поверх базового смещения:
+      // p → R(p + t) вокруг (cx, cy)
+      fabric.setViewportTransform([
+        a, b, c, d,
+        e + a * tx + c * ty,
+        f + b * tx + d * ty,
+      ])
+    }
+
+    fabric.requestRenderAll()
+    // Разрешаем выделение/взаимодействие при любом угле
+    fabric.selection = true
+    fabric.getObjects().forEach((o) => { o.selectable = true; o.evented = true })
+  }, [rotation, fabricRef, stageW, stageH, offsetX, offsetY, sizeKey])
+
+  // Панорамирование через глобальные слушатели окна.
   // Fabric может перехватывать pointer-события внутри своего слоя (pointer capture),
   // поэтому move/up слушаем на window — перетаскивание не «теряется».
   const isPanningRef = useRef(false)
-  // FIX 3: track whether Fabric is currently transforming/dragging an object
+  // Отслеживаем, тянет ли Fabric объект в данный момент
   const isTransformingRef = useRef(false)
   const panRef = useRef(pan)
   panRef.current = pan
 
   const startPan = useCallback((clientX: number, clientY: number) => {
-    // FIX 3: never start canvas pan while an object is being dragged/transformed
     if (isTransformingRef.current) return
     isPanningRef.current = true
     panStartRef.current = { x: panRef.current.x, y: panRef.current.y, px: clientX, py: clientY }
@@ -544,7 +685,9 @@ export function LabelEditorCanvasArea({
       if (!isPanningRef.current) return
       isPanningRef.current = false
       panStartRef.current = null
-      if (viewportRef.current) viewportRef.current.style.cursor = "grab"
+      if (viewportRef.current) {
+        viewportRef.current.style.cursor = isPanModeRef.current ? "grab" : "default"
+      }
     }
     window.addEventListener("pointermove", onMove, { passive: false })
     window.addEventListener("pointerup", onUp)
@@ -560,15 +703,43 @@ export function LabelEditorCanvasArea({
     }
   }, [])
 
-  // Клик по пустому месту рабочей области (вне Fabric-объектов) — начинаем pan
+  // Когда меняется режим Pan — обновляем состояние Fabric (selection on/off)
+  useEffect(() => {
+    const fabric = fabricRef.current
+    if (!fabric) return
+    if (isPanMode) {
+      // Режим «Рука»: Fabric не выделяет объекты, все касания — панорамирование
+      fabric.selection = false
+      fabric.getObjects().forEach((o) => { o.selectable = false; o.evented = false })
+      if (viewportRef.current) viewportRef.current.style.cursor = "grab"
+    } else {
+      // Режим редактирования: восстанавливаем интерактивность
+      fabric.selection = true
+      fabric.getObjects().forEach((o) => {
+        const role = (o as unknown as { data?: { role?: string } }).data?.role
+        o.selectable = role !== "bg"
+        o.evented = role !== "bg"
+      })
+      if (viewportRef.current) viewportRef.current.style.cursor = "default"
+    }
+    fabric.requestRenderAll()
+  }, [isPanMode, fabricRef, sizeKey])
+
+  // Клик по рабочей области
   const onPanPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    // FIX 3: block canvas pan if an object transform is active
-    if (isTransformingRef.current) return
+    if (isTransformingRef.current && !isPanModeRef.current) return
+
+    // В режиме «Рука» — ВСЕГДА панорамируем, Fabric заблокирован
+    if (isPanModeRef.current) {
+      startPan(e.clientX, e.clientY)
+      return
+    }
+
+    // Стандартный режим: средняя кнопка мыши / Alt / одиночный тач вне объекта
     const forcePan = e.button === 1 || e.altKey || e.pointerType === "touch"
     if (!forcePan) {
       if (e.button !== 0) return
       const fabric = fabricRef.current
-      // Если клик пришёл по холсту Fabric и там есть активный/попавший объект — не панорамируем
       const overFabric = (e.target as HTMLElement)?.tagName === "CANVAS" &&
         !!(e.target as HTMLElement).closest("[data-fabric-layer]")
       if (overFabric && fabric) {
@@ -582,37 +753,32 @@ export function LabelEditorCanvasArea({
     startPan(e.clientX, e.clientY)
   }, [fabricRef, startPan])
 
-  // FIX 3: track Fabric transform start/end to block canvas pan during object drag
- useEffect(() => {
+  // Отслеживаем старт/конец трансформации объекта в Fabric
+  useEffect(() => {
     const fabric = fabricRef.current
     if (!fabric) return
-
     const onTransformStart = () => { isTransformingRef.current = true }
     const onTransformEnd   = () => { isTransformingRef.current = false }
-
     const transformEvents = ["object:moving", "object:scaling", "object:rotating"] as const
-    
     transformEvents.forEach((ev) => fabric.on(ev, onTransformStart))
     fabric.on("object:modified", onTransformEnd)
     fabric.on("mouse:up", onTransformEnd)
-    
-    // Приводим к any, чтобы TypeScript не ругался на отсутствие в типах
-    fabric.on("touch:end" as any, onTransformEnd)
-
+    fabric.on("touch:end" as never, onTransformEnd)
     return () => {
       transformEvents.forEach((ev) => fabric.off(ev, onTransformStart))
       fabric.off("object:modified", onTransformEnd)
       fabric.off("mouse:up", onTransformEnd)
-      fabric.off("touch:end" as any, onTransformEnd)
+      fabric.off("touch:end" as never, onTransformEnd)
     }
   }, [fabricRef])
 
-  // Дублируем через события самого Fabric: клик по пустой области холста
+  // Клик по пустой области холста через Fabric-события (запасной путь)
   useEffect(() => {
     const fabric = fabricRef.current
     if (!fabric) return
     const onFabricDown = (opt: { target?: unknown; e: MouseEvent | TouchEvent | PointerEvent }) => {
-      // FIX 3: if a Fabric object was hit, mark transform start and skip pan
+      // В режиме «Рука» pan уже запускается через onPanPointerDown — не дублируем
+      if (isPanModeRef.current) return
       if (opt.target) {
         isTransformingRef.current = true
         return
@@ -624,12 +790,11 @@ export function LabelEditorCanvasArea({
       startPan(cx, cy)
     }
     fabric.on("mouse:down", onFabricDown as never)
-    return () => {
-      fabric.off("mouse:down", onFabricDown as never)
-    }
+    return () => { fabric.off("mouse:down", onFabricDown as never) }
   }, [fabricRef, startPan])
 
   const resetView = useCallback(() => setPan({ x: 0, y: 0 }), [])
+  const togglePanMode = useCallback(() => setIsPanMode((v) => !v), [])
 
   return (
     <div
@@ -637,9 +802,9 @@ export function LabelEditorCanvasArea({
       className="relative h-full w-full overflow-hidden"
       style={{ background: "linear-gradient(135deg, #a1a1aa 0%, #d4d4d8 50%, #e4e4e7 100%)" }}
     >
-      {/* ИСПРАВЛЕНО: viewport принимает pointer-события для pan.
-          Fabric-слой НЕ блокирует pan — onPointerDown проверяет hittest через findTarget.
-          cursor: grab показывается только когда не тянем объект (isPanningRef). */}
+      {/* Viewport: принимает pointer-события для pan.
+          В режиме «Рука» cursor:grab, иначе cursor:default.
+          Fabric-слой обрабатывает клики по объектам самостоятельно. */}
       <div
         ref={viewportRef}
         className="absolute"
@@ -648,26 +813,28 @@ export function LabelEditorCanvasArea({
           top: RULER_SIZE,
           left: RULER_SIZE,
           touchAction: "none",
-          cursor: "grab",
+          cursor: isPanMode ? "grab" : "default",
           userSelect: "none",
         }}
         onPointerDown={onPanPointerDown}
       >
+        {/* Поворот холста реализован через Fabric viewportTransform — НЕ через CSS rotate.
+            CSS transform содержит только pan + scale, без rotate.
+            Это гарантирует полную интерактивность Fabric при любом угле поворота. */}
         <div
           ref={stageLayerRef}
           className="absolute left-1/2 top-1/2"
           style={{
-            transform: `translate3d(calc(-50% + ${pan.x}px), calc(-50% + ${pan.y}px), 0) scale(${zoom}) rotate(${rotation}deg)`,
+            transform: `translate3d(calc(-50% + ${pan.x}px), calc(-50% + ${pan.y}px), 0) scale(${zoom})`,
             transformOrigin: "center center",
             width: totalW,
             height: totalH,
-            // ИСПРАВЛЕНО: overflow:visible — элементы за пределами этикетки видимы
             overflow: "visible",
           }}
         >
           <canvas ref={staticCanvasRef} className="absolute top-0 left-0 pointer-events-none" style={{ zIndex: 1 }} />
 
-          {/* Слой SVG-подложки этикетки */}
+          {/* SVG-подложка этикетки: поворачивается через CSS (только визуал, не интерактивна) */}
           <div
             ref={labelLayerRef}
             className="absolute pointer-events-none"
@@ -676,14 +843,16 @@ export function LabelEditorCanvasArea({
               left: offsetX - 24,
               zIndex: 2,
               overflow: "visible",
+              transformOrigin: `${totalW / 2 - (offsetX - 24)}px ${totalH / 2 - (offsetY - 24)}px`,
+              transform: rotation % 360 !== 0 ? `rotate(${rotation}deg)` : undefined,
             }}
           >
             <LabelBackground sizeDef={sizeDef} style={{ position: "absolute", top: 0, left: 0 }} />
           </div>
 
-          {/* ИСПРАВЛЕНО: Fabric-слой покрывает весь stage, overflow:visible.
+          {/* Fabric-слой покрывает весь stage, overflow:visible.
               pointer-events:auto — Fabric сам обрабатывает клики по объектам.
-              Pan начинается только при клике в пустую область (см. onPanPointerDown). */}
+              В режиме «Рука» pointer-events:none — все касания идут в onPanPointerDown. */}
           <div
             data-fabric-layer
             className="absolute"
@@ -695,6 +864,7 @@ export function LabelEditorCanvasArea({
               zIndex: 3,
               touchAction: "none",
               overflow: "visible",
+              pointerEvents: isPanMode ? "none" : "auto",
             }}
           >
             <canvas ref={canvasRef} style={{ display: "block", overflow: "visible" }} />
@@ -706,17 +876,53 @@ export function LabelEditorCanvasArea({
       <canvas ref={rulerVRef} className="absolute top-0 left-0 pointer-events-none" style={{ zIndex: 21, width: RULER_SIZE, height: "100%" }} />
       <canvas ref={guidesCanvasRef} className="absolute top-0 left-0 pointer-events-none" style={{ zIndex: 23 }} />
 
+      {/* Панель зума + кнопка Pan Tool (Рука) */}
       <div className="pointer-events-none absolute bottom-3 right-3 z-30 flex items-center gap-1">
         <div className="pointer-events-auto flex items-center gap-0.5 rounded-full border border-white/20 bg-black/35 px-1 py-0.5 backdrop-blur-md shadow-lg">
-          <button type="button" onClick={() => onZoom(-ZOOM_STEP)} disabled={zoom <= ZOOM_MIN} className="rounded-full p-1.5 text-white/80 transition-colors hover:bg-white/10 hover:text-white disabled:opacity-30">
+          <button
+            type="button"
+            onClick={() => onZoom(-ZOOM_STEP)}
+            disabled={zoom <= ZOOM_MIN}
+            className="rounded-full p-1.5 text-white/80 transition-colors hover:bg-white/10 hover:text-white disabled:opacity-30"
+            title="Уменьшить"
+          >
             <ZoomOut className="h-4 w-4" />
           </button>
-          <span className="w-9 select-none text-center font-mono text-[10px] text-white/95">{Math.round(zoom * 100)}%</span>
-          <button type="button" onClick={() => onZoom(ZOOM_STEP)} disabled={zoom >= ZOOM_MAX} className="rounded-full p-1.5 text-white/80 transition-colors hover:bg-white/10 hover:text-white disabled:opacity-30">
+          <span className="w-9 select-none text-center font-mono text-[10px] text-white/95">
+            {Math.round(zoom * 100)}%
+          </span>
+          <button
+            type="button"
+            onClick={() => onZoom(ZOOM_STEP)}
+            disabled={zoom >= ZOOM_MAX}
+            className="rounded-full p-1.5 text-white/80 transition-colors hover:bg-white/10 hover:text-white disabled:opacity-30"
+            title="Увеличить"
+          >
             <ZoomIn className="h-4 w-4" />
           </button>
           <span className="mx-0.5 h-4 w-px bg-white/20" />
-          <button type="button" onClick={resetView} className="rounded-full p-1.5 text-white/80 transition-colors hover:bg-white/10 hover:text-white">
+          {/* Кнопка «Рука» / Pan Tool: тап включает режим панорамирования холста.
+              Активный режим подсвечивается белым фоном. */}
+          <button
+            type="button"
+            onClick={togglePanMode}
+            title={isPanMode ? "Выключить режим перемещения" : "Режим перемещения холста (Рука)"}
+            className={[
+              "rounded-full p-1.5 transition-colors",
+              isPanMode
+                ? "bg-white/25 text-white ring-1 ring-white/50"
+                : "text-white/80 hover:bg-white/10 hover:text-white",
+            ].join(" ")}
+          >
+            <Hand className="h-4 w-4" />
+          </button>
+          <span className="mx-0.5 h-4 w-px bg-white/20" />
+          <button
+            type="button"
+            onClick={resetView}
+            title="Сбросить позицию"
+            className="rounded-full p-1.5 text-white/80 transition-colors hover:bg-white/10 hover:text-white"
+          >
             <Crosshair className="h-4 w-4" />
           </button>
         </div>
