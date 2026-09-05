@@ -63,6 +63,8 @@ interface LabelEditorCanvasAreaProps {
   sizeKey: string
   rotation?: number
   onZoom: (delta: number) => void
+  /** Прямая установка масштаба (жест «щипок» двумя пальцами) */
+  onZoomTo?: (zoom: number) => void
 }
 
 // Матрица поворота вокруг центра (cx, cy) на angle градусов
@@ -88,6 +90,7 @@ export function LabelEditorCanvasArea({
   sizeKey,
   rotation = 0,
   onZoom,
+  onZoomTo,
 }: LabelEditorCanvasAreaProps) {
   const staticCanvasRef = useRef<HTMLCanvasElement>(null)
   const rulerHRef = useRef<HTMLCanvasElement>(null)
@@ -799,6 +802,142 @@ export function LabelEditorCanvasArea({
     fabric.on("mouse:down", onFabricDown as never)
     return () => { fabric.off("mouse:down", onFabricDown as never) }
   }, [fabricRef, startPan])
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Масштабирование двумя пальцами (pinch-to-zoom) + перенос холста жестом.
+  // Слушатели вешаем в фазе capture, чтобы Fabric не перехватывал касания.
+  // ─────────────────────────────────────────────────────────────────────────
+  const zoomRef = useRef(zoom)
+  zoomRef.current = zoom
+  const onZoomToRef = useRef(onZoomTo)
+  onZoomToRef.current = onZoomTo
+
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+
+    const pointers = new Map<number, { x: number; y: number }>()
+    let pinch: {
+      dist: number
+      zoom: number
+      pan: { x: number; y: number }
+      mid: { x: number; y: number }
+    } | null = null
+
+    const dist = (a: { x: number; y: number }, b: { x: number; y: number }) =>
+      Math.hypot(a.x - b.x, a.y - b.y)
+
+    const two = () => [...pointers.values()].slice(0, 2)
+
+    const setFabricInteractive = (on: boolean) => {
+      const fabric = fabricRef.current
+      if (!fabric) return
+      const f = fabric as unknown as { skipTargetFind: boolean; _currentTransform: unknown }
+      f.skipTargetFind = !on
+      if (!on) {
+        f._currentTransform = null
+        fabric.discardActiveObject()
+        fabric.requestRenderAll()
+      }
+    }
+
+    const startPinch = () => {
+      const [p1, p2] = two()
+      if (!p1 || !p2) return
+      // Прерываем обычное панорамирование и трансформацию объекта
+      isPanningRef.current = false
+      panStartRef.current = null
+      isTransformingRef.current = false
+      setFabricInteractive(false)
+      pinch = {
+        dist: Math.max(1, dist(p1, p2)),
+        zoom: zoomRef.current,
+        pan: { ...panRef.current },
+        mid: { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 },
+      }
+    }
+
+    const endPinch = () => {
+      if (!pinch) return
+      pinch = null
+      setFabricInteractive(true)
+    }
+
+    const onDown = (e: PointerEvent) => {
+      if (e.pointerType !== "touch") return
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY })
+      if (pointers.size === 2) startPinch()
+    }
+
+    const onMove = (e: PointerEvent) => {
+      if (e.pointerType !== "touch") return
+      if (!pointers.has(e.pointerId)) return
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY })
+      if (!pinch || pointers.size < 2) return
+
+      e.preventDefault()
+      e.stopPropagation()
+
+      const [p1, p2] = two()
+      if (!p1 || !p2) return
+
+      const rect = el.getBoundingClientRect()
+      // Центр области просмотра (относительно контейнера)
+      const cX = RULER_SIZE + (rect.width - RULER_SIZE) / 2
+      const cY = RULER_SIZE + (rect.height - RULER_SIZE) / 2
+
+      const newDist = Math.max(1, dist(p1, p2))
+      const nextZoom = Math.min(
+        ZOOM_MAX,
+        Math.max(ZOOM_MIN, pinch.zoom * (newDist / pinch.dist)),
+      )
+
+      // Точка холста под центром жеста остаётся на месте
+      const midStartX = pinch.mid.x - rect.left
+      const midStartY = pinch.mid.y - rect.top
+      const vx = (midStartX - cX - pinch.pan.x) / pinch.zoom
+      const vy = (midStartY - cY - pinch.pan.y) / pinch.zoom
+
+      const midX = (p1.x + p2.x) / 2 - rect.left
+      const midY = (p1.y + p2.y) / 2 - rect.top
+
+      setPan({ x: midX - cX - vx * nextZoom, y: midY - cY - vy * nextZoom })
+      onZoomToRef.current?.(nextZoom)
+    }
+
+    const onUp = (e: PointerEvent) => {
+      if (e.pointerType !== "touch") return
+      pointers.delete(e.pointerId)
+      if (pointers.size < 2) endPinch()
+    }
+
+    // Ctrl + колесо / трекпад-щипок на десктопе
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey) return
+      e.preventDefault()
+      const dy = e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 100 : 1)
+      const next = Math.min(
+        ZOOM_MAX,
+        Math.max(ZOOM_MIN, zoomRef.current * Math.exp(-dy * 0.002)),
+      )
+      onZoomToRef.current?.(next)
+    }
+
+    el.addEventListener("pointerdown", onDown, { capture: true })
+    el.addEventListener("pointermove", onMove, { capture: true, passive: false })
+    el.addEventListener("pointerup", onUp, { capture: true })
+    el.addEventListener("pointercancel", onUp, { capture: true })
+    el.addEventListener("wheel", onWheel, { passive: false })
+
+    return () => {
+      el.removeEventListener("pointerdown", onDown, { capture: true } as EventListenerOptions)
+      el.removeEventListener("pointermove", onMove, { capture: true } as EventListenerOptions)
+      el.removeEventListener("pointerup", onUp, { capture: true } as EventListenerOptions)
+      el.removeEventListener("pointercancel", onUp, { capture: true } as EventListenerOptions)
+      el.removeEventListener("wheel", onWheel)
+      endPinch()
+    }
+  }, [fabricRef])
 
   const resetView = useCallback(() => setPan({ x: 0, y: 0 }), [])
   const togglePanMode = useCallback(() => setIsPanMode((v) => !v), [])

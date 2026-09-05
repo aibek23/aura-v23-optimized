@@ -20,7 +20,7 @@ import {
   type LabelEditorProps,
 } from "./label-editor.types"
 import { applyBgRect, applyTemplate, parseTemplate, serializeLayout } from "./label-editor.template"
-import { buildDefaultLayout, cropPrintArea, refreshLiveData, attachSmartGuides, addBorderToCanvas, attachTextAutoHeight, createTextbox, fitTextboxHeight } from "./label-editor.canvas"
+import { buildDefaultLayout, cropPrintArea, refreshLiveData, attachSmartGuides, addBorderToCanvas, attachTextAutoHeight, createTextbox, refitTextbox, setAutoFit, setFitRatio, isAutoFit, getFitRatio, clampRatio } from "./label-editor.canvas"
 import type { BorderStyleKey } from "./label-editor-toolbar"
 import { LabelEditorToolbar } from "./label-editor-toolbar"
 import { LabelEditorCanvasArea } from "./label-editor-canvas-area"
@@ -47,6 +47,9 @@ export function LabelEditor({
   const [zoom, setZoom] = useState(1)
   const [collapsed, setCollapsed] = useState(false)
   const [rotation, setRotation] = useState(0)
+  // Автомасштабирование текста под габариты блока + коэффициент заполнения
+  const [autoFit, setAutoFitState] = useState(true)
+  const [fitRatio, setFitRatioState] = useState(1)
 
   const sizeDef = LABEL_SIZES[sizeKey]
   const category = product.category || "Прочее"
@@ -180,6 +183,11 @@ export function LabelEditor({
     setZoom((z) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, parseFloat((z + delta).toFixed(2)))))
   }, [])
 
+  // Прямая установка масштаба — используется жестом «щипок» двумя пальцами
+  const handleZoomTo = useCallback((value: number) => {
+    setZoom(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, parseFloat(value.toFixed(3)))))
+  }, [])
+
   // ---- Инструменты редактирования -----------------------------------------
   const applyToSelection = (patch: Record<string, unknown>) => {
     const canvas = fabricRef.current
@@ -187,7 +195,7 @@ export function LabelEditor({
     if (!canvas || !objects.length) { toast.info("Выделите элемент на холсте"); return }
     objects.forEach((o) => {
       o.set(patch)
-      if (o.type === "textbox") fitTextboxHeight(o as Textbox)
+      if (o.type === "textbox") refitTextbox(o as Textbox)
     })
     canvas.renderAll()
   }
@@ -198,12 +206,58 @@ export function LabelEditor({
     const t = createTextbox("Текст", {
       left: 20, top: 20, width: Math.round(sizeDef.w_px * 0.5),
       fontSize, fontFamily: font, fill: "#000000",
-      data: { role: `custom-t-${Date.now()}` },
+      data: { role: `custom-t-${Date.now()}`, autoFit, fitRatio },
     })
     canvas.add(t)
     canvas.setActiveObject(t)
     canvas.renderAll()
   }
+
+  /** Текстовые блоки, к которым применяются настройки: выделение либо все. */
+  const targetTextboxes = (): Textbox[] => {
+    const canvas = fabricRef.current
+    if (!canvas) return []
+    const selected = canvas.getActiveObjects().filter((o) => o.type === "textbox") as Textbox[]
+    if (selected.length) return selected
+    return canvas.getObjects().filter((o) => o.type === "textbox") as Textbox[]
+  }
+
+  const handleAutoFitChange = (on: boolean) => {
+    setAutoFitState(on)
+    const canvas = fabricRef.current
+    if (!canvas) return
+    targetTextboxes().forEach((tb) => setAutoFit(tb, on))
+    canvas.requestRenderAll()
+  }
+
+  const handleFitRatioChange = (ratio: number) => {
+    const r = clampRatio(ratio)
+    setFitRatioState(r)
+    const canvas = fabricRef.current
+    if (!canvas) return
+    targetTextboxes().forEach((tb) => setFitRatio(tb, r))
+    canvas.requestRenderAll()
+  }
+
+  // Синхронизация панели с выделенным текстом
+  useEffect(() => {
+    const canvas = fabricRef.current
+    if (!canvas || !ready) return
+    const sync = () => {
+      const tb = canvas.getActiveObjects().find((o) => o.type === "textbox") as Textbox | undefined
+      if (!tb) return
+      setAutoFitState(isAutoFit(tb))
+      setFitRatioState(getFitRatio(tb))
+      if (typeof tb.fontSize === "number") setFontSize(Math.round(tb.fontSize))
+      if (typeof tb.fontFamily === "string") setFont(tb.fontFamily)
+    }
+    canvas.on("selection:created", sync)
+    canvas.on("selection:updated", sync)
+    return () => {
+      canvas.off("selection:created", sync)
+      canvas.off("selection:updated", sync)
+    }
+  }, [ready, sizeKey])
 
   const addBorder = (styleKey: BorderStyleKey) => {
     const canvas = fabricRef.current
@@ -298,6 +352,10 @@ export function LabelEditor({
             onResetTemplate={() => void handleResetTemplate()}
             onFontChange={(f) => { setFont(f); applyToSelection({ fontFamily: f }) }}
             onFontSizeChange={(s) => { setFontSize(s); applyToSelection({ fontSize: s }) }}
+            autoFit={autoFit}
+            onAutoFitChange={handleAutoFitChange}
+            fitRatio={fitRatio}
+            onFitRatioChange={handleFitRatioChange}
             onPrint={() => void handlePrint()}
           />
         </div>
@@ -331,6 +389,7 @@ export function LabelEditor({
           sizeKey={sizeKey}
           rotation={rotation}
           onZoom={handleZoom}
+          onZoomTo={handleZoomTo}
         />
       </div>
 
@@ -358,6 +417,10 @@ export function LabelEditor({
           onResetTemplate={() => void handleResetTemplate()}
           onFontChange={(f) => { setFont(f); applyToSelection({ fontFamily: f }) }}
           onFontSizeChange={(s) => { setFontSize(s); applyToSelection({ fontSize: s }) }}
+          autoFit={autoFit}
+          onAutoFitChange={handleAutoFitChange}
+          fitRatio={fitRatio}
+          onFitRatioChange={handleFitRatioChange}
           onPrint={() => void handlePrint()}
         />
       </div>

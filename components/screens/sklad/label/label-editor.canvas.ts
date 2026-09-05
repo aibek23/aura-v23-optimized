@@ -32,6 +32,113 @@ export const TEXT_DEFAULTS = {
   lockScalingFlip: true,
 } as const
 
+// ---------------------------------------------------------------------------
+// АВТОМАСШТАБИРОВАНИЕ ШРИФТА ПОД РАЗМЕР БЛОКА
+// Размер шрифта жёстко привязан к ширине И высоте рамки текста.
+// Коэффициент (fitRatio) позволяет гибко управлять пропорцией заполнения.
+// ---------------------------------------------------------------------------
+export const AUTOFIT_MIN_FONT = 3
+export const AUTOFIT_MAX_FONT = 400
+/** Границы коэффициента масштаба (доля от максимально возможного кегля). */
+export const FIT_RATIO_MIN = 0.3
+export const FIT_RATIO_MAX = 1.5
+export const FIT_RATIO_DEFAULT = 1
+
+type TextMeta = {
+  role?: string
+  autoFit?: boolean
+  fitRatio?: number
+  boxH?: number
+}
+
+const meta = (tb: Textbox): TextMeta => {
+  const o = tb as unknown as { data?: TextMeta }
+  if (!o.data) o.data = {}
+  return o.data
+}
+
+export const clampRatio = (r: number): number =>
+  Math.min(FIT_RATIO_MAX, Math.max(FIT_RATIO_MIN, Number.isFinite(r) ? r : FIT_RATIO_DEFAULT))
+
+export const isAutoFit = (tb: Textbox): boolean => meta(tb).autoFit !== false
+export const getFitRatio = (tb: Textbox): number => clampRatio(meta(tb).fitRatio ?? FIT_RATIO_DEFAULT)
+
+/** Высота «контейнера» текста (то, во что вписывается шрифт). */
+export const getBoxHeight = (tb: Textbox): number => {
+  const stored = meta(tb).boxH
+  if (typeof stored === "number" && stored > 2) return stored
+  const h = (tb.height ?? 0) * (tb.scaleY ?? 1)
+  return h > 2 ? h : 20
+}
+
+export const setBoxHeight = (tb: Textbox, h: number): void => {
+  meta(tb).boxH = Math.max(4, h)
+}
+
+export function setAutoFit(tb: Textbox, on: boolean): void {
+  meta(tb).autoFit = on
+  if (on) fitFontToBox(tb)
+  else fitTextboxHeight(tb)
+}
+
+export function setFitRatio(tb: Textbox, ratio: number): void {
+  meta(tb).fitRatio = clampRatio(ratio)
+  if (isAutoFit(tb)) fitFontToBox(tb)
+}
+
+/** Максимальная ширина строки текста при текущем кегле. */
+function maxLineWidth(tb: Textbox): number {
+  try {
+    const lines = (tb as unknown as { textLines?: string[] }).textLines ?? []
+    let max = 0
+    for (let i = 0; i < lines.length; i++) {
+      const w = (tb as unknown as { getLineWidth: (i: number) => number }).getLineWidth(i)
+      if (Number.isFinite(w) && w > max) max = w
+    }
+    return max
+  } catch {
+    return 0
+  }
+}
+
+/**
+ * Подбирает кегль так, чтобы текст полностью вписался в ширину и высоту блока.
+ * Бинарный поиск: быстро (≈18 итераций) и точно до 0.25 px.
+ */
+export function fitFontToBox(tb: Textbox, boxW?: number, boxH?: number): void {
+  const w = Math.max(4, boxW ?? (tb.width ?? 4))
+  const h = Math.max(4, boxH ?? getBoxHeight(tb))
+  const ratio = getFitRatio(tb)
+
+  tb.set({ padding: 0, scaleX: 1, scaleY: 1, width: w })
+
+  const fits = (size: number): boolean => {
+    tb.set({ fontSize: size })
+    tb.initDimensions()
+    const th = tb.calcTextHeight()
+    const lw = maxLineWidth(tb)
+    return th <= h + 0.5 && lw <= w + 0.5
+  }
+
+  let lo = AUTOFIT_MIN_FONT
+  let hi = AUTOFIT_MAX_FONT
+  let best = AUTOFIT_MIN_FONT
+  for (let i = 0; i < 22 && hi - lo > 0.25; i++) {
+    const mid = (lo + hi) / 2
+    if (fits(mid)) { best = mid; lo = mid } else { hi = mid }
+  }
+
+  const finalSize = Math.min(
+    AUTOFIT_MAX_FONT,
+    Math.max(AUTOFIT_MIN_FONT, Math.round(best * ratio * 100) / 100),
+  )
+  tb.set({ fontSize: finalSize })
+  tb.initDimensions()
+  tb.set({ height: h, scaleX: 1, scaleY: 1 })
+  setBoxHeight(tb, h)
+  tb.setCoords()
+}
+
 /**
  * Приводит высоту Textbox к фактической высоте текста при текущей ширине.
  * Убирает «мёртвую» пустую зону снизу рамки.
@@ -42,31 +149,45 @@ export function fitTextboxHeight(tb: Textbox): void {
   tb.initDimensions()
   const h = tb.calcTextHeight()
   if (h > 0) tb.set({ height: h })
+  setBoxHeight(tb, tb.height ?? h)
   tb.setCoords()
 }
 
-/** Textbox с нулевыми отступами и высотой, подогнанной под текст. */
+/** Пересчёт текстового блока по его текущему режиму. */
+export function refitTextbox(tb: Textbox): void {
+  if (isAutoFit(tb)) fitFontToBox(tb)
+  else fitTextboxHeight(tb)
+}
+
+/** Textbox с нулевыми отступами и авто-подгонкой шрифта под блок. */
 export function createTextbox(text: string, options: Record<string, unknown>): Textbox {
-  const tb = new Textbox(text, { ...TEXT_DEFAULTS, ...options })
+  const opts = { ...TEXT_DEFAULTS, ...options } as Record<string, unknown>
+  const data = { autoFit: true, fitRatio: FIT_RATIO_DEFAULT, ...(opts.data as object ?? {}) }
+  opts.data = data
+  const tb = new Textbox(text, opts)
+  // Стартовая высота блока = высота текста при заданном кегле
   fitTextboxHeight(tb)
+  if (isAutoFit(tb)) fitFontToBox(tb)
   return tb
 }
 
-/**
- * Привязывает высоту текстовых блоков к объёму текста:
- *   • тянем правую сторону  → меняется ШИРИНА, текст переносится, высота = высота текста
- *   • тянем нижний правый угол → то же (без пропорционального сжатия текста)
- *   • правим текст (вход/выход из редактирования) → высота пересчитывается
- */
 export function attachTextAutoHeight(canvas: Canvas): () => void {
   const normalize = (obj?: FabricObject) => {
     if (!obj || obj.type !== "textbox") return
     const tb = obj as Textbox
     const sx = tb.scaleX ?? 1
-    if (sx !== 1) {
-      const newWidth = Math.max(4, (tb.width ?? 0) * sx)
-      tb.set({ width: newWidth, scaleX: 1 })
+    const sy = tb.scaleY ?? 1
+    const newWidth = Math.max(4, (tb.width ?? 0) * sx)
+
+    if (isAutoFit(tb)) {
+      // Габариты блока задаются пользователем (правая/нижняя сторона, угол),
+      // а кегль пересчитывается под новую ширину И высоту.
+      const newHeight = Math.max(4, (tb.height ?? 0) * sy)
+      fitFontToBox(tb, newWidth, newHeight)
+      return
     }
+
+    if (sx !== 1) tb.set({ width: newWidth, scaleX: 1 })
     fitTextboxHeight(tb)
   }
 
@@ -86,7 +207,7 @@ export function attachTextAutoHeight(canvas: Canvas): () => void {
     if (e.target?.type === "textbox") {
       const tb = e.target as Textbox
       tb.set({ ...TEXT_DEFAULTS })
-      fitTextboxHeight(tb)
+      refitTextbox(tb)
     }
   }
 
@@ -100,7 +221,7 @@ export function attachTextAutoHeight(canvas: Canvas): () => void {
   bus.on("editing:exited", onChanged)
   bus.on("object:added", onAdded)
 
-  canvas.getObjects().forEach((o) => { if (o.type === "textbox") { (o as Textbox).set({ ...TEXT_DEFAULTS }); fitTextboxHeight(o as Textbox) } })
+  canvas.getObjects().forEach((o) => { if (o.type === "textbox") { (o as Textbox).set({ ...TEXT_DEFAULTS }); refitTextbox(o as Textbox) } })
 
   return () => {
     bus.off("object:scaling", onScaling)
@@ -581,7 +702,7 @@ export async function refreshLiveData(canvas: Canvas, data: Product): Promise<vo
       case "price": tb.set({ text: priceLine }); break
       case "sku":   tb.set({ text: skuValue }); break
     }
-    fitTextboxHeight(tb)
+    refitTextbox(tb)
   }
   canvas.renderAll()
 }
@@ -597,20 +718,28 @@ export function cropPrintArea(
   offsetX: number,
   offsetY: number,
 ): HTMLCanvasElement {
-  // Вычисляем необходимый multiplier: хотим минимум 300 dpi при размере этикетки.
-  // Niimbot B1 печатает 203 dpi → нам нужно как минимум ×4 от экранного разрешения.
+  // Niimbot B1 печатает 203 dpi → ×4 от экранного разрешения достаточно.
   const TARGET_SCALE = 4
+  void offsetX
+  void offsetY
 
-  // Временно сбрасываем zoom-трансформацию Fabric, чтобы получить чистые пиксели
-  const origVT = canvas.viewportTransform ? [...canvas.viewportTransform] : [1, 0, 0, 1, 0, 0]
+  // ИСПРАВЛЕНО (пустая этикетка при печати):
+  // область кропа задаётся в координатах холста БЕЗ учёта viewportTransform.
+  // Раньше холст сдвигался на offsetX/offsetY, а кроп брался из точки (0,0) —
+  // то есть из пустого поля вокруг этикетки. Сбрасываем сдвиг в ноль, чтобы
+  // (0,0) совпало с левым верхним углом печатной области.
+  const origVT = canvas.viewportTransform
+    ? ([...canvas.viewportTransform] as [number, number, number, number, number, number])
+    : ([1, 0, 0, 1, 0, 0] as [number, number, number, number, number, number])
 
-  // Экспортируем весь canvas через toDataURL с высоким multiplier
-  canvas.setViewportTransform([1, 0, 0, 1, offsetX, offsetY])
-  const dataUrl = canvas.toDataURL({
-    format: "png",
-    multiplier: TARGET_SCALE,
-    quality: 1,
-    enableRetinaScaling: true,
+  canvas.discardActiveObject()
+  canvas.setViewportTransform([1, 0, 0, 1, 0, 0])
+  canvas.renderAll()
+
+  // toCanvasElement рендерит синхронно и возвращает готовый canvas.
+  // (Прежний вариант через toDataURL + new Image() рисовал ещё не
+  //  декодированную картинку — отсюда и пустая этикетка.)
+  const source = canvas.toCanvasElement(TARGET_SCALE, {
     left: 0,
     top: 0,
     width: sizeDef.w_px,
@@ -618,22 +747,20 @@ export function cropPrintArea(
   })
 
   // Восстанавливаем исходный viewport
-  canvas.setViewportTransform(origVT as [number, number, number, number, number, number])
+  canvas.setViewportTransform(origVT)
   canvas.requestRenderAll()
 
-  // Создаём выходной canvas с высоким разрешением
   const out = document.createElement("canvas")
-  out.width  = Math.round(sizeDef.w_px  * TARGET_SCALE)
+  out.width = Math.round(sizeDef.w_px * TARGET_SCALE)
   out.height = Math.round(sizeDef.h_px * TARGET_SCALE)
 
   const ctx = out.getContext("2d")
   if (ctx) {
-    // Отключаем сглаживание: на термопринтере чёткие края лучше
+    // Белая подложка: прозрачные пиксели термопринтер печатает как пустоту
+    ctx.fillStyle = "#ffffff"
+    ctx.fillRect(0, 0, out.width, out.height)
     ctx.imageSmoothingEnabled = false
-    const img = new Image()
-    img.src = dataUrl
-    // Синхронный рендер — img уже загружен (data URL)
-    ctx.drawImage(img, 0, 0, out.width, out.height)
+    ctx.drawImage(source, 0, 0, out.width, out.height)
   }
   return out
 }

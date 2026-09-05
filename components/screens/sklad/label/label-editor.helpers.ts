@@ -17,10 +17,10 @@ export function buildJewelryText(data: Product) {
   // Если строка начинается со слова "Металл:", аккуратно убираем только префикс
   const metalLine = rawMetal.replace(/^металл\s*:?\s*/i, "").trim() || "—"
   
-  const weightLine = data.weight ? `${data.weight} г` : "—"
+  const weightLine = data.weight ? `${data.weight} g` : "—"
   const sizeLine   = data.size || "—"
   const priceLine  = data.sale_price 
-    ? `${data.sale_price.toLocaleString("ru")} сом` 
+    ? `${data.sale_price.toLocaleString("ru")}` 
     : "—"
 
   return { metalLine, weightLine, sizeLine, priceLine }

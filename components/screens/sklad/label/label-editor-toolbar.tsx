@@ -18,6 +18,7 @@ import {
   ChevronDown,
   ChevronUp,
   RotateCw,
+  Maximize2,
 } from "lucide-react"
 import { FONTS } from "./label-editor.types"
 import { LABEL_SIZES } from "@/lib/niimbot"
@@ -59,6 +60,12 @@ interface LabelEditorToolbarProps {
   onResetTemplate: () => void
   onFontChange: (font: string) => void
   onFontSizeChange: (size: number) => void
+  /** Включено ли автомасштабирование текста под размер блока */
+  autoFit: boolean
+  onAutoFitChange: (on: boolean) => void
+  /** Коэффициент заполнения блока текстом (0.3…1.5) */
+  fitRatio: number
+  onFitRatioChange: (ratio: number) => void
   onPrint: () => void
   /** Поворот холста этикетки на 90° */
   onRotateCanvas: () => void
@@ -169,6 +176,10 @@ function BottomZone({
   onRotateCanvas,
   onFontChange,
   onFontSizeChange,
+  autoFit,
+  onAutoFitChange,
+  fitRatio,
+  onFitRatioChange,
   onPrint,
   collapsed = false,
   onToggleCollapse,
@@ -334,17 +345,69 @@ function BottomZone({
           </select>
         </div>
 
-        {/* Размер шрифта */}
+        {/* Размер шрифта — доступен только при выключенном автомасштабе */}
         <div className="flex flex-col gap-0.5 shrink-0">
           <span className="text-[9px] text-muted-foreground leading-none px-0.5">Размер</span>
           <input
             type="number"
             min={8}
             max={64}
-            className="h-7 w-14 rounded-md border border-input bg-background px-1.5 text-[11px]"
+            disabled={autoFit}
+            title={autoFit ? "Размер подбирается автоматически по габаритам блока" : "Размер шрифта"}
+            className="h-7 w-14 rounded-md border border-input bg-background px-1.5 text-[11px] disabled:opacity-40"
             value={fontSize}
             onChange={(e) => onFontSizeChange(Number(e.target.value) || 16)}
           />
+        </div>
+
+        <div className="mx-1 h-6 w-px bg-border shrink-0" />
+
+        {/* Автомасштаб текста под размер блока */}
+        <div className="flex flex-col gap-0.5 shrink-0">
+          <span className="text-[9px] text-muted-foreground leading-none px-0.5">Авторазмер</span>
+          <button
+            type="button"
+            onClick={() => onAutoFitChange(!autoFit)}
+            title="Шрифт подстраивается под ширину и высоту блока"
+            className={[
+              "flex h-7 items-center gap-1 rounded-md border px-2 text-[11px] font-medium transition-colors",
+              autoFit
+                ? "border-primary bg-primary text-primary-foreground"
+                : "border-border bg-background text-muted-foreground hover:bg-muted",
+            ].join(" ")}
+          >
+            <Maximize2 className="h-3.5 w-3.5" />
+            {autoFit ? "Вкл" : "Выкл"}
+          </button>
+        </div>
+
+        {/* Коэффициент масштабирования */}
+        <div className="flex flex-col gap-0.5 shrink-0">
+          <span className="text-[9px] text-muted-foreground leading-none px-0.5">
+            Масштаб · {Math.round(fitRatio * 100)}%
+          </span>
+          <div className="flex h-7 items-center gap-1.5">
+            <input
+              type="range"
+              min={30}
+              max={150}
+              step={5}
+              disabled={!autoFit}
+              value={Math.round(fitRatio * 100)}
+              onChange={(e) => onFitRatioChange(Number(e.target.value) / 100)}
+              className="h-1.5 w-24 cursor-pointer accent-primary disabled:opacity-40"
+              title="Доля блока, которую заполняет текст"
+            />
+            <button
+              type="button"
+              onClick={() => onFitRatioChange(1)}
+              disabled={!autoFit}
+              className="rounded border border-border px-1.5 text-[10px] text-muted-foreground hover:bg-muted disabled:opacity-40"
+              title="Сбросить масштаб"
+            >
+              100%
+            </button>
+          </div>
         </div>
       </div>
 

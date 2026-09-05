@@ -63,6 +63,10 @@ export interface TemplateItem {
   strokeWidth?: number
   /** Текст сохраняется только для пользовательских надписей (роль custom-*). */
   text?: string
+  /** Автомасштабирование шрифта под габариты блока. */
+  autoFit?: boolean
+  /** Коэффициент заполнения блока текстом (0.3…1.5). */
+  fitRatio?: number
 }
 
 export interface LabelTemplate {

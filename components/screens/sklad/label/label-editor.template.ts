@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 import { Canvas, Textbox, Rect, type FabricObject } from "fabric"
 import type { LabelSizeDef } from "@/lib/niimbot"
-import { createTextbox, fitTextboxHeight } from "./label-editor.canvas"
+import { createTextbox, fitFontToBox, isAutoFit, getFitRatio, refitTextbox, setBoxHeight } from "./label-editor.canvas"
 import {
   TEMPLATE_VERSION,
   LIVE_ROLES,
@@ -58,6 +58,8 @@ export function serializeLayout(
       item.fontWeight = (tb.fontWeight as string) ?? "normal"
       item.textAlign = String(tb.textAlign ?? "left")
       item.fill = typeof tb.fill === "string" ? tb.fill : "#000000"
+      item.autoFit = isAutoFit(tb)
+      item.fitRatio = r2(getFitRatio(tb), 1)
       if (role.startsWith("custom-")) item.text = String(tb.text ?? "").slice(0, 200)
     }
 
@@ -140,9 +142,14 @@ export function applyTemplate(canvas: Canvas, tpl: LabelTemplate): void {
         angle: item.angle ?? 0,
         scaleX: item.scaleX ?? 1,
         scaleY: 1,
-        data: { role: item.role },
+        data: {
+          role: item.role,
+          autoFit: item.autoFit !== false,
+          fitRatio: item.fitRatio ?? 1,
+        },
       })
-      fitTextboxHeight(tb)
+      if (item.height && item.height > 2) setBoxHeight(tb, item.height)
+      refitTextbox(tb)
       canvas.add(tb)
     } else if (item.kind === "rect") {
       const rect = new Rect({
@@ -179,7 +186,11 @@ export function applyItemToObject(obj: FabricObject, item: TemplateItem): void {
 
   if (obj.type === "textbox") {
     const tb = obj as Textbox
-    // высота текста считается по контенту, сохранённое значение не применяем
+    const data = (tb as unknown as { data?: Record<string, unknown> }).data ?? {}
+    data.autoFit = item.autoFit !== false
+    data.fitRatio = item.fitRatio ?? 1
+    ;(tb as unknown as { data?: Record<string, unknown> }).data = data
+
     tb.set({
       scaleY: 1,
       padding: 0,
@@ -190,7 +201,13 @@ export function applyItemToObject(obj: FabricObject, item: TemplateItem): void {
       textAlign: (item.textAlign as Textbox["textAlign"]) ?? tb.textAlign,
       fill: item.fill ?? tb.fill,
     })
-    fitTextboxHeight(tb)
+
+    if (data.autoFit) {
+      // Габариты блока сохранены в шаблоне — шрифт пересчитывается под них
+      fitFontToBox(tb, item.width || tb.width, item.height && item.height > 2 ? item.height : undefined)
+    } else {
+      refitTextbox(tb)
+    }
   }
 
   if (obj.type === "rect") {
