@@ -735,8 +735,10 @@ export function LabelEditorCanvasArea({
       return
     }
 
-    // Стандартный режим: средняя кнопка мыши / Alt / одиночный тач вне объекта
-    const forcePan = e.button === 1 || e.altKey || e.pointerType === "touch"
+    // Стандартный режим: средняя кнопка мыши / Alt.
+    // На сенсорных устройствах холст передвигается ТОЛЬКО через Pan Tool (режим «Рука»)
+    if (e.pointerType === "touch") return
+    const forcePan = e.button === 1 || e.altKey
     if (!forcePan) {
       if (e.button !== 0) return
       const fabric = fabricRef.current
@@ -779,6 +781,11 @@ export function LabelEditorCanvasArea({
     const onFabricDown = (opt: { target?: unknown; e: MouseEvent | TouchEvent | PointerEvent }) => {
       // В режиме «Рука» pan уже запускается через onPanPointerDown — не дублируем
       if (isPanModeRef.current) return
+      // На сенсорных устройствах pan вне режима «Рука» запрещён
+      const rawEv = opt.e as PointerEvent
+      const isTouch = rawEv.pointerType === "touch" ||
+        (typeof TouchEvent !== "undefined" && opt.e instanceof TouchEvent)
+      if (isTouch) return
       if (opt.target) {
         isTransformingRef.current = true
         return
