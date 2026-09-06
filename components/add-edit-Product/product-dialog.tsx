@@ -183,7 +183,7 @@ export function ProductDialog({
 
           {/* Цена продажи */}
           <div className="grid gap-3 rounded-xl border border-border bg-muted/30 p-3">
-            <div className="text-sm font-medium">Цена продажи</div>
+            <div className="text-sm font-medium">Цена на этикетку</div>
             <div className="grid grid-cols-2 gap-3">
               <div className="grid gap-2">
                 <Label htmlFor="p-gram-sale">За грамм (с)</Label>
@@ -213,7 +213,7 @@ export function ProductDialog({
           {canSeePurchasePrice && (
             <div className="grid gap-3 rounded-xl border border-border bg-muted/30 p-3">
               <div className="flex items-center justify-between">
-                <div className="text-sm font-medium">Закупка</div>
+                <div className="text-sm font-medium">Оптовая цена</div>
                 {form.sale_price > 0 && (
                   <span className={cn("font-mono text-xs", marginPercent < 0 ? "text-destructive" : "text-muted-foreground")}>
                     маржа {marginPercent}%
@@ -246,7 +246,7 @@ export function ProductDialog({
 
               {/* Закупочная цена, видимая продавцу */}
               <div className="grid gap-2">
-                <div className="text-xs font-medium text-muted-foreground">Цена для продавца (закупка «с»)</div>
+                <div className="text-xs font-medium text-muted-foreground">Закупочная цена, видимая продавцу</div>
                 <div className="grid grid-cols-2 gap-3">
                   <div className="grid gap-2">
                     <Label htmlFor="p-gram-buy-vis">За грамм (с)</Label>

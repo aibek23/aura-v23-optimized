@@ -27,6 +27,9 @@ export function BarcodeScannerModal({ onClose, onScan }: BarcodeScannerProps) {
   const [manual, setManual] = useState("")
   const [manualMode, setManualMode] = useState(false)
 
+  // Флаг: действительно ли текущий запущенный трек является селфи-камерой
+  const [isFrontCamera, setIsFrontCamera] = useState(false)
+
   // Предупреждение о плохо читаемом / перекрытом коде
   const [isBadQuality, setIsBadQuality] = useState(false)
   const checksumErrorCountRef = useRef(0)
@@ -36,7 +39,7 @@ export function BarcodeScannerModal({ onClose, onScan }: BarcodeScannerProps) {
   const [torchOn, setTorchOn] = useState(false)
   const [focusPoint, setFocusPoint] = useState<{ x: number; y: number } | null>(null)
 
-  // 1. Подавление мусора в консоли Next.js / Turbopack
+  // Подавление системных исключений ZXing в консоли Next.js / Turbopack
   useEffect(() => {
     const originalError = console.error
     const originalWarn = console.warn
@@ -225,17 +228,32 @@ export function BarcodeScannerModal({ onClose, onScan }: BarcodeScannerProps) {
         return
       }
 
+      // Определяем, является ли текущая активная камера действительно фронтальной
+      const track = stream.getVideoTracks()[0]
+      if (track) {
+        const settings = track.getSettings?.()
+        const label = (chosen?.label || track.label || "").toLowerCase()
+        
+        const isUserFacing = 
+          settings?.facingMode === "user" ||
+          facing === "user" ||
+          label.includes("front") ||
+          label.includes("пользователь") ||
+          label.includes("selfie")
+
+        setIsFrontCamera(isUserFacing)
+
+        if (track.getCapabilities) {
+          const caps = track.getCapabilities() as Record<string, unknown>
+          if (caps.torch) setTorchAvailable(true)
+        }
+      }
+
       video.srcObject = stream
       try {
         await video.play()
       } catch {
         /* autoplay catch */
-      }
-
-      const track = stream.getVideoTracks()[0]
-      if (track && track.getCapabilities) {
-        const caps = track.getCapabilities() as Record<string, unknown>
-        if (caps.torch) setTorchAvailable(true)
       }
 
       try {
@@ -299,12 +317,10 @@ export function BarcodeScannerModal({ onClose, onScan }: BarcodeScannerProps) {
             const errName = err.name || err.constructor?.name
             if (errName === "ChecksumException" || errName === "FormatException") {
               checksumErrorCountRef.current += 1
-              // Показываем плашку, если ошибки детекции идут подряд
               if (checksumErrorCountRef.current >= 3) {
                 setIsBadQuality(true)
               }
             } else if (errName === "NotFoundException") {
-              // Плавно скрываем плашку, если область чистая
               if (checksumErrorCountRef.current > 0) {
                 checksumErrorCountRef.current -= 1
                 if (checksumErrorCountRef.current === 0) setIsBadQuality(false)
@@ -359,11 +375,6 @@ export function BarcodeScannerModal({ onClose, onScan }: BarcodeScannerProps) {
       URL.revokeObjectURL(url)
     }
   }
-
-  const isFrontCamera =
-    facing === "user" ||
-    (cameras[deviceIndex]?.label.toLowerCase().includes("front") ?? false) ||
-    (cameras[deviceIndex]?.label.toLowerCase().includes("пользователь") ?? false)
 
   return (
     <div
