@@ -414,14 +414,6 @@ export function KassaScreen({
         
         <div className="flex flex-col gap-6 order-1 min-w-0 w-full">
           <CashPanel sales={sales} operations={cash.operations} presets={cash.presets} isAdmin={isAdmin} />
-          
-          <KassaScrap
-            rates={rateMap}
-            balances={cashBalances}
-            onAdd={addScrap}
-            onRequestDeposit={() => window.dispatchEvent(new Event(OPEN_CASH_INCOME_EVENT))}
-          />
-
           <KassaSearch
             query={query}
             setQuery={setQuery}
@@ -437,13 +429,12 @@ export function KassaScreen({
             minQuery={MIN_QUERY}
             recent={recentProducts}
           />
-          
           <div className="hidden lg:block">
              <SalesHistory sales={sales} canSeeProfit={canSeeProfit} sellers={sellers} />
           </div>
         </div>
-        
         <div className="order-2 w-full lg:sticky lg:top-4 z-10 min-w-0">
+          
           <KassaCart
             cart={cart}
             isMobile={isMobile}
@@ -490,6 +481,14 @@ export function KassaScreen({
         </div>
 
         <div className="order-3 lg:hidden w-full min-w-0 mt-2">
+          <div className="order-3 lg:hidden w-full min-w-0 mb-4">
+            {/* <KassaScrap
+              rates={rateMap}
+              balances={cashBalances}
+              onAdd={addScrap}
+              onRequestDeposit={() => window.dispatchEvent(new Event(OPEN_CASH_INCOME_EVENT))}
+            /> */}
+          </div>
            <SalesHistory sales={sales} canSeeProfit={canSeeProfit} sellers={sellers} />
         </div>
       </div>
