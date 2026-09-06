@@ -140,13 +140,27 @@ export function LabelEditor({
   }, [sizeKey])
 
   // ---- Печать -------------------------------------------------------------
-  const handlePrint = useCallback(async () => {
-    const canvas = fabricRef.current
-    // Печатаем только после полной загрузки и рендеринга данных этикетки
-    if (!canvas || !loaded) return
-    setIsPrinting(true)
-...
-  }, [sizeDef, offsetX, offsetY, loaded])
+ const handlePrint = useCallback(async () => {
+  const canvas = fabricRef.current
+  if (!canvas || !loaded) return
+  
+  setIsPrinting(true)
+  setStatus("Подготовка печати...")
+
+  try {
+    const croppedCanvas = cropPrintArea(canvas, sizeDef, offsetX, offsetY)
+    await printCanvas(croppedCanvas, sizeDef, { 
+      onProgress: (msg) => setStatus(msg) 
+    })
+    toast.success("Печать успешно завершена")
+  } catch (err) {
+    console.error("[Print Error]:", err)
+    toast.error((err as Error).message || "Ошибка при печати")
+  } finally {
+    setIsPrinting(false)
+    setStatus("")
+  }
+}, [sizeDef, offsetX, offsetY, loaded])
 
   // Автопечать: только после полной загрузки данных (текст, QR и т.д.)
   useEffect(() => {
