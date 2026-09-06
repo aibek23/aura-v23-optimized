@@ -52,6 +52,8 @@ export function LabelEditor({
   const autoPrintedRef = useRef(false)
 
   const [ready, setReady] = useState(false)
+  // true только когда все данные этикетки (текст, QR и т.д.) загружены и отрендерены
+  const [loaded, setLoaded] = useState(false)
   const [isPrinting, setIsPrinting] = useState(false)
   const [status, setStatus] = useState("")
   const [font, setFont] = useState(FONTS[0])
@@ -80,6 +82,7 @@ export function LabelEditor({
   // ---- Инициализация холста -----------------------------------------------
   useEffect(() => {
     if (!canvasRef.current) return
+    setLoaded(false)
     const canvas = new Canvas(canvasRef.current, {
       width: stageW, height: stageH, backgroundColor: "",
       clipPath: undefined,
@@ -106,11 +109,14 @@ export function LabelEditor({
         }
         canvas.setViewportTransform([1, 0, 0, 1, offsetX, offsetY])
         canvas.renderAll()
+        // Все данные (текст, QR и т.д.) загружены и отрендерены
+        setLoaded(true)
       } catch {
         if (canvas.lowerCanvasEl) {
           await buildDefaultLayout(canvas, product, sizeDef)
           canvas.setViewportTransform([1, 0, 0, 1, offsetX, offsetY])
           canvas.renderAll()
+          setLoaded(true)
         }
       }
     })()
@@ -120,6 +126,7 @@ export function LabelEditor({
       detachAutoHeight()
       fabricRef.current = null
       setReady(false)
+      setLoaded(false)
       canvas.dispose()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -135,38 +142,18 @@ export function LabelEditor({
   // ---- Печать -------------------------------------------------------------
   const handlePrint = useCallback(async () => {
     const canvas = fabricRef.current
-    if (!canvas) return
+    // Печатаем только после полной загрузки и рендеринга данных этикетки
+    if (!canvas || !loaded) return
     setIsPrinting(true)
-    setStatus("")
-    try {
-      canvas.discardActiveObject()
-      canvas.renderAll()
-      const printEl = cropPrintArea(canvas, sizeDef, offsetX, offsetY)
-      await printCanvas(printEl, sizeDef, { onProgress: setStatus })
-      toast.success("Этикетка отправлена на печать")
-    } catch (err) {
-      const e = err as Error & { name?: string }
-      console.error("[Niimbot Print Error]:", e)
-      const isCancelled =
-        e.name === "NotFoundError" || e.name === "AbortError" ||
-        e.message?.toLowerCase().includes("user cancelled") ||
-        e.message?.toLowerCase().includes("no device selected")
-      if (isCancelled) {
-        toast.info("Выбор Bluetooth-устройства отменён. Нажмите «Печать» ещё раз.")
-      } else {
-        toast.error(e.message || "Ошибка печати по Bluetooth")
-      }
-    } finally {
-      setStatus("")
-      setIsPrinting(false)
-    }
-  }, [sizeDef, offsetX, offsetY])
+...
+  }, [sizeDef, offsetX, offsetY, loaded])
 
+  // Автопечать: только после полной загрузки данных (текст, QR и т.д.)
   useEffect(() => {
-    if (!autoPrint || !ready || autoPrintedRef.current) return
+    if (!autoPrint || !loaded || autoPrintedRef.current) return
     autoPrintedRef.current = true
     void handlePrint()
-  }, [autoPrint, ready, handlePrint])
+  }, [autoPrint, loaded, handlePrint])
 
   // ---- Поворот ориентации холста (этикетки) на 90°: W ↔ H ----------------
   const handleRotateCanvas = useCallback(() => {
