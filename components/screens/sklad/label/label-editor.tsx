@@ -28,6 +28,19 @@ import { LabelEditorCanvasArea } from "./label-editor-canvas-area"
 // ---------------------------------------------------------------------------
 // LabelEditor — оркестратор: Mobile-First Layout
 // ---------------------------------------------------------------------------
+
+// Ключ localStorage для запоминания последнего выбранного формата этикетки
+const SIZE_STORAGE_KEY = "sklad:label-size"
+
+/** Последний выбранный формат из localStorage (если валиден), иначе fallback. */
+function getStoredSizeKey(fallback: JewelryLabelSizeKey): JewelryLabelSizeKey {
+  try {
+    const v = localStorage.getItem(SIZE_STORAGE_KEY)
+    if (v && v in LABEL_SIZES) return v as JewelryLabelSizeKey
+  } catch {}
+  return fallback
+}
+
 export function LabelEditor({
   product,
   autoPrint = false,
@@ -43,7 +56,8 @@ export function LabelEditor({
   const [status, setStatus] = useState("")
   const [font, setFont] = useState(FONTS[0])
   const [fontSize, setFontSize] = useState(16)
-  const [sizeKey, setSizeKey] = useState<JewelryLabelSizeKey>(initialSizeKey)
+  // При монтировании берём последний выбранный формат из localStorage
+  const [sizeKey, setSizeKey] = useState<JewelryLabelSizeKey>(() => getStoredSizeKey(initialSizeKey))
   const [zoom, setZoom] = useState(1)
   const [collapsed, setCollapsed] = useState(false)
   const [rotation, setRotation] = useState(0)
@@ -110,6 +124,13 @@ export function LabelEditor({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sizeKey, product.id, category])
+
+  // ---- Запоминаем выбранный формат этикетки --------------------------------
+  useEffect(() => {
+    try {
+      localStorage.setItem(SIZE_STORAGE_KEY, sizeKey)
+    } catch {}
+  }, [sizeKey])
 
   // ---- Печать -------------------------------------------------------------
   const handlePrint = useCallback(async () => {
