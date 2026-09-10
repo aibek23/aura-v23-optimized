@@ -66,6 +66,11 @@ export const LABEL_SIZES: Record<JewelryLabelSizeKey, LabelSizeDef> = {
 /** Размер по умолчанию */
 export const DEFAULT_SIZE_KEY: JewelryLabelSizeKey = "T25x30_45"
 
+/** Возвращает описание формата по ключу. */
+export function getLabelSizeDef(key: JewelryLabelSizeKey): LabelSizeDef {
+  return LABEL_SIZES[key] ?? LABEL_SIZES[DEFAULT_SIZE_KEY]
+}
+
 export const NIIMBOT_SIZE = LABEL_SIZES[DEFAULT_SIZE_KEY]
 export const LABEL_WIDTH = NIIMBOT_SIZE.w_px
 export const LABEL_HEIGHT = NIIMBOT_SIZE.h_px

@@ -1,344 +1,359 @@
 "use client"
-
-import { useCallback, useEffect, useRef, useState } from "react"
-import { Canvas, Textbox } from "fabric"
+import React, {
+  useRef, useState, useMemo, useCallback, useEffect,
+} from "react"
 import { X } from "lucide-react"
-import { toast } from "sonner"
-import {
-  LABEL_SIZES,
-  DEFAULT_SIZE_KEY,
-  type JewelryLabelSizeKey,
-  printCanvas,
-} from "@/lib/niimbot"
-import { deleteLabelTemplate, getLabelTemplate, saveLabelTemplate } from "@/app/actions/labels"
-import { getSvgLayout } from "./label-background"
+import { getLabelSizeDef, DEFAULT_SIZE_KEY, LABEL_SIZES } from "@/lib/niimbot"
+import type { JewelryLabelSizeKey } from "@/lib/niimbot"
+import type { LabelEditorProps } from "./types"
+import { RULER_SIZE, ZOOM_DEFAULT } from "./constants"
+import type { BorderStyleKey } from "./constants"
+import { getSvgLayout } from "./components/label-background"
+import { computeStageOrigin, makeTrigCache, screenToLabelPx } from "./utils/geometry"
+import type { ManualGuide } from "./utils/guides-draw"
 
-import {
-  FONTS,
-  ZOOM_MIN,
-  ZOOM_MAX,
-  type LabelEditorProps,
-} from "./label-editor.types"
-import { applyBgRect, applyTemplate, parseTemplate, serializeLayout } from "./label-editor.template"
-import { buildDefaultLayout, cropPrintArea, refreshLiveData, attachSmartGuides, addBorderToCanvas, attachTextAutoHeight, createTextbox, refitTextbox, setAutoFit, setFitRatio, isAutoFit, getFitRatio, clampRatio } from "./label-editor.canvas"
-import type { BorderStyleKey } from "./label-editor-toolbar"
-import { LabelEditorToolbar } from "./label-editor-toolbar"
-import { LabelEditorCanvasArea } from "./label-editor-canvas-area"
+import { useFabricCanvas }    from "./hooks/use-fabric-canvas"
+import { useCanvasPan }       from "./hooks/use-canvas-pan"
+import { useCanvasTransform } from "./hooks/use-canvas-transform"
+import { usePinchZoom }       from "./hooks/use-pinch-zoom"
+import { usePanMode }         from "./hooks/use-pan-mode"
+import { useCanvasRepaint }   from "./hooks/use-canvas-repaint"
+import { useSelectionSync }   from "./hooks/use-selection-sync"
+import { useLabelActions }    from "./hooks/use-label-actions"
+import { useLabelPrint }      from "./hooks/use-label-print"
 
-// ---------------------------------------------------------------------------
-// LabelEditor — оркестратор: Mobile-First Layout
-// ---------------------------------------------------------------------------
+import { CanvasArea }         from "./components/canvas-area"
+import { LabelEditorToolbar } from "./components/toolbar"
 
-// Ключ localStorage для запоминания последнего выбранного формата этикетки
-const SIZE_STORAGE_KEY = "sklad:label-size"
+const STAGE_PAD    = 240
+const SIZE_STORAGE = "sklad:label-size"
 
-/** Последний выбранный формат из localStorage (если валиден), иначе fallback. */
 function getStoredSizeKey(fallback: JewelryLabelSizeKey): JewelryLabelSizeKey {
   try {
-    const v = localStorage.getItem(SIZE_STORAGE_KEY)
+    const v = localStorage.getItem(SIZE_STORAGE)
     if (v && v in LABEL_SIZES) return v as JewelryLabelSizeKey
-  } catch {}
+  } catch { /* ignore */ }
   return fallback
 }
 
 export function LabelEditor({
-  product,
-  autoPrint = false,
-  initialSizeKey = DEFAULT_SIZE_KEY,
-  onClose,
+  product, autoPrint, initialSizeKey, onClose,
 }: LabelEditorProps) {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const fabricRef = useRef<Canvas | null>(null)
-  const autoPrintedRef = useRef(false)
-
-  const [ready, setReady] = useState(false)
-  // true только когда все данные этикетки (текст, QR и т.д.) загружены и отрендерены
-  const [loaded, setLoaded] = useState(false)
-  const [isPrinting, setIsPrinting] = useState(false)
-  const [status, setStatus] = useState("")
-  const [font, setFont] = useState(FONTS[0])
-  const [fontSize, setFontSize] = useState(16)
-  // При монтировании берём последний выбранный формат из localStorage
-  const [sizeKey, setSizeKey] = useState<JewelryLabelSizeKey>(() => getStoredSizeKey(initialSizeKey))
-  const [zoom, setZoom] = useState(1)
-  const [collapsed, setCollapsed] = useState(false)
+  const [sizeKey, setSizeKey] = useState<JewelryLabelSizeKey>(
+    () => getStoredSizeKey(initialSizeKey ?? DEFAULT_SIZE_KEY),
+  )
+  
+  // rotation хранит накопленный поворот в градусах (0 | 90 | 180 | 270)
   const [rotation, setRotation] = useState(0)
-  // Автомасштабирование текста под габариты блока + коэффициент заполнения
-  const [autoFit, setAutoFitState] = useState(true)
-  const [fitRatio, setFitRatioState] = useState(1)
+  const category = product.category ?? "Прочее"
 
-  const sizeDef = LABEL_SIZES[sizeKey]
-  const category = product.category || "Прочее"
-
-  // Запас вокруг этикетки: элементы, выходящие за её границы, остаются видимы
-  const STAGE_PAD = 240
-
-  const svgLayout = getSvgLayout(sizeKey, sizeDef)
-  const stageW = Math.max(svgLayout.svgW, svgLayout.canvasX * 2 + sizeDef.w_px) + STAGE_PAD * 2
-  const stageH = Math.max(svgLayout.svgH, svgLayout.canvasY * 2 + sizeDef.h_px) + STAGE_PAD * 2
-  const offsetX = svgLayout.canvasX + STAGE_PAD
-  const offsetY = svgLayout.canvasY + STAGE_PAD
-
-  // ---- Инициализация холста -----------------------------------------------
   useEffect(() => {
-    if (!canvasRef.current) return
-    setLoaded(false)
-    const canvas = new Canvas(canvasRef.current, {
-      width: stageW, height: stageH, backgroundColor: "",
-      clipPath: undefined,
-      controlsAboveOverlay: true,
-    })
-    canvas.setViewportTransform([1, 0, 0, 1, offsetX, offsetY])
-    fabricRef.current = canvas
-    setReady(true)
-    setRotation(0)
-
-    const detachGuides = attachSmartGuides(canvas, sizeDef)
-    const detachAutoHeight = attachTextAutoHeight(canvas)
-
-    ;(async () => {
-      try {
-        const saved = parseTemplate(getLabelTemplate(category, sizeKey))
-        if (!canvas.lowerCanvasEl) return
-        await buildDefaultLayout(canvas, product, sizeDef)
-        if (!canvas.lowerCanvasEl) return
-        if (saved) {
-          applyTemplate(canvas, saved)
-          await refreshLiveData(canvas, product)
-          applyBgRect(canvas, sizeDef, saved.bg ?? null)
-        }
-        canvas.setViewportTransform([1, 0, 0, 1, offsetX, offsetY])
-        canvas.renderAll()
-        // Все данные (текст, QR и т.д.) загружены и отрендерены
-        setLoaded(true)
-      } catch {
-        if (canvas.lowerCanvasEl) {
-          await buildDefaultLayout(canvas, product, sizeDef)
-          canvas.setViewportTransform([1, 0, 0, 1, offsetX, offsetY])
-          canvas.renderAll()
-          setLoaded(true)
-        }
-      }
-    })()
-
-    return () => {
-      detachGuides()
-      detachAutoHeight()
-      fabricRef.current = null
-      setReady(false)
-      setLoaded(false)
-      canvas.dispose()
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sizeKey, product.id, category])
-
-  // ---- Запоминаем выбранный формат этикетки --------------------------------
-  useEffect(() => {
-    try {
-      localStorage.setItem(SIZE_STORAGE_KEY, sizeKey)
-    } catch {}
+    try { localStorage.setItem(SIZE_STORAGE, sizeKey) } catch { /* ignore */ }
   }, [sizeKey])
 
-  // ---- Печать -------------------------------------------------------------
- const handlePrint = useCallback(async () => {
-  const canvas = fabricRef.current
-  if (!canvas || !loaded) return
-  
-  setIsPrinting(true)
-  setStatus("Подготовка печати...")
+  const sizeDef = useMemo(() => getLabelSizeDef(sizeKey), [sizeKey])
 
-  try {
-    const croppedCanvas = cropPrintArea(canvas, sizeDef, offsetX, offsetY)
-    await printCanvas(croppedCanvas, sizeDef, { 
-      onProgress: (msg) => setStatus(msg) 
-    })
-    toast.success("Печать успешно завершена")
-  } catch (err) {
-    console.error("[Print Error]:", err)
-    toast.error((err as Error).message || "Ошибка при печати")
-  } finally {
-    setIsPrinting(false)
-    setStatus("")
-  }
-}, [sizeDef, offsetX, offsetY, loaded])
+  const { stageW, stageH, offsetX, offsetY } = useMemo(() => {
+    // Единый расчёт размеров сцены независимо от поворота
+    const svgLayout = getSvgLayout(sizeKey, sizeDef)
+    const sW = Math.max(svgLayout.svgW, svgLayout.canvasX * 2 + sizeDef.w_px) + STAGE_PAD * 2
+    const sH = Math.max(svgLayout.svgH, svgLayout.canvasY * 2 + sizeDef.h_px) + STAGE_PAD * 2
+    return {
+      stageW:  sW,
+      stageH:  sH,
+      offsetX: svgLayout.canvasX + STAGE_PAD,
+      offsetY: svgLayout.canvasY + STAGE_PAD,
+    }
+  }, [sizeKey, sizeDef])
 
-  // Автопечать: только после полной загрузки данных (текст, QR и т.д.)
-  useEffect(() => {
-    if (!autoPrint || !loaded || autoPrintedRef.current) return
-    autoPrintedRef.current = true
-    void handlePrint()
-  }, [autoPrint, loaded, handlePrint])
+  const totalW = stageW + RULER_SIZE
+  const totalH = stageH + RULER_SIZE
 
-  // ---- Поворот ориентации холста (этикетки) на 90°: W ↔ H ----------------
-  const handleRotateCanvas = useCallback(() => {
-    const canvas = fabricRef.current
-    if (!canvas) return
+  // ── Рефы ──────────────────────────────────────────────────────────────────
+  const containerRef    = useRef<HTMLDivElement>(null)
+  const viewportRef     = useRef<HTMLDivElement>(null)
+  const stageLayerRef   = useRef<HTMLDivElement>(null)
+  const fabricCanvasRef = useRef<HTMLCanvasElement>(null)
+  const staticCanvasRef = useRef<HTMLCanvasElement>(null)
+  const rulerHRef       = useRef<HTMLCanvasElement>(null)
+  const rulerVRef       = useRef<HTMLCanvasElement>(null)
+  const guidesRef       = useRef<HTMLCanvasElement>(null)
+  const rulerDragRef    = useRef<{ axis: "x" | "y"; index: number; pointerId: number } | null>(null)
+  const [manualGuides, setManualGuides] = useState<ManualGuide[]>([])
 
-    try {
-      const cur = LABEL_SIZES[sizeKey]
-      const rotatedKey = (Object.keys(LABEL_SIZES) as (keyof typeof LABEL_SIZES)[]).find((k) => {
-        const d = LABEL_SIZES[k]
-        return d.w_px === cur.h_px && d.h_px === cur.w_px && k !== sizeKey
-      })
+  // ── UI-состояние ──────────────────────────────────────────────────────────
+  const [font,        setFont]        = useState("Arial")
+  const [fontSize,    setFontSize]    = useState(16)
+  const [autoFit,     setAutoFit]     = useState(true)
+  const [fitRatio,    setFitRatio]    = useState(1)
+  const [isPrinting,  setIsPrinting]  = useState(false)
+  const [printStatus, setPrintStatus] = useState("")
+  const [loaded,      setLoaded]      = useState(false)
+  const [collapsed,   setCollapsed]   = useState(false)
 
-      if (rotatedKey) {
-        // Есть готовый «повёрнутый» формат — переключаемся на него
-        setSizeKey(rotatedKey)
-        setRotation(0)
-        toast.success(`Ориентация изменена: ${LABEL_SIZES[rotatedKey].label}`)
-        return
+  const isTransformingRef = useRef(false)
+  const isPanModeForPan   = useRef(false)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const actionsRef = useRef<any>(null)
+
+  // ── Pan ───────────────────────────────────────────────────────────────────
+  const zoomRefProxy = useRef(ZOOM_DEFAULT)
+  const { pan, panRef, setPan, isPanningRef } = useCanvasPan(
+    containerRef, isPanModeForPan, zoomRefProxy,
+  )
+
+  // ── Fabric canvas ─────────────────────────────────────────────────────────
+  const fabricRef = useFabricCanvas(
+    fabricCanvasRef,
+    sizeDef,
+    offsetX,
+    offsetY,
+    stageW,
+    stageH,
+    useCallback(async (canvas: import("fabric").Canvas) => {
+      type Bus = { on: (n: string, h: () => void) => void; off: (n: string, h: () => void) => void }
+      const bus  = canvas as unknown as Bus
+      const onTS = () => { isTransformingRef.current = true }
+      const onTE = () => { isTransformingRef.current = false }
+      bus.on("object:scaling",  onTS)
+      bus.on("object:rotating", onTS)
+      bus.on("object:modified", onTE)
+      bus.on("selection:cleared", onTE)
+      setLoaded(false)
+      await actionsRef.current.loadTemplate(canvas)
+      setLoaded(true)
+      return () => {
+        bus.off("object:scaling",  onTS)
+        bus.off("object:rotating", onTS)
+        bus.off("object:modified", onTE)
+        bus.off("selection:cleared", onTE)
+        setLoaded(false)
       }
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [sizeKey]),
+  )
 
-      // Готового «повёрнутого» формата нет — поворачиваем весь холст на 90°
-      setRotation((r) => (r + 90) % 360)
-      canvas.setViewportTransform([1, 0, 0, 1, offsetX, offsetY])
-      canvas.requestRenderAll()
-      toast.success("Холст повёрнут на 90°")
-    } catch (err) {
-      console.error("[Rotate Canvas]:", err)
-      toast.error("Не удалось повернуть холст")
-    }
-  }, [offsetX, offsetY, sizeKey])
+  // ── Pan Mode ──────────────────────────────────────────────────────────────
+  const {
+    isPanMode, isPanModeRef,
+    activatePanMode, deactivatePanMode,
+  } = usePanMode(
+    fabricRef, viewportRef, sizeKey,
+  )
+  useEffect(() => { isPanModeForPan.current = isPanModeRef.current }, [isPanMode, isPanModeRef])
 
-  // ---- Изменение зума ----------------------------------------------------
-  const handleZoom = useCallback((delta: number) => {
-    setZoom((z) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, parseFloat((z + delta).toFixed(2)))))
+  const handleTogglePan = useCallback(() => {
+    // Explicitly choose the next tool instead of relying on a state toggle.
+    // This also guarantees that clicking the active Hand button returns to
+    // Select even when the canvas is currently intercepting pointer events.
+    if (isPanMode) deactivatePanMode()
+    else activatePanMode()
+  }, [isPanMode, activatePanMode, deactivatePanMode])
+
+  // ── Zoom + transform ──────────────────────────────────────────────────────
+  const { zoom, zoomRef, zoomTo, zoomReset, transformRef } = useCanvasTransform(
+    fabricRef, pan, offsetX, offsetY, totalW, totalH, rotation, sizeKey,
+  )
+  useEffect(() => { zoomRefProxy.current = zoomRef.current }, [zoom, zoomRef])
+
+  const getGuidePosition = useCallback((axis: "x" | "y", clientX: number, clientY: number) => {
+    const rect = containerRef.current?.getBoundingClientRect()
+    if (!rect) return null
+    const t = transformRef.current
+    const stageW = t.totalW - RULER_SIZE
+    const stageH = t.totalH - RULER_SIZE
+    const so = computeStageOrigin(
+      rect.width, rect.height, RULER_SIZE,
+      t.pan.x, t.pan.y, t.totalW, t.totalH, t.zoom,
+    )
+    const trig = makeTrigCache(t.rotation)
+    const p = screenToLabelPx(
+      clientX - rect.left, clientY - rect.top, so,
+      t.offsetX, t.offsetY, stageW, stageH, t.zoom, trig.cos, trig.sin,
+    )
+    const max = axis === "x" ? sizeDef.h_px : sizeDef.w_px
+    return Math.max(0, Math.min(max, axis === "x" ? p.y : p.x))
+  }, [containerRef, sizeDef, transformRef])
+
+  const handleRulerPointerDown = useCallback((
+    axis: "x" | "y",
+    e: React.PointerEvent<HTMLCanvasElement>,
+  ) => {
+    const rect = e.currentTarget.getBoundingClientRect()
+    const localX = e.clientX - rect.left
+    const localY = e.clientY - rect.top
+    if ((axis === "x" && (localX < RULER_SIZE || localY > RULER_SIZE)) ||
+        (axis === "y" && (localY < RULER_SIZE || localX > RULER_SIZE))) return
+    const position = getGuidePosition(axis, e.clientX, e.clientY)
+    if (position === null) return
+    e.preventDefault()
+    e.stopPropagation()
+    const index = manualGuides.length
+    setManualGuides((prev) => [...prev, { axis, position }])
+    rulerDragRef.current = { axis, index, pointerId: e.pointerId }
+    e.currentTarget.setPointerCapture?.(e.pointerId)
+  }, [getGuidePosition, manualGuides.length])
+
+  const handleRulerPointerMove = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
+    const drag = rulerDragRef.current
+    if (!drag || drag.pointerId !== e.pointerId) return
+    const position = getGuidePosition(drag.axis, e.clientX, e.clientY)
+    if (position === null) return
+    setManualGuides((prev) => prev.map((g, i) => i === drag.index ? { ...g, position } : g))
+  }, [getGuidePosition])
+
+  const handleRulerPointerUp = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (rulerDragRef.current?.pointerId === e.pointerId) rulerDragRef.current = null
   }, [])
 
-  // Прямая установка масштаба — используется жестом «щипок» двумя пальцами
-  const handleZoomTo = useCallback((value: number) => {
-    setZoom(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, parseFloat(value.toFixed(3)))))
-  }, [])
+  // ── Pinch Zoom ────────────────────────────────────────────────────────────
+  usePinchZoom(
+    containerRef, fabricRef, zoomRef, panRef,
+    isPanningRef, isTransformingRef, zoomTo, setPan,
+  )
 
-  // ---- Инструменты редактирования -----------------------------------------
-  const applyToSelection = (patch: Record<string, unknown>) => {
-    const canvas = fabricRef.current
-    const objects = canvas?.getActiveObjects() ?? []
-    if (!canvas || !objects.length) { toast.info("Выделите элемент на холсте"); return }
-    objects.forEach((o) => {
-      o.set(patch)
-      if (o.type === "textbox") refitTextbox(o as Textbox)
-    })
-    canvas.renderAll()
-  }
+  // ── Перерисовка линеек / направляющих ────────────────────────────────────
+  useCanvasRepaint({
+    fabricRef, containerRef, staticCanvasRef,
+    rulerHRef, rulerVRef, guidesCanvasRef: guidesRef,
+    transformRef, sizeDef, sizeKey,
+    rotation,
+    manualGuides,
+  })
 
-  const addText = () => {
-    const canvas = fabricRef.current
-    if (!canvas) return
-    const t = createTextbox("Текст", {
-      left: 20, top: 20, width: Math.round(sizeDef.w_px * 0.5),
-      fontSize, fontFamily: font, fill: "#000000",
-      data: { role: `custom-t-${Date.now()}`, autoFit, fitRatio },
-    })
-    canvas.add(t)
-    canvas.setActiveObject(t)
-    canvas.renderAll()
-  }
+  // ── Действия ──────────────────────────────────────────────────────────────
+  const actions = useLabelActions(
+    fabricRef, sizeDef, sizeKey,
+    offsetX, offsetY, product, category,
+    font, fontSize, autoFit, fitRatio,
+  )
+  actionsRef.current = actions
 
-  /** Текстовые блоки, к которым применяются настройки: выделение либо все. */
-  const targetTextboxes = (): Textbox[] => {
-    const canvas = fabricRef.current
-    if (!canvas) return []
-    const selected = canvas.getActiveObjects().filter((o) => o.type === "textbox") as Textbox[]
-    if (selected.length) return selected
-    return canvas.getObjects().filter((o) => o.type === "textbox") as Textbox[]
-  }
+  // ── Синхронизация выделения ───────────────────────────────────────────────
+  useSelectionSync(fabricRef, loaded, sizeKey, {
+    setFont, setFontSize,
+    setAutoFitState: setAutoFit,
+    setFitRatioState: setFitRatio,
+  })
 
-  const handleAutoFitChange = (on: boolean) => {
-    setAutoFitState(on)
-    const canvas = fabricRef.current
-    if (!canvas) return
-    targetTextboxes().forEach((tb) => setAutoFit(tb, on))
-    canvas.requestRenderAll()
-  }
+  // ── Печать ────────────────────────────────────────────────────────────────
+  const { handlePrint } = useLabelPrint(
+    fabricRef, sizeDef, loaded, autoPrint ?? false,
+    setIsPrinting, setPrintStatus,
+  )
 
-  const handleFitRatioChange = (ratio: number) => {
-    const r = clampRatio(ratio)
-    setFitRatioState(r)
-    const canvas = fabricRef.current
-    if (!canvas) return
-    targetTextboxes().forEach((tb) => setFitRatio(tb, r))
-    canvas.requestRenderAll()
-  }
-
-  // Синхронизация панели с выделенным текстом
   useEffect(() => {
-    const canvas = fabricRef.current
-    if (!canvas || !ready) return
-    const sync = () => {
-      const tb = canvas.getActiveObjects().find((o) => o.type === "textbox") as Textbox | undefined
-      if (!tb) return
-      setAutoFitState(isAutoFit(tb))
-      setFitRatioState(getFitRatio(tb))
-      if (typeof tb.fontSize === "number") setFontSize(Math.round(tb.fontSize))
-      if (typeof tb.fontFamily === "string") setFont(tb.fontFamily)
-    }
-    canvas.on("selection:created", sync)
-    canvas.on("selection:updated", sync)
-    return () => {
-      canvas.off("selection:created", sync)
-      canvas.off("selection:updated", sync)
-    }
-  }, [ready, sizeKey])
+    if (!isPrinting && loaded && autoPrint) onClose?.()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPrinting])
 
-  const addBorder = (styleKey: BorderStyleKey) => {
-    const canvas = fabricRef.current
-    if (!canvas) return
-    addBorderToCanvas(canvas, sizeDef, styleKey)
-  }
+  // ── ЕДИНАЯ ЛОГИКА ПОВОРОТА (без подмены sizeKey) ─────────────────────────
+  const handleRotateCanvas = useCallback(() => {
+    // Вращаем только состояние rotation, не трогая sizeKey
+    setRotation((r) => (r + 90) % 360)
+  }, [])
 
-  const removeSelected = () => {
-    const canvas = fabricRef.current
+  // ── Изменение размера пользователем вручную ──────────────────────────────
+  const handleSizeChange = useCallback((newKey: JewelryLabelSizeKey) => {
+    setSizeKey(newKey)
+    setRotation(0) // Сбрасываем поворот при явной смене этикетки
+    setManualGuides([])
+  }, [])
+
+  // ── Масштаб элементов ─────────────────────────────────────────────────────
+  const ELEM_SCALE_STEP = 0.1
+
+  const handleScaleUp = useCallback(() => {
+    const canvas  = fabricRef.current
     const objects = canvas?.getActiveObjects() ?? []
     if (!canvas || !objects.length) return
-    objects.forEach((o) => canvas.remove(o))
-    canvas.discardActiveObject()
-    canvas.renderAll()
+    objects.forEach((o) => {
+      o.set({
+        scaleX: (o.scaleX ?? 1) * (1 + ELEM_SCALE_STEP),
+        scaleY: (o.scaleY ?? 1) * (1 + ELEM_SCALE_STEP),
+      })
+      o.setCoords()
+    })
+    canvas.requestRenderAll()
+  }, [fabricRef])
+
+  const handleScaleDown = useCallback(() => {
+    const canvas  = fabricRef.current
+    const objects = canvas?.getActiveObjects() ?? []
+    if (!canvas || !objects.length) return
+    objects.forEach((o) => {
+      o.set({
+        scaleX: Math.max(0.05, (o.scaleX ?? 1) * (1 - ELEM_SCALE_STEP)),
+        scaleY: Math.max(0.05, (o.scaleY ?? 1) * (1 - ELEM_SCALE_STEP)),
+      })
+      o.setCoords()
+    })
+    canvas.requestRenderAll()
+  }, [fabricRef])
+
+  // ── Misc обработчики ──────────────────────────────────────────────────────
+  const handleBgClick = useCallback(() => {
+    fabricRef.current?.discardActiveObject()
+    fabricRef.current?.requestRenderAll()
+  }, [fabricRef])
+
+  const handleFitRatioChange = useCallback((v: number) => {
+    const r = actions.handleFitRatioChange(v)
+    if (typeof r === "number") setFitRatio(r)
+  }, [actions])
+
+  const handleZoomReset = useCallback(() => {
+    zoomReset()
+    setPan({ x: 0, y: 0 })
+  }, [zoomReset, setPan])
+
+  const handlePanStart = useCallback((_cx: number, _cy: number) => {}, [])
+
+  // ── Пропсы тулбара ────────────────────────────────────────────────────────
+  const toolbarCommon = {
+    sizeKey, sizeDef, font, fontSize, isPrinting, status: printStatus,
+    autoFit, fitRatio, zoom, isPanMode,
+    onSizeChange:     handleSizeChange,
+    onAddText:        () => { deactivatePanMode(); actions.addText() },
+    onAddBorder:      (k: BorderStyleKey) => { deactivatePanMode(); actions.addBorder(k) },
+    onRemoveSelected: () => { deactivatePanMode(); actions.removeSelected() },
+    onSaveTemplate:   actions.handleSaveTemplate,
+    onResetTemplate:  actions.handleResetTemplate,
+    onFontChange:     (f: string) => { setFont(f); actions.handleFontChange(f) },
+    onFontSizeChange: (s: number) => { setFontSize(s); actions.handleFontSizeChange(s) },
+    onAutoFitChange:  (v: boolean) => { setAutoFit(v); actions.handleAutoFitChange(v) },
+    onFitRatioChange: handleFitRatioChange,
+    onZoomTo:         zoomTo,
+    onZoomReset:      handleZoomReset,
+    onTogglePanMode:  handleTogglePan,
+    onRotateCanvas:   handleRotateCanvas,
+    onPrint:          handlePrint,
+    onScaleUp:        handleScaleUp,
+    onScaleDown:      handleScaleDown,
+    onLoadSvgFrame:   actions.loadSvgFrame,
+    onSaveToFile:     actions.saveToFile,
   }
 
-  // ---- Сохранение / сброс -------------------------------------------------
-  const handleSaveTemplate = () => {
-    const canvas = fabricRef.current
-    if (!canvas) return
-    try {
-      canvas.discardActiveObject()
-      canvas.renderAll()
-      const tpl = serializeLayout(canvas, sizeKey, null)
-      saveLabelTemplate(category, JSON.stringify(tpl), sizeKey)
-      toast.success(`Расположение сохранено для «${category}» / ${sizeKey}`)
-    } catch (err) {
-      toast.error((err as Error).message)
-    }
-  }
-
-  const handleResetTemplate = async () => {
-    const canvas = fabricRef.current
-    if (!canvas) return
-    deleteLabelTemplate(category, sizeKey)
-    await buildDefaultLayout(canvas, product, sizeDef)
-    canvas.setViewportTransform([1, 0, 0, 1, offsetX, offsetY])
-    canvas.renderAll()
-    toast.success("Возвращён стандартный эскиз")
-  }
-
-  // ---- Рендер: Flex-структура -----------------------------------------------
+  // ── Рендер ────────────────────────────────────────────────────────────────
   return (
-    <div className="relative flex h-full w-full flex-col overflow-hidden bg-background">
-
-      {/* ── Лоадер во время печати ── */}
+    <div
+      ref={containerRef}
+      className="relative flex h-full w-full flex-col overflow-hidden bg-background select-none"
+    >
+      {/* Лоадер во время печати */}
       {isPrinting && (
         <div className="absolute inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-background/80 backdrop-blur-sm">
           <div className="relative flex items-center justify-center">
             <span className="absolute h-11 w-11 rounded-full border-[3px] border-primary/30 border-t-primary animate-spin" />
             <span className="rotate-45 rounded-sm bg-primary/20 border border-primary/40 h-4 w-4" />
           </div>
-          {status && <p className="text-xs text-muted-foreground animate-pulse">{status}</p>}
+          {printStatus && (
+            <p className="text-xs text-muted-foreground animate-pulse">{printStatus}</p>
+          )}
         </div>
       )}
 
-      {/* ═══════════════════════════════════════════════════════════════
-          ВЕРХНЯЯ ПАНЕЛЬ
-      ═══════════════════════════════════════════════════════════════ */}
+      {/* ── ВЕРХНЯЯ ПАНЕЛЬ ── */}
       {!collapsed && (
         <div className="z-20 border-b bg-background/90 backdrop-blur-md shrink-0">
           <div className="flex items-center justify-between px-3 py-2">
@@ -356,94 +371,62 @@ export function LabelEditor({
               </button>
             )}
           </div>
-
-          <LabelEditorToolbar
-            zone="header"
-            sizeKey={sizeKey}
-            sizeDef={sizeDef}
-            font={font}
-            fontSize={fontSize}
-            isPrinting={isPrinting}
-            status={status}
-            onSizeChange={setSizeKey}
-            onAddText={addText}
-            onAddBorder={addBorder}
-            onRemoveSelected={removeSelected}
-            onRotateCanvas={handleRotateCanvas}
-            onSaveTemplate={handleSaveTemplate}
-            onResetTemplate={() => void handleResetTemplate()}
-            onFontChange={(f) => { setFont(f); applyToSelection({ fontFamily: f }) }}
-            onFontSizeChange={(s) => { setFontSize(s); applyToSelection({ fontSize: s }) }}
-            autoFit={autoFit}
-            onAutoFitChange={handleAutoFitChange}
-            fitRatio={fitRatio}
-            onFitRatioChange={handleFitRatioChange}
-            onPrint={() => void handlePrint()}
-          />
+          <LabelEditorToolbar zone="header" {...toolbarCommon} />
         </div>
       )}
 
-      {/* Кнопка закрытия в свёрнутом режиме */}
       {collapsed && onClose && (
         <button
           type="button"
           onClick={onClose}
-          className="absolute right-3 top-3 z-30 rounded-full border border-white/20 bg-black/35 p-1.5 text-white/90 backdrop-blur-md transition-colors hover:bg-black/50"
+          className="absolute right-3 top-3 z-30 rounded-full border border-white/20 bg-black/35 p-1.5 text-white/90 backdrop-blur-md hover:bg-black/50 transition-colors"
           aria-label="Закрыть"
         >
           <X className="h-4 w-4" />
         </button>
       )}
 
-      {/* ═══════════════════════════════════════════════════════════════
-          ОБЛАСТЬ ХОЛСТА И ЛИНЕЕК (Занимает всё свободное пространство)
-      ═══════════════════════════════════════════════════════════════ */}
+      {/* ── ОБЛАСТЬ ХОЛСТА ── */}
       <div className="relative flex-1 w-full overflow-hidden z-0">
-        <LabelEditorCanvasArea
-          canvasRef={canvasRef}
-          fabricRef={fabricRef}
+        <CanvasArea
+          viewportRef={viewportRef}
+          stageLayerRef={stageLayerRef}
+          staticCanvasRef={staticCanvasRef}
+          fabricCanvasRef={fabricCanvasRef}
+          rulerHRef={rulerHRef}
+          rulerVRef={rulerVRef}
+          guidesRef={guidesRef}
           sizeDef={sizeDef}
-          stageW={stageW}
-          stageH={stageH}
+          rotation={rotation}
+          zoom={zoom}
+          pan={pan}
           offsetX={offsetX}
           offsetY={offsetY}
-          zoom={zoom}
-          sizeKey={sizeKey}
-          rotation={rotation}
-          onZoom={handleZoom}
-          onZoomTo={handleZoomTo}
+          totalW={totalW}
+          totalH={totalH}
+          stageW={stageW}
+          stageH={stageH}
+          isPanMode={isPanMode}
+          onPanStart={handlePanStart}
+          onBgClick={handleBgClick}
+          onZoomTo={zoomTo}
+          onZoomReset={handleZoomReset}
+          onTogglePan={handleTogglePan}
+          onActivatePan={activatePanMode}
+          onDeactivatePan={deactivatePanMode}
+          onRulerPointerDown={handleRulerPointerDown}
+          onRulerPointerMove={handleRulerPointerMove}
+          onRulerPointerUp={handleRulerPointerUp}
         />
       </div>
 
-      {/* ═══════════════════════════════════════════════════════════════
-          НИЖНЯЯ ПАНЕЛЬ — overflow: visible чтобы выпадающее меню «Рамка»
-          отображалось поверх холста, а не обрезалось контейнером
-      ═══════════════════════════════════════════════════════════════ */}
+      {/* ── НИЖНЯЯ ПАНЕЛЬ ── */}
       <div className="shrink-0" style={{ zIndex: 9990, position: "relative" }}>
         <LabelEditorToolbar
           zone="bottom"
-          sizeKey={sizeKey}
-          sizeDef={sizeDef}
-          font={font}
-          fontSize={fontSize}
-          isPrinting={isPrinting}
-          status={status}
           collapsed={collapsed}
-          onToggleCollapse={() => setCollapsed(!collapsed)}
-          onSizeChange={setSizeKey}
-          onAddText={addText}
-          onAddBorder={addBorder}
-          onRemoveSelected={removeSelected}
-          onRotateCanvas={handleRotateCanvas}
-          onSaveTemplate={handleSaveTemplate}
-          onResetTemplate={() => void handleResetTemplate()}
-          onFontChange={(f) => { setFont(f); applyToSelection({ fontFamily: f }) }}
-          onFontSizeChange={(s) => { setFontSize(s); applyToSelection({ fontSize: s }) }}
-          autoFit={autoFit}
-          onAutoFitChange={handleAutoFitChange}
-          fitRatio={fitRatio}
-          onFitRatioChange={handleFitRatioChange}
-          onPrint={() => void handlePrint()}
+          onToggleCollapse={() => setCollapsed((v) => !v)}
+          {...toolbarCommon}
         />
       </div>
     </div>

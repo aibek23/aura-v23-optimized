@@ -27,6 +27,7 @@ import { Search, Pencil, Trash2, Sparkles, PackageX, Printer, Plus, ChevronLeft,
 import { toast } from "sonner"
 import { useRouter } from "next/navigation"
 import { ProductDialog } from "@/components/add-edit-Product/product-dialog"
+import { SkladStats } from "./sklad-stats"
 import { cn } from "@/lib/utils"
 
 // Загружаем LabelEditor строго на клиенте для корректного связывания пакетов Bluetooth
@@ -80,14 +81,6 @@ export function SkladScreen({
   const currentPage = Math.min(page, totalPages)
   const paginated = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
 
-  const totals = useMemo(() => {
-    const count = products.reduce((s, p) => s + p.quantity, 0)
-    const weight = products.reduce((s, p) => s + p.weight * p.quantity, 0)
-    const retail = products.reduce((s, p) => s + p.sale_price * p.quantity, 0)
-    const cost = products.reduce((s, p) => s + p.purchase_price * p.quantity, 0)
-    return { count, weight, retail, cost }
-  }, [products])
-
   const onPrintLabel = (p: Product) => {
     setLabelProduct(p)
     setLabelAutoPrint(false)
@@ -139,13 +132,12 @@ export function SkladScreen({
         </Button>
       </div>
 
-      {/* Итоговые карточки */}
-      <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatCard label="Позиций" value={String(totals.count)} />
-        {isAdmin && <StatCard label="Общий вес" value={formatWeight(totals.weight)} />}
-        {isAdmin && <StatCard label="Розн. стоимость" value={formatSom(totals.retail)} />}
-        {canSeePurchasePrice && <StatCard label="Закуп. стоимость" value={formatSom(totals.cost)} />}
-      </div>
+      {/* Блок аналитики */}
+      <SkladStats
+        products={products}
+        canSeePurchasePrice={canSeePurchasePrice}
+        isAdmin={isAdmin}
+      />
 
       {/* Поиск */}
       <div className="relative mb-4 w-full sm:max-w-xs">
@@ -448,15 +440,6 @@ function ActionButtons({
           <Trash2 className="h-3.5 w-3.5" />
         </Button>
       )}
-    </div>
-  )
-}
-
-function StatCard({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-xl border border-border bg-card p-4">
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className="mt-1 font-mono text-lg font-semibold">{value}</div>
     </div>
   )
 }
