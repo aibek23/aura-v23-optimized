@@ -187,6 +187,19 @@ export async function updateProduct(
   input: Partial<ProductInput> & { is_hidden?: boolean; is_secondary?: never },
 ): Promise<Product> {
   const { supabase } = await requireProfile()
+  const { data: current } = await supabase
+    .from("products")
+    .select("consignment_operation_id")
+    .eq("id", id)
+    .single()
+  if (current?.consignment_operation_id && (
+    input.purchase_price !== undefined ||
+    input.supplier_name !== undefined ||
+    input.supplier_phone !== undefined ||
+    input.quantity !== undefined
+  )) {
+    throw new Error("Товар уже взят на реализацию: закупочную цену, поставщика и количество менять нельзя")
+  }
   validate(input)
   const { data, error } = await supabase
     .from("products")

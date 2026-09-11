@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react"
 import type { Product } from "@/lib/types"
 import { createProduct, updateProduct, type ProductInput } from "@/app/actions/products"
+import { takeProductOnConsignment } from "@/app/actions/suppliers"
 import { clearDraft, pushNameHistory } from "@/lib/name-history"
 import { useProductForm } from "@/hooks/useProductForm"
 
@@ -16,6 +17,8 @@ import { cn } from "@/lib/utils"
 import { toast } from "sonner"
 import { useRouter } from "next/navigation"
 import { InlineLoader } from "@/components/ui/page-loader"
+import { HandCoins } from "lucide-react"
+import { formatSom } from "@/lib/format"
 
 export function ProductDialog({
   open,
@@ -61,10 +64,20 @@ export function ProductDialog({
     requestArticle,
   } = useProductForm(open, product)
 
-  const submit = async () => {
+  const submit = async (consignment = false) => {
     if (!form.name.trim()) {
       toast.error("Укажите название")
       return
+    }
+    if (consignment) {
+      if (!form.supplier_name.trim()) {
+        toast.error("Укажите поставщика, чтобы взять товар на реализацию")
+        return
+      }
+      if (!(form.purchase_price > 0)) {
+        toast.error("Укажите оптовую цену — долг поставщику считается от неё")
+        return
+      }
     }
     setSaving(true)
     try {
@@ -98,6 +111,18 @@ export function ProductDialog({
       }
 
       setNameHistory(pushNameHistory(form.name))
+
+      // Кнопка «На реализацию»: после сохранения сразу фиксируем долг поставщику.
+      if (consignment) {
+        try {
+          await takeProductOnConsignment(saved.id)
+          toast.success(
+            `Взято на реализацию: долг поставщику ${formatSom(saved.purchase_price * Math.max(saved.quantity, 1))}`
+          )
+        } catch (e) {
+          toast.error(e instanceof Error ? e.message : "Товар сохранён, но взять на реализацию не удалось")
+        }
+      }
       startTransition(() => router.refresh())
 
       // 2) Данные уже в БД — спрашиваем про печать этикетки.
@@ -291,7 +316,27 @@ export function ProductDialog({
 
           {/* Поставщик */}
           <div className="grid gap-3 rounded-xl border border-border bg-muted/30 p-3">
-            <div className="text-sm font-medium">Поставщик</div>
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-sm font-medium">Поставщик</div>
+              {product?.consignment_operation_id ? (
+                <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-600">
+                  <HandCoins className="h-3 w-3" /> Взято на реализацию
+                </span>
+              ) : (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={saving}
+                  className="h-7 gap-1 px-2 text-xs text-[#B57C1B] hover:bg-[#E5AC4C]/10"
+                  onClick={() => void submit(true)}
+                  title="Сохранить товар и записать его оптовую стоимость в долг поставщику"
+                >
+                  <HandCoins className="h-3 w-3" />
+                  {saving ? "Сохранение..." : "На реализацию"}
+                </Button>
+              )}
+            </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="grid gap-2">
                 <Label htmlFor="p-supplier-name">Имя / компания</Label>

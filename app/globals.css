@@ -160,3 +160,22 @@
 .animate-scan-line {
   animation: scan 2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
+/* ---------------------------------------------------------------------------
+ * Тонкие вспомогательные линии на мобильных экранах.
+ * На плотных дисплеях 1px выглядит грубо, поэтому базовые границы
+ * (утилиты без явной толщины) уменьшаются до hairline 0.5px.
+ * Явные border-2 / border-4 и т.п. остаются без изменений.
+ * ------------------------------------------------------------------------- */
+@media (max-width: 767px) {
+  @supports (border-width: 0.5px) {
+    .border { border-width: 0.5px; }
+    .border-t { border-top-width: 0.5px; }
+    .border-b { border-bottom-width: 0.5px; }
+    .border-l { border-left-width: 0.5px; }
+    .border-r { border-right-width: 0.5px; }
+    .border-x { border-inline-width: 0.5px; }
+    .border-y { border-block-width: 0.5px; }
+    .divide-y > :not([hidden]) ~ :not([hidden]) { border-top-width: 0.5px; }
+    .divide-x > :not([hidden]) ~ :not([hidden]) { border-inline-start-width: 0.5px; }
+  }
+}

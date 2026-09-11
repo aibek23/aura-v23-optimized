@@ -112,6 +112,9 @@ export type Product = {
   images: string[] | null
   supplier_name: string | null
   supplier_phone: string | null
+  consignment_operation_id?: string | null
+  consignment_at?: string | null
+  consignment_by?: string | null
   status: ProductStatus
   created_at: string
 }
@@ -227,6 +230,9 @@ export type CashOperation = {
   amount_electronic: number
   reason: string
   created_at: string
+  supplier_name?: string | null
+  supplier_phone?: string | null
+  supplier_debt_operation_id?: string | null
 }
 
 export type CashReasonPreset = {
@@ -235,6 +241,36 @@ export type CashReasonPreset = {
   created_by: string
   text: string
   created_at: string
+}
+
+export type SupplierDebtOperationType = "consignment" | "adjustment" | "payment"
+export type SupplierDebtSource = "cash" | "electronic" | "mixed" | null
+
+export type SupplierDebtOperation = {
+  id: string
+  shop_id: string
+  supplier_name: string
+  supplier_phone: string | null
+  operation_type: SupplierDebtOperationType
+  amount: number
+  balance_before: number
+  balance_after: number
+  product_id: string | null
+  cash_operation_id: string | null
+  source: SupplierDebtSource
+  amount_cash: number
+  amount_electronic: number
+  reason: string
+  author_name: string | null
+  device_info: string | null
+  created_at: string
+}
+
+export type SupplierDebtSummary = {
+  supplier_name: string
+  supplier_phone: string | null
+  balance: number
+  last_operation_at: string
 }
 
 /** Акцентный «нейтральный» цвет интерфейса (инкассация, выделения). */

@@ -5,19 +5,21 @@ import type { Customer, Product, Profile, Role, Sale } from "@/lib/types"
 import { Toaster } from "@/components/ui/sonner"
 import { AppHeader } from "@/components/app-header"
 import { RatesTicker } from "@/components/rates-ticker"
-import { AppNav, type ScreenId } from "@/components/app-nav"
+import { AppNav, SCREEN_PATHS, type ScreenId } from "@/components/app-nav"
 import { KassaScreen } from "@/components/screens/kassa/index"
 import { VitrinaScreen } from "@/components/screens/vitrina"
 import { SkladScreen } from "@/components/screens/sklad"
 import { OtchetyScreen } from "@/components/screens/otchety"
 import { KabinetScreen } from "@/components/screens/kabinet"
 import { ClientsScreen } from "@/components/screens/clients"
+import { SuppliersScreen } from "@/components/screens/suppliers"
 import { NotificationsPage } from "@/components/notifications"
 import { SuperAdminShopsScreen, ImpersonationBanner } from "@/components/screens/superadmin/shops-panel"
 import type { CabinetData } from "@/app/actions/cabinet"
 import type { MetalRate } from "@/lib/types"
 import type { CashData } from "@/app/actions/cash"
 import type { ShopBillingRow } from "@/app/actions/superadmin"
+import type { SupplierDebtData } from "@/app/actions/suppliers"
 import { impersonateShop } from "@/app/actions/superadmin"
 import { useRouter } from "next/navigation"
 import { createClient as createSupabaseBrowserClient } from "@/lib/supabase/client"
@@ -86,35 +88,38 @@ function ExitConfirmModal({
 }
 
 export function Dashboard({
+  screen,
   profile,
   products,
   sales,
   cabinet,
   rates = [],
   cash,
+  supplierDebts,
   email,
   clients = [],
   superAdminShops,
   impersonatedShop,
 }: {
+  /** Текущий экран определяется URL-роутом, а не внутренним состоянием. */
+  screen: ScreenId
   profile: Profile
   products: Product[]
   sales: Sale[]
   cabinet: CabinetData
   rates?: MetalRate[]
   cash: CashData
+  supplierDebts: SupplierDebtData
   email: string
   clients?: Customer[]
   superAdminShops?: ShopBillingRow[]
   impersonatedShop?: { shop_id: string; shop_name: string | null }
 }) {
   const router = useRouter()
-  const [screen, setScreen] = useState<ScreenId>("kassa")
+  const [activeScreen, setActiveScreen] = useState<ScreenId>(screen)
   const [viewRole, setViewRole] = useState<Role>(profile.role ?? "seller")
   const [showExitModal, setShowExitModal] = useState(false)
 
-  // История переходов внутри CRM (стек экранов)
-  const crmHistoryRef = useRef<ScreenId[]>([])
   // Счётчик нажатий «Назад» с главного экрана (0 или 1)
   const backCountRef = useRef(0)
   // Открыт ли модал подтверждения выхода (для обработчика popstate)
@@ -126,35 +131,48 @@ export function Dashboard({
 
   const [, startTransition] = useTransition()
 
-  // При монтировании добавляем первый «сторожевой» шаг в browser history
+  /** Переключение экрана: переход по отдельному URL. */
+  const handleScreenChange = useCallback(
+    (next: ScreenId) => {
+      backCountRef.current = 0 // сбрасываем счётчик при навигации вперёд
+      setActiveScreen(next)
+      window.history.pushState({ [CRM_HISTORY_KEY]: next }, "", SCREEN_PATHS[next])
+    },
+    [],
+  )
+
+  /**
+   * Защита от случайного выхода из CRM работает только на главном экране
+   * (/pos). На остальных экранах «Назад» — обычная навигация браузера
+   * между URL-адресами разделов.
+   */
   useEffect(() => {
+    if (activeScreen !== "kassa") {
+      const onSectionPopState = () => {
+        const next = (Object.entries(SCREEN_PATHS) as [ScreenId, string][]).find(
+          ([, path]) => path === window.location.pathname,
+        )?.[0]
+        if (next) setActiveScreen(next)
+      }
+
+      window.addEventListener("popstate", onSectionPopState)
+      return () => window.removeEventListener("popstate", onSectionPopState)
+    }
+
     pushCrmState("kassa")
-    crmHistoryRef.current = []
-  }, [])
+    backCountRef.current = 0
 
-  /** Переключение экрана: сохраняем в CRM-стек и добавляем шаг в browser history. */
-  const handleScreenChange = useCallback((next: ScreenId) => {
-    crmHistoryRef.current.push(screen)
-    setScreen(next)
-    pushCrmState(next)
-    backCountRef.current = 0 // сбрасываем счётчик при навигации вперёд
-  }, [screen])
-
-  /** Обработка нажатия «Назад» браузера. */
-  useEffect(() => {
     const onPopState = () => {
-      // Любое нажатие «Назад» внутри CRM НЕ должно уводить пользователя из
-      // приложения: сразу возвращаем «сторожевой» шаг в стек истории.
-      // Если в стеке CRM есть предыдущий экран — просто возвращаемся к нему.
-      if (crmHistoryRef.current.length > 0) {
-        const prev = crmHistoryRef.current.pop()!
-        setScreen(prev)
-        pushCrmState(prev)
+      const next = (Object.entries(SCREEN_PATHS) as [ScreenId, string][]).find(
+        ([, path]) => path === window.location.pathname,
+      )?.[0]
+      if (next && next !== "kassa") {
         backCountRef.current = 0
+        setActiveScreen(next)
         return
       }
 
-      // Мы на главном экране CRM.
+      // Возвращаем «сторожевой» шаг в стек истории.
       pushCrmState("kassa")
 
       // Если модал уже открыт — повторное «Назад» его просто закрывает.
@@ -179,7 +197,7 @@ export function Dashboard({
 
     window.addEventListener("popstate", onPopState)
     return () => window.removeEventListener("popstate", onPopState)
-  }, [])
+  }, [activeScreen])
 
   /** «Выйти» — разлогиниваем пользователя и уводим на страницу входа. */
   const handleExitCrm = async () => {
@@ -236,39 +254,48 @@ export function Dashboard({
         onOpenCabinet={() => handleScreenChange("kabinet")}
         onOpenNotifications={() => handleScreenChange("notifications")}
       />
-      <AppNav screen={screen} onChange={handleScreenChange} isAdmin={isAdmin} isSuperAdmin={isSuperAdmin} />
+      <AppNav
+        screen={activeScreen}
+        isAdmin={isAdmin}
+        isSuperAdmin={isSuperAdmin}
+        onNavigate={handleScreenChange}
+      />
 
       <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 md:px-6">
-        {screen === "kassa" && (
+        {activeScreen === "kassa" && (
           <KassaScreen
             profile={profile}
             products={products}
             viewRole={viewRole}
             sales={sales}
             cash={cash}
+            supplierDebts={supplierDebts}
             rates={rates}
             clients={clients}
           />
         )}
-        {screen === "vitrina" && (
+        {activeScreen === "vitrina" && (
           <VitrinaScreen products={products} canSeePurchasePrice={canSeePurchasePrice} isAdmin={isAdmin} />
         )}
-        {screen === "sklad" && (
+        {activeScreen === "sklad" && (
           <SkladScreen products={products} canSeePurchasePrice={canSeePurchasePrice} isAdmin={isAdmin} />
         )}
-        {screen === "clients" && (
+        {activeScreen === "clients" && (
           <ClientsScreen clients={clients} />
         )}
-        {screen === "kabinet" && (
+        {activeScreen === "suppliers" && isAdmin && (
+          <SuppliersScreen supplierDebts={supplierDebts} isAdmin={isAdmin} />
+        )}
+        {activeScreen === "kabinet" && (
           <KabinetScreen profile={profile} viewRole={viewRole} sales={sales} data={cabinet} email={email} />
         )}
-        {screen === "otchety" && isAdmin && (
+        {activeScreen === "otchety" && isAdmin && (
           <OtchetyScreen sales={sales} products={products} viewRole={viewRole} profile={profile} />
         )}
-        {screen === "shops" && isSuperAdmin && superAdminShops && (
+        {activeScreen === "shops" && isSuperAdmin && superAdminShops && (
           <SuperAdminShopsScreen initialShops={superAdminShops} />
         )}
-        {screen === "notifications" && isSuperAdmin && <NotificationsPage />}
+        {activeScreen === "notifications" && isSuperAdmin && <NotificationsPage />}
       </main>
       <Toaster position="top-center" richColors />
     </div>

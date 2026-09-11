@@ -413,7 +413,12 @@ export function KassaScreen({
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_380px] xl:grid-cols-[1fr_420px] gap-6 items-start">
         
         <div className="flex flex-col gap-6 order-1 min-w-0 w-full">
-          <CashPanel sales={sales} operations={cash.operations} presets={cash.presets} isAdmin={isAdmin} />
+          <CashPanel
+            sales={sales}
+            operations={cash.operations}
+            presets={cash.presets}
+            isAdmin={isAdmin}
+          />
           <KassaSearch
             query={query}
             setQuery={setQuery}

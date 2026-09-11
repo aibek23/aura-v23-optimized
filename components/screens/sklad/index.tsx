@@ -6,6 +6,7 @@ import type { Product } from "@/lib/types"
 import { DEFAULT_SIZE_KEY, type JewelryLabelSizeKey } from "@/lib/niimbot"
 import { formatSom, formatWeight } from "@/lib/format"
 import { deleteProduct } from "@/app/actions/products"
+import { takeProductOnConsignment } from "@/app/actions/suppliers"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -23,7 +24,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { Search, Pencil, Trash2, Sparkles, PackageX, Printer, Plus, ChevronLeft, ChevronRight } from "lucide-react"
+import { Search, Pencil, Trash2, Sparkles, PackageX, Printer, Plus, ChevronLeft, ChevronRight, HandCoins } from "lucide-react"
 import { toast } from "sonner"
 import { useRouter } from "next/navigation"
 import { ProductDialog } from "@/components/add-edit-Product/product-dialog"
@@ -59,6 +60,7 @@ export function SkladScreen({
   const [editing, setEditing] = useState<Product | null>(null)
   const [query, setQuery] = useState("")
   const [page, setPage] = useState(1)
+  const [consignmentId, setConsignmentId] = useState<string | null>(null)
 
   const filtered = useMemo(() => {
     const q = query.toLowerCase()
@@ -115,6 +117,20 @@ export function SkladScreen({
     } catch (e) {
       console.error("[sklad] delete error:", e)
       toast.error("Не удалось удалить")
+    }
+  }
+
+  const onConsignment = async (p: Product) => {
+    if (p.consignment_operation_id || !p.supplier_name) return
+    setConsignmentId(p.id)
+    try {
+      await takeProductOnConsignment(p.id)
+      toast.success(`«${p.name}» взят на реализацию на ${formatSom(p.purchase_price * Math.max(p.quantity, 1))}`)
+      startTransition(() => router.refresh())
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Не удалось взять товар на реализацию")
+    } finally {
+      setConsignmentId(null)
     }
   }
 
@@ -188,6 +204,7 @@ export function SkladScreen({
                       <div className="min-w-0">
                         <div className="line-clamp-1 text-sm font-medium">{p.name}</div>
                         <div className="text-xs text-muted-foreground">{p.sku || p.category}</div>
+                        <SupplierMark product={p} pending={consignmentId === p.id} onTake={onConsignment} />
                       </div>
                     </div>
                   </TableCell>
@@ -210,7 +227,9 @@ export function SkladScreen({
                       isAdmin={isAdmin}
                       onPrint={onPrintLabel}
                       onEdit={onEdit}
-                      onDelete={onDelete}
+                       onDelete={onDelete}
+                       onTake={onConsignment}
+                       pending={consignmentId === p.id}
                     />
                   </TableCell>
                 </TableRow>
@@ -250,6 +269,7 @@ export function SkladScreen({
                     {p.sku && p.category && <span className="mx-1">·</span>}
                     {p.category}
                   </div>
+                  <SupplierMark product={p} pending={consignmentId === p.id} onTake={onConsignment} />
                 </div>
                 <div className="shrink-0 text-right">
                   <div className="font-mono text-sm font-semibold text-primary">{formatSom(p.sale_price)}</div>
@@ -402,13 +422,15 @@ function QtyBadge({ qty }: { qty: number }) {
 }
 
 function ActionButtons({
-  p, isAdmin, onPrint, onEdit, onDelete,
+  p, isAdmin, onPrint, onEdit, onDelete, onTake, pending,
 }: {
   p: Product
   isAdmin: boolean
   onPrint: (p: Product) => void
   onEdit: (p: Product) => void
   onDelete: (p: Product) => void
+  onTake: (p: Product) => void
+  pending: boolean
 }) {
   return (
     <div className="flex items-center gap-1">
@@ -440,6 +462,43 @@ function ActionButtons({
           <Trash2 className="h-3.5 w-3.5" />
         </Button>
       )}
+    </div>
+  )
+}
+
+function SupplierMark({
+  product,
+  pending,
+  onTake,
+}: {
+  product: Product
+  pending: boolean
+  onTake: (product: Product) => void
+}) {
+  if (!product.supplier_name) {
+    return <div className="mt-1 text-[11px] text-muted-foreground/70">Поставщик не указан</div>
+  }
+  if (product.consignment_operation_id) {
+    return (
+      <div className="mt-1 inline-flex items-center gap-1 text-[11px] font-medium text-emerald-600">
+        <HandCoins className="h-3 w-3" /> Взято на реализацию
+      </div>
+    )
+  }
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-1.5">
+      <span className="text-[11px] text-muted-foreground">Поставщик: {product.supplier_name}</span>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        disabled={pending}
+        className="h-6 gap-1 px-2 text-[10px] text-[#B57C1B] hover:bg-[#E5AC4C]/10"
+        onClick={() => onTake(product)}
+      >
+        <HandCoins className="h-3 w-3" />
+        {pending ? "Сохранение..." : "Взять на реализацию"}
+      </Button>
     </div>
   )
 }

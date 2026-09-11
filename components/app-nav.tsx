@@ -1,7 +1,16 @@
 "use client"
 
 import { cn } from "@/lib/utils"
-import { LayoutGrid, ShoppingCart, Warehouse, BarChart3, Users, Store, Bell } from "lucide-react"
+import {
+  LayoutGrid,
+  ShoppingCart,
+  Warehouse,
+  BarChart3,
+  Users,
+  Store,
+  Bell,
+  Truck,
+} from "lucide-react"
 
 export type ScreenId =
   | "kassa"
@@ -12,6 +21,20 @@ export type ScreenId =
   | "clients"
   | "shops"
   | "notifications"
+  | "suppliers"
+
+/** Единая карта «экран → URL». Используется навигацией и роут-страницами. */
+export const SCREEN_PATHS: Record<ScreenId, string> = {
+  kassa: "/crm/pos",
+  vitrina: "/crm/showcase",
+  sklad: "/crm/inventory",
+  clients: "/crm/customers",
+  otchety: "/crm/reports",
+  shops: "/crm/stores",
+  notifications: "/crm/notifications",
+  suppliers: "/crm/suppliers",
+  kabinet: "/crm/cabinet",
+}
 
 const ITEMS: {
   id: ScreenId
@@ -24,6 +47,7 @@ const ITEMS: {
   { id: "vitrina", label: "Витрина",  icon: LayoutGrid },
   { id: "sklad",   label: "Склад",    icon: Warehouse },
   { id: "clients", label: "Клиенты",  icon: Users },
+  { id: "suppliers", label: "Поставщики", icon: Truck, adminOnly: true },
   { id: "otchety", label: "Отчёты",   icon: BarChart3, adminOnly: true },
   { id: "shops",   label: "Магазины", icon: Store, superAdminOnly: true },
   { id: "notifications", label: "Уведомления", icon: Bell, superAdminOnly: true },
@@ -31,14 +55,14 @@ const ITEMS: {
 
 export function AppNav({
   screen,
-  onChange,
   isAdmin,
   isSuperAdmin = false,
+  onNavigate,
 }: {
   screen: ScreenId
-  onChange: (id: ScreenId) => void
   isAdmin: boolean
   isSuperAdmin?: boolean
+  onNavigate: (screen: ScreenId) => void
 }) {
   const items = ITEMS.filter((item) => {
     if (item.superAdminOnly) return isSuperAdmin
@@ -54,8 +78,9 @@ export function AppNav({
           const Icon = item.icon
           return (
             <button
+              type="button"
               key={item.id}
-              onClick={() => onChange(item.id)}
+              onClick={() => onNavigate(item.id)}
               className={cn(
                 "relative flex shrink-0 items-center gap-2 px-3 py-3 text-sm font-medium transition-colors md:px-4",
                 active ? "text-primary" : "text-muted-foreground hover:text-foreground",
