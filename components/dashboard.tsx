@@ -269,7 +269,6 @@ export function Dashboard({
             viewRole={viewRole}
             sales={sales}
             cash={cash}
-            supplierDebts={supplierDebts}
             rates={rates}
             clients={clients}
           />
@@ -278,13 +277,23 @@ export function Dashboard({
           <VitrinaScreen products={products} canSeePurchasePrice={canSeePurchasePrice} isAdmin={isAdmin} />
         )}
         {activeScreen === "sklad" && (
-          <SkladScreen products={products} canSeePurchasePrice={canSeePurchasePrice} isAdmin={isAdmin} />
+          <SkladScreen
+            products={products}
+            sales={sales}
+            canSeePurchasePrice={canSeePurchasePrice}
+            isAdmin={isAdmin}
+          />
         )}
         {activeScreen === "clients" && (
           <ClientsScreen clients={clients} />
         )}
         {activeScreen === "suppliers" && isAdmin && (
-          <SuppliersScreen supplierDebts={supplierDebts} isAdmin={isAdmin} />
+          <SuppliersScreen
+            supplierDebts={supplierDebts}
+            products={products}
+            sales={sales}
+            isAdmin={isAdmin}
+          />
         )}
         {activeScreen === "kabinet" && (
           <KabinetScreen profile={profile} viewRole={viewRole} sales={sales} data={cabinet} email={email} />

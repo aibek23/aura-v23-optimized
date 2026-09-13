@@ -2,12 +2,10 @@
 
 import { useMemo, useState, useTransition } from "react"
 import dynamic from "next/dynamic"
-import type { Product } from "@/lib/types"
+import type { Product, Sale } from "@/lib/types"
 import { DEFAULT_SIZE_KEY, type JewelryLabelSizeKey } from "@/lib/niimbot"
-import { formatSom, formatWeight } from "@/lib/format"
+import { formatDate, formatSom, formatWeight } from "@/lib/format"
 import { deleteProduct } from "@/app/actions/products"
-import { takeProductOnConsignment } from "@/app/actions/suppliers"
-import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import {
@@ -24,12 +22,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { Search, Pencil, Trash2, Sparkles, PackageX, Printer, Plus, ChevronLeft, ChevronRight, HandCoins } from "lucide-react"
+import { Pencil, Trash2, Sparkles, PackageX, Printer, Plus, ChevronLeft, ChevronRight, CheckCircle2 } from "lucide-react"
 import { toast } from "sonner"
 import { useRouter } from "next/navigation"
 import { ProductDialog } from "@/components/add-edit-Product/product-dialog"
 import { SkladStats } from "./sklad-stats"
 import { cn } from "@/lib/utils"
+import { filterProducts } from "@/lib/product-search"
+import { ProductSearch } from "@/components/product-search"
 
 // Загружаем LabelEditor строго на клиенте для корректного связывания пакетов Bluetooth
 const LabelEditor = dynamic(
@@ -41,12 +41,22 @@ const PAGE_SIZE = 20
 
 export function SkladScreen({
   products,
+  sales = [],
   canSeePurchasePrice,
   isAdmin,
+  title = "Склад",
+  subtitle = "Учёт товарных остатков",
+  showStats = true,
+  showAdd = true,
 }: {
   products: Product[]
+  sales?: Sale[]
   canSeePurchasePrice: boolean
   isAdmin: boolean
+  title?: string
+  subtitle?: string
+  showStats?: boolean
+  showAdd?: boolean
 }) {
   const router = useRouter()
   const [, startTransition] = useTransition()
@@ -60,17 +70,9 @@ export function SkladScreen({
   const [editing, setEditing] = useState<Product | null>(null)
   const [query, setQuery] = useState("")
   const [page, setPage] = useState(1)
-  const [consignmentId, setConsignmentId] = useState<string | null>(null)
 
   const filtered = useMemo(() => {
-    const q = query.toLowerCase()
-    return products.filter(
-      (p) =>
-        p.name.toLowerCase().includes(q) ||
-        (p.sku ?? "").toLowerCase().includes(q) ||
-        (p.category ?? "").toLowerCase().includes(q) ||
-        (p.metal ?? "").toLowerCase().includes(q),
-    )
+    return filterProducts(products, query)
   }, [products, query])
 
   // Сбрасываем страницу при смене фильтра
@@ -82,6 +84,30 @@ export function SkladScreen({
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
   const currentPage = Math.min(page, totalPages)
   const paginated = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
+
+  const salesByProduct = useMemo(() => {
+    const map = new Map<string, ActualSaleSummary>()
+    for (const sale of sales) {
+      for (const item of sale.items ?? []) {
+        if (item.kind === "scrap" || !item.product_id) continue
+        const quantity = Math.max(1, Math.floor(Number(item.quantity) || 1))
+        const price = Number(item.price) || 0
+        const cost = Number(item.cost) || 0
+        const current = map.get(item.product_id) ?? {
+          units: 0,
+          revenue: 0,
+          cost: 0,
+          prices: [],
+        }
+        current.units += quantity
+        current.revenue += price * quantity
+        current.cost += cost * quantity
+        current.prices.push(price)
+        map.set(item.product_id, current)
+      }
+    }
+    return map
+  }, [sales])
 
   const onPrintLabel = (p: Product) => {
     setLabelProduct(p)
@@ -120,49 +146,37 @@ export function SkladScreen({
     }
   }
 
-  const onConsignment = async (p: Product) => {
-    if (p.consignment_operation_id || !p.supplier_name) return
-    setConsignmentId(p.id)
-    try {
-      await takeProductOnConsignment(p.id)
-      toast.success(`«${p.name}» взят на реализацию на ${formatSom(p.purchase_price * Math.max(p.quantity, 1))}`)
-      startTransition(() => router.refresh())
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Не удалось взять товар на реализацию")
-    } finally {
-      setConsignmentId(null)
-    }
-  }
-
   return (
     <div className="min-w-0">
       {/* Заголовок */}
       <div className="mb-5 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="font-serif text-2xl">Склад</h1>
-          <p className="text-sm text-muted-foreground">Учёт товарных остатков</p>
+          <h1 className="font-serif text-2xl">{title}</h1>
+          <p className="text-sm text-muted-foreground">{subtitle}</p>
         </div>
-        <Button onClick={onAdd} className="gap-1.5 w-full sm:w-auto">
-          <Plus className="h-4 w-4" />
-          Добавить товар
-        </Button>
+        {showAdd && (
+          <Button onClick={onAdd} className="gap-1.5 w-full sm:w-auto">
+            <Plus className="h-4 w-4" />
+            Добавить товар
+          </Button>
+        )}
       </div>
 
       {/* Блок аналитики */}
-      <SkladStats
-        products={products}
-        canSeePurchasePrice={canSeePurchasePrice}
-        isAdmin={isAdmin}
-      />
+      {showStats && (
+        <SkladStats
+          products={products}
+          canSeePurchasePrice={canSeePurchasePrice}
+          isAdmin={isAdmin}
+        />
+      )}
 
       {/* Поиск */}
-      <div className="relative mb-4 w-full sm:max-w-xs">
-        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          placeholder="Поиск по названию, артикулу, металлу..."
+      <div className="mb-4 w-full sm:max-w-xl">
+        <ProductSearch
           value={query}
-          onChange={(e) => handleQueryChange(e.target.value)}
-          className="pl-9"
+          onChange={handleQueryChange}
+          placeholder="Название, артикул, металл, 1,25 г, 12300 с, 11.09.2026..."
         />
       </div>
 
@@ -174,16 +188,17 @@ export function SkladScreen({
               <TableHead>Товар</TableHead>
               <TableHead>Металл</TableHead>
               <TableHead>Вес</TableHead>
+              <TableHead>Дата создания</TableHead>
               <TableHead className="text-right">Кол-во</TableHead>
               {canSeePurchasePrice && <TableHead className="hidden text-right lg:table-cell">Закуп</TableHead>}
-              <TableHead className="text-right">Цена</TableHead>
+              <TableHead className="text-right">Цена / факт</TableHead>
               <TableHead className="w-[1%]"></TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {paginated.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} className="py-16 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={canSeePurchasePrice ? 8 : 7} className="py-16 text-center text-sm text-muted-foreground">
                   <PackageX className="mx-auto mb-2 h-8 w-8 opacity-40" />
                   Нет товаров
                 </TableCell>
@@ -204,12 +219,13 @@ export function SkladScreen({
                       <div className="min-w-0">
                         <div className="line-clamp-1 text-sm font-medium">{p.name}</div>
                         <div className="text-xs text-muted-foreground">{p.sku || p.category}</div>
-                        <SupplierMark product={p} pending={consignmentId === p.id} onTake={onConsignment} />
+                         <SupplierMark product={p} />
                       </div>
                     </div>
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">{p.metal}</TableCell>
                   <TableCell className="text-sm">{formatWeight(p.weight)}</TableCell>
+                  <TableCell className="text-sm text-muted-foreground">{formatDate(p.created_at)}</TableCell>
                   <TableCell className="text-right">
                     <QtyBadge qty={p.quantity} />
                   </TableCell>
@@ -218,8 +234,13 @@ export function SkladScreen({
                       {formatSom(p.purchase_price)}
                     </TableCell>
                   )}
-                  <TableCell className="text-right font-mono text-sm font-medium text-primary">
-                    {formatSom(p.sale_price)}
+                   <TableCell className="text-right font-mono text-sm font-medium text-primary">
+                     <div>{formatSom(p.sale_price)}</div>
+                     <ActualSaleSummary
+                       sale={salesByProduct.get(p.id)}
+                       canSeeProfit={canSeePurchasePrice}
+                       sold={p.status === "sold" || p.quantity <= 0}
+                     />
                   </TableCell>
                   <TableCell>
                     <ActionButtons
@@ -228,8 +249,6 @@ export function SkladScreen({
                       onPrint={onPrintLabel}
                       onEdit={onEdit}
                        onDelete={onDelete}
-                       onTake={onConsignment}
-                       pending={consignmentId === p.id}
                     />
                   </TableCell>
                 </TableRow>
@@ -269,10 +288,15 @@ export function SkladScreen({
                     {p.sku && p.category && <span className="mx-1">·</span>}
                     {p.category}
                   </div>
-                  <SupplierMark product={p} pending={consignmentId === p.id} onTake={onConsignment} />
+                   <SupplierMark product={p} />
                 </div>
                 <div className="shrink-0 text-right">
-                  <div className="font-mono text-sm font-semibold text-primary">{formatSom(p.sale_price)}</div>
+                   <div className="font-mono text-sm font-semibold text-primary">{formatSom(p.sale_price)}</div>
+                   <ActualSaleSummary
+                     sale={salesByProduct.get(p.id)}
+                     canSeeProfit={canSeePurchasePrice}
+                      sold={p.status === "sold" || p.quantity <= 0}
+                   />
                   {canSeePurchasePrice && (
                     <div className="font-mono text-xs text-muted-foreground">{formatSom(p.purchase_price)}</div>
                   )}
@@ -291,6 +315,9 @@ export function SkladScreen({
                 </span>
                 <span className="flex items-center gap-1">
                   <span className="font-medium text-foreground/70">Кол-во:</span> <QtyBadge qty={p.quantity} />
+                </span>
+                <span className="flex items-center gap-1">
+                  <span className="font-medium text-foreground/70">Дата:</span> {formatDate(p.created_at)}
                 </span>
               </div>
 
@@ -422,15 +449,13 @@ function QtyBadge({ qty }: { qty: number }) {
 }
 
 function ActionButtons({
-  p, isAdmin, onPrint, onEdit, onDelete, onTake, pending,
+  p, isAdmin, onPrint, onEdit, onDelete,
 }: {
   p: Product
   isAdmin: boolean
   onPrint: (p: Product) => void
   onEdit: (p: Product) => void
   onDelete: (p: Product) => void
-  onTake: (p: Product) => void
-  pending: boolean
 }) {
   return (
     <div className="flex items-center gap-1">
@@ -468,12 +493,8 @@ function ActionButtons({
 
 function SupplierMark({
   product,
-  pending,
-  onTake,
 }: {
   product: Product
-  pending: boolean
-  onTake: (product: Product) => void
 }) {
   if (!product.supplier_name) {
     return <div className="mt-1 text-[11px] text-muted-foreground/70">Поставщик не указан</div>
@@ -481,24 +502,44 @@ function SupplierMark({
   if (product.consignment_operation_id) {
     return (
       <div className="mt-1 inline-flex items-center gap-1 text-[11px] font-medium text-emerald-600">
-        <HandCoins className="h-3 w-3" /> Взято на реализацию
+        <CheckCircle2 className="h-3.5 w-3.5" /> Взято на реализацию
       </div>
     )
   }
+  return <div className="mt-1 text-[11px] text-muted-foreground">Поставщик: {product.supplier_name}</div>
+}
+
+type ActualSaleSummary = {
+  units: number
+  revenue: number
+  cost: number
+  prices: number[]
+}
+
+function ActualSaleSummary({
+  sale,
+  canSeeProfit,
+  sold,
+}: {
+  sale?: ActualSaleSummary
+  canSeeProfit: boolean
+  sold: boolean
+}) {
+  if (!sale || sale.units <= 0) return null
+  const profit = sale.revenue - sale.cost
+  const prices = [...new Set(sale.prices.map((price) => Math.round(price)))]
+  const priceText = prices.length === 1
+    ? formatSom(prices[0])
+    : prices.map((price) => formatSom(price)).join(" / ")
+
   return (
-    <div className="mt-1 flex flex-wrap items-center gap-1.5">
-      <span className="text-[11px] text-muted-foreground">Поставщик: {product.supplier_name}</span>
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        disabled={pending}
-        className="h-6 gap-1 px-2 text-[10px] text-[#B57C1B] hover:bg-[#E5AC4C]/10"
-        onClick={() => onTake(product)}
-      >
-        <HandCoins className="h-3 w-3" />
-        {pending ? "Сохранение..." : "Взять на реализацию"}
-      </Button>
+    <div className="mt-0.5 text-[11px] leading-tight text-muted-foreground">
+      <div>{sold ? "Продано · " : "Факт: "}{priceText}{sale.units > 1 ? ` · ${sale.units} шт` : ""}</div>
+      {canSeeProfit && (
+        <div className={profit < 0 ? "text-destructive" : "text-success"}>
+          {profit < 0 ? "Убыток " : "Прибыль +"}{formatSom(Math.abs(profit))}
+        </div>
+      )}
     </div>
   )
 }

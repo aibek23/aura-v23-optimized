@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useTransition } from "react"
+import { useEffect, useState, useTransition } from "react"
 import type { Product } from "@/lib/types"
 import { createProduct, updateProduct, type ProductInput } from "@/app/actions/products"
 import { takeProductOnConsignment } from "@/app/actions/suppliers"
@@ -17,7 +17,7 @@ import { cn } from "@/lib/utils"
 import { toast } from "sonner"
 import { useRouter } from "next/navigation"
 import { InlineLoader } from "@/components/ui/page-loader"
-import { HandCoins } from "lucide-react"
+import { CheckCircle2 } from "lucide-react"
 import { formatSom } from "@/lib/format"
 
 export function ProductDialog({
@@ -40,6 +40,9 @@ export function ProductDialog({
   /** Подтверждение печати после успешного сохранения. */
   const [printConfirmOpen, setPrintConfirmOpen] = useState(false)
   const [savedProduct, setSavedProduct] = useState<Product | null>(null)
+  const [consignmentChecked, setConsignmentChecked] = useState(
+    Boolean(product?.consignment_operation_id),
+  )
 
   const {
     form,
@@ -64,16 +67,18 @@ export function ProductDialog({
     requestArticle,
   } = useProductForm(open, product)
 
-  const submit = async (consignment = false) => {
+  useEffect(() => {
+    if (open) {
+      setConsignmentChecked(Boolean(product?.consignment_operation_id))
+    }
+  }, [open, product])
+
+  const submit = async () => {
     if (!form.name.trim()) {
       toast.error("Укажите название")
       return
     }
-    if (consignment) {
-      if (!form.supplier_name.trim()) {
-        toast.error("Укажите поставщика, чтобы взять товар на реализацию")
-        return
-      }
+    if (consignmentChecked) {
       if (!(form.purchase_price > 0)) {
         toast.error("Укажите оптовую цену — долг поставщику считается от неё")
         return
@@ -112,8 +117,9 @@ export function ProductDialog({
 
       setNameHistory(pushNameHistory(form.name))
 
-      // Кнопка «На реализацию»: после сохранения сразу фиксируем долг поставщику.
-      if (consignment) {
+      // Отметка «Взято на реализацию» фиксируется только общей кнопкой «Сохранить».
+      // Для уже отмеченного товара повторно создавать операцию нельзя.
+      if (consignmentChecked && !product?.consignment_operation_id) {
         try {
           await takeProductOnConsignment(saved.id)
           toast.success(
@@ -232,6 +238,11 @@ export function ProductDialog({
                 />
               </div>
             </div>
+            {consignmentChecked && !form.supplier_name.trim() && (
+              <p className="text-[11px] text-muted-foreground">
+                Если поставщик не указан, при сохранении им будет назначен пользователь, который оформил операцию.
+              </p>
+            )}
           </div>
 
           {/* Закупка */}
@@ -318,24 +329,31 @@ export function ProductDialog({
           <div className="grid gap-3 rounded-xl border border-border bg-muted/30 p-3">
             <div className="flex items-center justify-between gap-2">
               <div className="text-sm font-medium">Поставщик</div>
-              {product?.consignment_operation_id ? (
-                <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-600">
-                  <HandCoins className="h-3 w-3" /> Взято на реализацию
+              <label
+                className={cn(
+                  "inline-flex items-center gap-2 text-xs font-medium",
+                  product?.consignment_operation_id
+                    ? "cursor-not-allowed text-emerald-600"
+                    : "cursor-pointer text-[#B57C1B]",
+                )}
+                title={
+                  product?.consignment_operation_id
+                    ? "Операция уже записана и не может быть отменена"
+                    : "Операция будет записана после нажатия «Сохранить»"
+                }
+              >
+                <input
+                  type="checkbox"
+                  checked={consignmentChecked}
+                  disabled={saving || Boolean(product?.consignment_operation_id)}
+                  onChange={(e) => setConsignmentChecked(e.target.checked)}
+                  className="h-4 w-4 rounded border-border accent-[#B57C1B]"
+                />
+                <span className="inline-flex items-center gap-1">
+                  {product?.consignment_operation_id && <CheckCircle2 className="h-3.5 w-3.5" />}
+                  Взято на реализацию
                 </span>
-              ) : (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={saving}
-                  className="h-7 gap-1 px-2 text-xs text-[#B57C1B] hover:bg-[#E5AC4C]/10"
-                  onClick={() => void submit(true)}
-                  title="Сохранить товар и записать его оптовую стоимость в долг поставщику"
-                >
-                  <HandCoins className="h-3 w-3" />
-                  {saving ? "Сохранение..." : "На реализацию"}
-                </Button>
-              )}
+              </label>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="grid gap-2">

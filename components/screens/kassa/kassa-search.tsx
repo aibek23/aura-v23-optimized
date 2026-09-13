@@ -1,15 +1,13 @@
 "use client"
 
-import { useState } from "react"
-import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Search, PackageSearch, Plus, Camera, Clock, X } from "lucide-react"
-import { formatSom, formatWeight } from "@/lib/format"
+import { PackageSearch, Plus, Clock } from "lucide-react"
+import { formatDate, formatSom, formatWeight } from "@/lib/format"
 import { cn } from "@/lib/utils"
-import { toast } from "sonner"
 import type { Product } from "@/lib/types"
-import { BarcodeScannerModal } from "@/components/BarcodeScannerModal"
+import { ProductSearch } from "@/components/product-search"
+import { isSearchReady } from "@/lib/product-search"
 
 interface KassaSearchProps {
   query: string
@@ -25,26 +23,6 @@ interface KassaSearchProps {
   addToCart: (p: Product) => void
   minQuery: number
   recent?: Product[]
-}
-
-function extractSkuFromScan(raw: string): string {
-  const base = (process.env.NEXT_PUBLIC_BASE_URL ?? "https://aura-gold.kg").replace(/\/$/, "")
-  if (!raw.includes(base)) return raw
-  try {
-    const url = new URL(raw)
-    const segments = url.pathname.split("/").filter(Boolean)
-    if (segments[0] === "q" && segments.length >= 3) {
-      return decodeURIComponent(segments[2]).toUpperCase()
-    }
-    const productIdx = segments.lastIndexOf("product")
-    if (productIdx !== -1 && segments[productIdx + 1]) {
-      return decodeURIComponent(segments[productIdx + 1]).toUpperCase()
-    }
-  } catch {
-    const parts = raw.split("/").filter(Boolean)
-    if (parts.length) return decodeURIComponent(parts[parts.length - 1]).toUpperCase()
-  }
-  return raw
 }
 
 // Компактная карточка-строка для быстрого поиска и работы без изображений
@@ -102,9 +80,9 @@ function ProductRow({
           <span>•</span>
           <span>{formatWeight(p.weight)}</span>
           <span>•</span>
-          <span className={cn(p.quantity <= 1 && "text-amber-600 font-medium")}>
-            {p.quantity} шт.
-          </span>
+          <span className="truncate">{p.supplier_name || "Без поставщика"}</span>
+          <span>•</span>
+          <span>{formatDate(p.created_at)}</span>
         </div>
       </div>
 
@@ -149,44 +127,20 @@ export function KassaSearch({
   minQuery,
   recent = [],
 }: KassaSearchProps) {
-  const [isScannerOpen, setIsScannerOpen] = useState(false)
-
-  const isSearching = query.trim().length >= minQuery
-  const isTooShort = query.trim().length > 0 && query.trim().length < minQuery
+  const isSearching = isSearchReady(query, minQuery)
+  const isTooShort = query.trim().length > 0 && query.trim().length < minQuery && !isSearchReady(query, minQuery)
   const showRecent = query.trim().length === 0 && recent.length > 0
 
   return (
     <div className="w-full space-y-3 min-w-0 max-w-full">
       {/* Поисковая панель */}
-      <div className="flex items-center gap-2">
-        <div className="relative group flex-1">
-          <Search className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground transition-colors group-focus-within:text-primary" />
-          <Input
-            placeholder="Поиск: артикул, название..."
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            className="pl-10 pr-8 h-11 text-sm bg-card backdrop-blur border-border/80 rounded-xl focus-visible:ring-1 focus-visible:ring-primary shadow-sm"
-          />
-          {query && (
-            <button
-              onClick={() => setQuery("")}
-              className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          )}
-        </div>
-
-        <Button
-          variant="outline"
-          className="h-11 px-3.5 shrink-0 bg-card border-border/80 rounded-xl shadow-sm"
-          onClick={() => setIsScannerOpen(true)}
-          title="Сканировать QR"
-        >
-          <Camera className="h-4 w-4 text-primary sm:mr-1.5" />
-          <span className="hidden sm:inline text-xs font-medium">Сканер</span>
-        </Button>
-      </div>
+      <ProductSearch
+        value={query}
+        onChange={setQuery}
+        placeholder="Артикул, название, 1,25 г, 12300 с, 11.09.2026..."
+        className="w-full"
+        inputClassName="h-11 rounded-xl bg-card text-sm shadow-sm"
+      />
 
       {isTooShort && (
         <p className="text-center text-xs text-muted-foreground py-1">
@@ -225,7 +179,7 @@ export function KassaSearch({
         )}
 
         {isSearching && (
-          debounced.length < minQuery ? null : results.length === 0 ? (
+          !isSearchReady(debounced, minQuery) ? null : results.length === 0 ? (
             <div className="rounded-xl border border-dashed border-border/80 py-8 text-center bg-card/30">
               <p className="text-xs font-medium text-muted-foreground">Ничего не найдено</p>
             </div>
@@ -260,16 +214,6 @@ export function KassaSearch({
         )}
       </div>
 
-      {isScannerOpen && (
-        <BarcodeScannerModal
-          onClose={() => setIsScannerOpen(false)}
-          onScan={(raw) => {
-            const sku = extractSkuFromScan(raw)
-            setQuery(sku)
-            toast.success(`Код считан: ${sku}`)
-          }}
-        />
-      )}
     </div>
   )
 }

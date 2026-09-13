@@ -69,7 +69,25 @@ export async function getSupplierDebtData(): Promise<SupplierDebtData> {
 
 /** Отмечает товар на реализацию и добавляет его закупочную стоимость в долг. */
 export async function takeProductOnConsignment(productId: string) {
-  const { supabase } = await requireProfile()
+  const { supabase, profile } = await requireProfile()
+  const { data: product, error: productError } = await supabase
+    .from("products")
+    .select("supplier_name")
+    .eq("id", productId)
+    .single()
+  if (productError) throw new Error(`Не удалось прочитать товар: ${productError.message}`)
+
+  // Если checkbox отмечен без поставщика, поставщиком становится пользователь,
+  // который оформил операцию. Это также сохраняет товар в suppliers.
+  if (!product?.supplier_name?.trim()) {
+    const fallbackName = profile.full_name?.trim() || "Администратор"
+    const { error: supplierError } = await supabase
+      .from("products")
+      .update({ supplier_name: fallbackName })
+      .eq("id", productId)
+    if (supplierError) throw new Error(`Не удалось назначить поставщика: ${supplierError.message}`)
+  }
+
   const { data, error } = await supabase.rpc("take_product_on_consignment", {
     _product_id: productId,
     _device_info: await deviceInfo(),

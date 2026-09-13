@@ -356,7 +356,7 @@ function BottomZone({
         {/* Шрифт */}
         <div className="flex flex-col gap-0.5 shrink-0">
           <span className="text-[9px] text-muted-foreground leading-none px-0.5">Шрифт</span>
-          <Select value={font} onValueChange={onFontChange}>
+          <Select value={font} onValueChange={(value) => { if (value) onFontChange(value) }}>
             <SelectTrigger className="h-7 w-[110px] text-[11px]"><SelectValue /></SelectTrigger>
             <SelectContent>
               {FONTS.map((f) => (

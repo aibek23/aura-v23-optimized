@@ -189,15 +189,16 @@ export async function updateProduct(
   const { supabase } = await requireProfile()
   const { data: current } = await supabase
     .from("products")
-    .select("consignment_operation_id")
+    .select("consignment_operation_id, purchase_price, supplier_name, supplier_phone, quantity")
     .eq("id", id)
     .single()
-  if (current?.consignment_operation_id && (
-    input.purchase_price !== undefined ||
-    input.supplier_name !== undefined ||
-    input.supplier_phone !== undefined ||
-    input.quantity !== undefined
-  )) {
+  const restrictedChanged = current?.consignment_operation_id && (
+    (input.purchase_price !== undefined && Number(input.purchase_price) !== Number(current.purchase_price)) ||
+    (input.supplier_name !== undefined && (input.supplier_name ?? null) !== (current.supplier_name ?? null)) ||
+    (input.supplier_phone !== undefined && (input.supplier_phone ?? null) !== (current.supplier_phone ?? null)) ||
+    (input.quantity !== undefined && Number(input.quantity) !== Number(current.quantity))
+  )
+  if (restrictedChanged) {
     throw new Error("Товар уже взят на реализацию: закупочную цену, поставщика и количество менять нельзя")
   }
   validate(input)

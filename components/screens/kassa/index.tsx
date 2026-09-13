@@ -15,6 +15,7 @@ import { ArrowUp } from "lucide-react"
 import { toast } from "sonner"
 import { useRouter } from "next/navigation"
 import { PageLoader } from "@/components/ui/page-loader"
+import { filterProducts, isSearchReady } from "@/lib/product-search"
 
 import { KassaSearch } from "./kassa-search"
 import { KassaCart } from "./kassa-cart"
@@ -157,16 +158,9 @@ export function KassaScreen({
   const qtyInCart = (id: string) => cart.filter((i) => i.product_id === id).length
 
   const results = useMemo(() => {
-    if (debounced.length < MIN_QUERY) return []
-    const q = debounced.toLowerCase()
-    return products.filter(
-      (p) =>
-        p.quantity > 0 &&
-        p.status !== "sold" &&
-        !p.is_hidden &&           // скрытые товары не отображаются в поиске кассы
-        (p.name.toLowerCase().includes(q) ||
-          (p.sku ?? "").toLowerCase().includes(q) ||
-          (p.metal ?? "").toLowerCase().includes(q)),
+    if (!isSearchReady(debounced, MIN_QUERY)) return []
+    return filterProducts(products, debounced).filter(
+      (p) => p.quantity > 0 && p.status !== "sold" && !p.is_hidden,
     )
   }, [products, debounced])
 

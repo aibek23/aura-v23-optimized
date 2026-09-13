@@ -16,6 +16,7 @@ import { addBorderToCanvas } from "../canvas/borders"
 import { buildDefaultLayout } from "../canvas/layout"
 import { serializeLayout, parseTemplate, applyTemplate, applyBgRect } from "../data/template"
 import { refreshLiveData } from "../canvas/layout"
+import { saveLocalTemplate, getLocalTemplate, deleteLocalTemplate } from "../data/local-template-storage"
 
 export function useLabelActions(
   fabricRef:  React.RefObject<FabricCanvas | null>,
@@ -103,14 +104,16 @@ export function useLabelActions(
     applyToSelection({ fontSize: s })
   }, [applyToSelection])
 
-  const handleSaveTemplate = useCallback(() => {
+  const handleSaveTemplate = useCallback(async () => {
     const canvas = fabricRef.current
     if (!canvas) return
     try {
       canvas.discardActiveObject()
       canvas.renderAll()
       const tpl = serializeLayout(canvas, sizeKey, null)
-      saveLabelTemplate(category, JSON.stringify(tpl), sizeKey)
+      const serialized = JSON.stringify(tpl)
+      saveLocalTemplate(category, serialized, sizeKey)
+      await saveLabelTemplate(category, serialized, sizeKey)
       toast.success(`Расположение сохранено для «${category}» / ${sizeKey}`)
     } catch (err) {
       toast.error((err as Error).message)
@@ -120,7 +123,12 @@ export function useLabelActions(
   const handleResetTemplate = useCallback(async () => {
     const canvas = fabricRef.current
     if (!canvas) return
-    deleteLabelTemplate(category, sizeKey)
+    try {
+      await deleteLabelTemplate(category, sizeKey)
+    } catch (error) {
+      console.warn("[label] Не удалось удалить шаблон из БД:", error)
+    }
+    deleteLocalTemplate(category, sizeKey)
     await buildDefaultLayout(canvas, product, sizeDef)
     canvas.setViewportTransform([1, 0, 0, 1, offsetX, offsetY])
     canvas.renderAll()
@@ -128,7 +136,13 @@ export function useLabelActions(
   }, [fabricRef, category, sizeKey, product, sizeDef, offsetX, offsetY])
 
   const loadTemplate = useCallback(async (canvas: FabricCanvas) => {
-    const saved = parseTemplate(getLabelTemplate(category, sizeKey))
+    let raw: string | null = null
+    try {
+      raw = await getLabelTemplate(category, sizeKey)
+    } catch (error) {
+      console.warn("[label] Не удалось загрузить шаблон из БД, используется localStorage:", error)
+    }
+    const saved = parseTemplate(raw ?? getLocalTemplate(category, sizeKey))
     if (!canvas.lowerCanvasEl) return
     await buildDefaultLayout(canvas, product, sizeDef)
     if (!canvas.lowerCanvasEl) return
@@ -181,7 +195,7 @@ export function useLabelActions(
     try {
       canvas.discardActiveObject()
       canvas.renderAll()
-      const json = canvas.toJSON(["data", "selectable", "evented"])
+      const json = canvas.toJSON()
       const payload = {
         v: "1",
         sizeKey,

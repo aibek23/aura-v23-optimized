@@ -5,14 +5,15 @@ import type { Product } from "@/lib/types"
 import { CATEGORIES } from "@/lib/types"
 import { formatSom, formatWeight } from "@/lib/format"
 import { purityFromMetal } from "@/lib/purity"
-import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { ChevronLeft, ChevronRight, Eye, EyeOff, Search, Sparkles, X } from "lucide-react"
+import { ChevronLeft, ChevronRight, Eye, EyeOff, Sparkles, X } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { updateProduct } from "@/app/actions/products"
 import { toast } from "sonner"
 import { useRouter } from "next/navigation"
+import { ProductSearch } from "@/components/product-search"
+import { filterProducts } from "@/lib/product-search"
 
 function galleryOf(p: Product): string[] {
   const list = (p.images ?? []).filter(Boolean)
@@ -39,18 +40,18 @@ export function VitrinaScreen({
   const [togglingId, setTogglingId] = useState<string | null>(null)
   const [query, setQuery] = useState("")
   const [category, setCategory] = useState<string>("all")
+  const [statusFilter, setStatusFilter] = useState<"all" | "sold">("all")
 
   const filtered = useMemo(() => {
-    const q = query.toLowerCase()
-    const rows = products.filter(
+    const rows = filterProducts(products, query).filter(
       (p) =>
         // Покупатель не видит скрытые товары; администратор видит все
         (isAdmin || !p.is_hidden) &&
-        (category === "all" || p.category === category) &&
-        (p.name.toLowerCase().includes(q) || (p.sku ?? "").toLowerCase().includes(q)),
+        (statusFilter === "all" || !isActive(p)) &&
+        (category === "all" || p.category === category),
     )
     return rows.slice().sort((a, b) => Number(isActive(b)) - Number(isActive(a)))
-  }, [products, query, category, isAdmin])
+  }, [products, query, category, statusFilter, isAdmin])
 
   const handleToggleVisibility = async (p: Product) => {
     setTogglingId(p.id)
@@ -73,10 +74,12 @@ export function VitrinaScreen({
           <p className="text-sm text-muted-foreground">Каталог украшений магазина</p>
         </div>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-          <div className="relative sm:max-w-xs sm:flex-1">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input placeholder="Поиск..." value={query} onChange={(e) => setQuery(e.target.value)} className="pl-9" />
-          </div>
+          <ProductSearch
+            value={query}
+            onChange={setQuery}
+            placeholder="Название, артикул, 1,25 г, 12300 с, 11.09.2026..."
+            className="sm:max-w-xl sm:flex-1"
+          />
           <div className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1">
             <CategoryChip active={category === "all"} onClick={() => setCategory("all")}>
               Все
@@ -87,6 +90,24 @@ export function VitrinaScreen({
               </CategoryChip>
             ))}
           </div>
+        </div>
+        <div className="flex gap-1">
+          <Button
+            type="button"
+            size="sm"
+            variant={statusFilter === "all" ? "default" : "outline"}
+            onClick={() => setStatusFilter("all")}
+          >
+            Все
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant={statusFilter === "sold" ? "destructive" : "outline"}
+            onClick={() => setStatusFilter("sold")}
+          >
+            Проданные
+          </Button>
         </div>
       </div>
 
@@ -115,7 +136,7 @@ export function VitrinaScreen({
                 }}
                 className={cn(
                   "group cursor-pointer overflow-hidden rounded-2xl border border-border bg-card text-left transition-all hover:border-primary/40 hover:shadow-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                  !active && "opacity-70",
+                  !active && "border-destructive/50 bg-destructive/5",
                   hidden && isAdmin && "ring-2 ring-amber-400/60",
                 )}
               >
