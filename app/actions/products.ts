@@ -4,6 +4,41 @@ import { createClient } from "@/lib/supabase/server"
 import { revalidatePath } from "next/cache"
 import type { Product } from "@/lib/types"
 
+// Не используем select("*") для каталога: описание и массивы изображений
+// заметно увеличивают payload на каждом открытии CRM.
+const PRODUCT_COLUMNS = [
+  "id",
+  "shop_id",
+  "created_by",
+  "name",
+  "category",
+  "metal",
+  "metal_color",
+  "weight",
+  "size",
+  "sku",
+  "article_seq",
+  "quantity",
+  "is_hidden",
+  "purchase_price",
+  "purchase_price_visible",
+  "price_per_gram_purchase_visible",
+  "price_per_gram_sale",
+  "price_per_gram_purchase",
+  "stones",
+  "description",
+  "sale_price",
+  "image_url",
+  "images",
+  "supplier_name",
+  "supplier_phone",
+  "consignment_operation_id",
+  "consignment_at",
+  "consignment_by",
+  "status",
+  "created_at",
+].join(", ")
+
 async function requireProfile() {
   const supabase = await createClient()
   const {
@@ -61,9 +96,45 @@ async function withShopSeqId(
 
 export async function getProducts(): Promise<Product[]> {
   const { supabase } = await requireProfile()
-  const { data, error } = await supabase.from("products").select("*").order("created_at", { ascending: false })
+  const { data, error } = await supabase
+    .from("products")
+    .select(PRODUCT_COLUMNS)
+    .order("created_at", { ascending: false })
   if (error) throw error
-  return withShopSeqId(supabase, (data as Product[]) ?? [])
+  return withShopSeqId(supabase, (data as unknown as Product[]) ?? [])
+}
+
+export type ProductPage = {
+  items: Product[]
+  offset: number
+  limit: number
+  hasMore: boolean
+}
+
+/**
+ * Ограниченная выборка для экранов и будущих lazy-load сценариев.
+ * Supabase range — inclusive, поэтому последний индекс равен offset + limit - 1.
+ */
+export async function getProductsPage(
+  input: { limit?: number; offset?: number } = {},
+): Promise<ProductPage> {
+  const { supabase } = await requireProfile()
+  const limit = Math.min(Math.max(Math.floor(input.limit ?? 50), 1), 100)
+  const offset = Math.max(Math.floor(input.offset ?? 0), 0)
+  const { data, error } = await supabase
+    .from("products")
+    .select(PRODUCT_COLUMNS)
+    .order("created_at", { ascending: false })
+    .range(offset, offset + limit)
+
+  if (error) throw error
+  const rows = await withShopSeqId(supabase, (data as unknown as Product[]) ?? [])
+  return {
+    items: rows.slice(0, limit),
+    offset,
+    limit,
+    hasMore: rows.length > limit,
+  }
 }
 
 

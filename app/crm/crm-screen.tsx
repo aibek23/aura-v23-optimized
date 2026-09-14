@@ -40,7 +40,9 @@ export async function CrmScreen({ screen }: { screen: ScreenId }) {
 
   const isSuperAdmin = typed.role === "super_admin"
 
-  // Параллельная загрузка всех данных (суперадмин получает дополнительно список магазинов).
+  // Параллельная загрузка всех данных сохраняется: Dashboard переключает
+  // разделы без полного перехода страницы, поэтому каждый экран должен
+  // оставаться доступным сразу после открытия CRM.
   // Оборачиваем в try/catch: если сессия устарела или профиль изменился между запросами — редиректим.
   let products, sales, cabinet, cash, rates, clients, supplierDebts, superAdminShops, impersonatedShop
   try {

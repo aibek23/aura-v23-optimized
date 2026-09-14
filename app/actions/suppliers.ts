@@ -41,17 +41,37 @@ export type SupplierDebtData = {
   suppliers: SupplierDebtSummary[]
 }
 
+const SUPPLIER_DEBT_COLUMNS = [
+  "id",
+  "shop_id",
+  "supplier_name",
+  "supplier_phone",
+  "operation_type",
+  "amount",
+  "balance_before",
+  "balance_after",
+  "product_id",
+  "cash_operation_id",
+  "source",
+  "amount_cash",
+  "amount_electronic",
+  "reason",
+  "author_name",
+  "device_info",
+  "created_at",
+].join(", ")
+
 /** Журнал долга поставщиков и текущие остатки. Остаток считается только из журнала. */
 export async function getSupplierDebtData(): Promise<SupplierDebtData> {
   const { supabase, profile } = await requireProfile()
   const { data, error } = await supabase
     .from("supplier_debt_operations")
-    .select("*")
+    .select(SUPPLIER_DEBT_COLUMNS)
     .eq("shop_id", profile.shop_id)
     .order("created_at", { ascending: false })
 
   if (error) throw new Error(`Не удалось загрузить журнал поставщиков: ${error.message}`)
-  const operations = (data as SupplierDebtOperation[]) ?? []
+  const operations = (data as unknown as SupplierDebtOperation[]) ?? []
   const map = new Map<string, SupplierDebtSummary>()
   for (const operation of operations) {
     const key = `${operation.supplier_name}\u0000${operation.supplier_phone ?? ""}`

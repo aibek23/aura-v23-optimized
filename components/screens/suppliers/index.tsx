@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react"
 import type { SupplierDebtData } from "@/app/actions/suppliers"
 import type { Product, Sale, SupplierDebtSummary } from "@/lib/types"
-import { SupplierPayoutPanel } from "../suppliers/supplier-payout-panel"
+import { SupplierPayoutPanel } from "../suppliers/supplier-payout/index"
 import { ProductSearch } from "@/components/product-search"
 import { matchesSupplier } from "@/lib/product-search"
 

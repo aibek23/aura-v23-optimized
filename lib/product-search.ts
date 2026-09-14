@@ -70,7 +70,11 @@ function dateKey(value: string): string {
  * подключённые экраны не создают запросов в Supabase при изменении строки.
  */
 export function matchesProduct(product: Product, raw: string): boolean {
-  const parsed = parseProductSearchQuery(raw)
+  return matchesParsedProduct(product, parseProductSearchQuery(raw))
+}
+
+/** Тот же предикат без повторного разбора строки для каждого товара. */
+export function matchesParsedProduct(product: Product, parsed: ProductSearchQuery): boolean {
   if (parsed.kind === "empty") return true
 
   if (parsed.kind === "weight") {
@@ -101,7 +105,8 @@ export function matchesProduct(product: Product, raw: string): boolean {
 
 export function filterProducts(products: Product[], raw: string): Product[] {
   if (!raw.trim()) return products
-  return products.filter((product) => matchesProduct(product, raw))
+  const parsed = parseProductSearchQuery(raw)
+  return products.filter((product) => matchesParsedProduct(product, parsed))
 }
 
 export function matchesSupplier(
@@ -114,5 +119,5 @@ export function matchesSupplier(
   if (parsed.kind === "empty") return true
   const supplierText = [name, phone].map(normalizeText).join("\u0000")
   if (parsed.kind === "text" && supplierText.includes(parsed.value)) return true
-  return products.some((product) => matchesProduct(product, raw))
+  return products.some((product) => matchesParsedProduct(product, parsed))
 }

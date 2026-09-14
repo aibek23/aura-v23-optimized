@@ -136,13 +136,19 @@ export function useLabelActions(
   }, [fabricRef, category, sizeKey, product, sizeDef, offsetX, offsetY])
 
   const loadTemplate = useCallback(async (canvas: FabricCanvas) => {
-    let raw: string | null = null
-    try {
-      raw = await getLabelTemplate(category, sizeKey)
-    } catch (error) {
-      console.warn("[label] Не удалось загрузить шаблон из БД, используется localStorage:", error)
+    // Сначала читаем локальный кэш. При наличии шаблона запрос в Supabase
+    // не нужен: это убирает задержку при каждом открытии окна печати.
+    let raw = getLocalTemplate(category, sizeKey)
+    if (!raw) {
+      try {
+        raw = await getLabelTemplate(category, sizeKey)
+        // Сохраняем ответ сразу после получения, до построения холста.
+        if (raw) saveLocalTemplate(category, raw, sizeKey)
+      } catch (error) {
+        console.warn("[label] Не удалось загрузить шаблон из БД:", error)
+      }
     }
-    const saved = parseTemplate(raw ?? getLocalTemplate(category, sizeKey))
+    const saved = parseTemplate(raw)
     if (!canvas.lowerCanvasEl) return
     await buildDefaultLayout(canvas, product, sizeDef)
     if (!canvas.lowerCanvasEl) return
