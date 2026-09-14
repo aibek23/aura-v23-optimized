@@ -16,10 +16,6 @@ interface SupplierPayoutPanelProps {
   query?: string
 }
 
-/**
- * Главный компонент панели выплат поставщикам.
- * Рендерит список аккордеон-карточек с поддержкой поиска по поставщику и товарам.
- */
 export function SupplierPayoutPanel({
   data,
   isAdmin,
@@ -29,7 +25,7 @@ export function SupplierPayoutPanel({
 }: SupplierPayoutPanelProps) {
   const [openKey, setOpenKey] = useState<string | null>(null)
 
-  // Определяем совпадение поиска: ключ поставщика + опциональный id товара
+  // 1. Поиск совпадений (Хук #1)
   const searchMatch = useMemo<SearchMatch | null>(() => {
     const normalizedQuery = query?.trim()
     if (!normalizedQuery || !productsBySupplier) return null
@@ -46,7 +42,6 @@ export function SupplierPayoutPanel({
         )
         .join("\u0000")
 
-      // По поставщику — раскрываем карточку; по товару — также открываем список
       if (parsed.kind === "text" && supplierText.includes(parsed.value)) {
         return { key, productId: null }
       }
@@ -56,7 +51,17 @@ export function SupplierPayoutPanel({
     return null
   }, [data.suppliers, productsBySupplier, query])
 
-  // Автоматически раскрываем найденную карточку
+  // 2. Сортировка поставщиков (Хук #2 — ПЕРЕНЕСЕН ВВЕРХ)
+  const orderedSuppliers = useMemo(() => {
+    if (!searchMatch) return data.suppliers
+    return [...data.suppliers].sort((a, b) => {
+      const aKey = supplierKey(a.supplier_name, a.supplier_phone)
+      const bKey = supplierKey(b.supplier_name, b.supplier_phone)
+      return aKey === searchMatch.key ? -1 : bKey === searchMatch.key ? 1 : 0
+    })
+  }, [data.suppliers, searchMatch])
+
+  // 3. Эффект для раскрытия найденной карточки (Хук #3)
   useEffect(() => {
     if (searchMatch) setOpenKey(searchMatch.key)
   }, [searchMatch])
@@ -65,7 +70,7 @@ export function SupplierPayoutPanel({
     setOpenKey((prev) => (prev === key ? null : key))
   }
 
-  // Пустое состояние
+  // ✅ Теперь ВСЕ хуки вызваны выше. Ранний return абсолютно безопасен!
   if (data.suppliers.length === 0) {
     return (
       <div className="rounded-2xl border border-dashed border-border bg-muted/20 px-4 py-10 text-center text-sm text-muted-foreground">
@@ -79,7 +84,7 @@ export function SupplierPayoutPanel({
 
   return (
     <div className="space-y-2">
-      {data.suppliers.map((supplier) => {
+      {orderedSuppliers.map((supplier) => {
         const key = supplierKey(supplier.supplier_name, supplier.supplier_phone)
         return (
           <SupplierCard

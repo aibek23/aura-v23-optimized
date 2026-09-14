@@ -82,6 +82,9 @@ export function SupplierProducts({
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
               <div className="truncate text-sm font-medium">{p.name}</div>
+              <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+                {p.sku || "Без артикула"}
+              </span>
               {p.id === highlightedProductId && (
                 <span className="shrink-0 rounded bg-primary px-1.5 py-0.5 text-[10px] font-semibold text-primary-foreground">
                   найдено

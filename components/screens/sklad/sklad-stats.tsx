@@ -3,6 +3,7 @@
 import { useMemo } from "react"
 import type { Product } from "@/lib/types"
 import { formatSom, formatWeight } from "@/lib/format"
+import { purityFromMetal } from "@/lib/purity"
 
 interface SkladStatsProps {
   products: Product[]
@@ -17,9 +18,8 @@ export function SkladStats({ products, canSeePurchasePrice, isAdmin }: SkladStat
     let retail = 0
     let cost = 0
 
-    // Словари для группировки
-    const byCategory: Record<string, { count: number; weight: number }> = {}
-    const byMetal: Record<string, number> = {}
+    const byCategory: Record<string, { category: string; metal: string; count: number; weight: number }> = {}
+    const byMetal: Record<string, number> = {} // Группировка общего веса по металлу
 
     for (const p of products) {
       const q = p.quantity
@@ -30,26 +30,26 @@ export function SkladStats({ products, canSeePurchasePrice, isAdmin }: SkladStat
       retail += (p.purchase_price_visible ?? 0) * q
       cost += p.purchase_price * q
 
-      // Группировка по категориям (шт и вес)
-      const cat = p.category || "Без категории"
-      if (!byCategory[cat]) {
-        byCategory[cat] = { count: 0, weight: 0 }
-      }
-      byCategory[cat].count += q
-      byCategory[cat].weight += w
-
-      // Группировка по металлу (вес)
+      const category = p.category || "Без категории"
       const metal = p.metal || "Без металла"
-      if (!byMetal[metal]) {
-        byMetal[metal] = 0
+      const purity = purityFromMetal(p.metal)
+      const metalLabel = purity && !metal.endsWith(purity) ? `${metal} ${purity}` : metal
+      
+      // Агрегация по категориям
+      const key = `${category}\u0000${metalLabel}`
+      if (!byCategory[key]) {
+        byCategory[key] = { category, metal: metalLabel, count: 0, weight: 0 }
       }
-      byMetal[metal] += w
+      byCategory[key].count += q
+      byCategory[key].weight += w
+
+      // Агрегация веса строго по металлу
+      byMetal[metalLabel] = (byMetal[metalLabel] || 0) + w
     }
 
     return { count, weight, retail, cost, byCategory, byMetal }
   }, [products])
 
-  // Расчет маржи (ожидаемой прибыли)
   const margin = stats.retail - stats.cost
 
   return (
@@ -58,15 +58,12 @@ export function SkladStats({ products, canSeePurchasePrice, isAdmin }: SkladStat
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard label="Позиций" value={String(stats.count)} />
         
-        {/* Показываем ожидаемую прибыль (маржу) вместо общего веса */}
         {canSeePurchasePrice && (
           <StatCard label="Ожидаемая прибыль" value={formatSom(margin)} />
         )}
 
-        {/* Розничную стоимость видят и админ, и продавец */}
         <StatCard label="Розн. стоимость" value={formatSom(stats.retail)} />
 
-        {/* Закупочную стоимость видит тот, у кого есть права */}
         {canSeePurchasePrice && (
           <StatCard label="Оптовая. стоимость" value={formatSom(stats.cost)} />
         )}
@@ -74,16 +71,17 @@ export function SkladStats({ products, canSeePurchasePrice, isAdmin }: SkladStat
 
       {/* Детализация по категориям и металлам */}
       <div className="grid gap-3 sm:grid-cols-2">
-        {/* По категориям (шт и вес) */}
-        <div className="rounded-xl border border-border bg-card p-4">
-          <div className="mb-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-            По категориям
+        <div className="rounded-xl border border-border bg-card p-4 sm:col-span-2">
+          <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            По категориям и металлам
           </div>
           <div className="space-y-1.5 text-sm">
-            {Object.entries(stats.byCategory).map(([cat, data]) => (
-              <div key={cat} className="flex justify-between items-center border-b border-border/40 pb-1 last:border-0 last:pb-0">
-                <span className="font-medium text-foreground">{cat}</span>
-                <span className="font-mono text-xs text-muted-foreground">
+            {Object.entries(stats.byCategory).map(([key, data]) => (
+              <div key={key} className="flex items-center justify-between gap-3 border-b border-border/40 pb-1 last:border-0 last:pb-0">
+                <span className="min-w-0 truncate font-medium text-foreground">
+                  {data.category} <span className="font-normal text-muted-foreground">— {data.metal}</span>
+                </span>
+                <span className="shrink-0 font-mono text-xs text-muted-foreground">
                   {data.count} шт · {formatWeight(data.weight)}
                 </span>
               </div>
@@ -91,31 +89,25 @@ export function SkladStats({ products, canSeePurchasePrice, isAdmin }: SkladStat
             {Object.keys(stats.byCategory).length === 0 && (
               <div className="text-xs text-muted-foreground">Нет данных</div>
             )}
-          </div>
-        </div>
 
-        {/* По металлам (вес) */}
-        <div className="rounded-xl border border-border bg-card p-4">
-          <div className="mb-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-            Вес по металлам
-          </div>
-          <div className="space-y-1.5 text-sm">
-            {Object.entries(stats.byMetal).map(([metal, w]) => (
-              <div key={metal} className="flex justify-between items-center border-b border-border/40 pb-1 last:border-0 last:pb-0">
-                <span className="font-medium text-foreground">{metal}</span>
-                <span className="font-mono text-xs text-muted-foreground">
-                  {formatWeight(w)}
-                </span>
+            {/* Итоговый блок веса с разбиением по металлам */}
+            <div className="mt-3 border-t border-border pt-2 text-xs">
+              <div className="flex justify-between font-medium text-foreground">
+                <span>Общий вес</span>
+                <span className="font-mono">{formatWeight(stats.weight)}</span>
               </div>
-            ))}
-            <div className="flex justify-between items-center border-b border-border/40 pb-1 last:border-0 last:pb-0"> 
-                <span className="font-medium text-foreground">Общий вес</span>
-                  <span className="font-mono text-xs text-muted-foreground">
-                  {formatWeight(stats.weight)}
-                </span></div>
-            {Object.keys(stats.byMetal).length === 0 && (
-              <div className="text-xs text-muted-foreground">Нет данных</div>
-            )}
+              
+              {Object.keys(stats.byMetal).length > 0 && (
+                <div className="mt-1.5 space-y-1 text-muted-foreground">
+                  {Object.entries(stats.byMetal).map(([metal, w]) => (
+                    <div key={metal} className="flex justify-between pl-2">
+                      <span>• {metal}</span>
+                      <span className="font-mono">{formatWeight(w)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
