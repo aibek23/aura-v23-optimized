@@ -6,6 +6,7 @@ import { Dashboard } from "@/components/dashboard"
 import type { ScreenId } from "@/components/app-nav"
 import { getProducts } from "@/app/actions/products"
 import { getSales } from "@/app/actions/sales"
+import { getSaleReturns } from "@/app/actions/returns"
 import { getCabinetData } from "@/app/actions/cabinet"
 import { getCashData } from "@/app/actions/cash"
 import { getMetalRates } from "@/app/actions/rates"
@@ -44,12 +45,13 @@ export async function CrmScreen({ screen }: { screen: ScreenId }) {
   // разделы без полного перехода страницы, поэтому каждый экран должен
   // оставаться доступным сразу после открытия CRM.
   // Оборачиваем в try/catch: если сессия устарела или профиль изменился между запросами — редиректим.
-  let products, sales, cabinet, cash, rates, clients, supplierDebts, superAdminShops, impersonatedShop
+  let products, sales, returns, cabinet, cash, rates, clients, supplierDebts, superAdminShops, impersonatedShop
   try {
-    ;[products, sales, cabinet, cash, rates, clients, supplierDebts, superAdminShops, impersonatedShop] =
+    ;[products, sales, returns, cabinet, cash, rates, clients, supplierDebts, superAdminShops, impersonatedShop] =
       await Promise.all([
         getProducts(),
         getSales(),
+        getSaleReturns(),
         getCabinetData(),
         getCashData(),
         getMetalRates(),
@@ -78,6 +80,7 @@ export async function CrmScreen({ screen }: { screen: ScreenId }) {
       profile={typed}
       products={products!}
       sales={sales!}
+      returns={returns!}
       cabinet={cabinet!}
       cash={cash!}
       supplierDebts={supplierDebts!}

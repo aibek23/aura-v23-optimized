@@ -50,6 +50,9 @@ export async function checkout(input: CheckoutInput) {
   if (items.length === 0) throw new Error("Чек пуст — добавьте хотя бы одну позицию")
   if (items.length > 200) throw new Error("Слишком много позиций в одном чеке")
   if (!PAYMENTS.has(input.payment_method)) throw new Error("Выберите корректный способ оплаты")
+  if (items.some((item) => Number(item.quantity) !== 1)) {
+    throw new Error("Количество каждой позиции должно быть равно 1")
+  }
 
   const phone = (input.customer_phone ?? "").trim()
   if (phone && !/^[\d+()\s-]{5,20}$/.test(phone)) {
@@ -59,29 +62,23 @@ export async function checkout(input: CheckoutInput) {
   const productIds = items
     .filter((i) => i.kind !== "scrap" && i.product_id)
     .map((i) => i.product_id as string)
+  if (new Set(productIds).size !== productIds.length) {
+    throw new Error("Одно изделие нельзя добавить в чек дважды")
+  }
 
   const { data: products, error: prodErr } = productIds.length
     ? await supabase
         .from("products")
-        .select("id, sale_price, purchase_price, quantity, name, weight, metal, status")
+        .select("id, sale_price, purchase_price, name, weight, metal, status")
         .in("id", productIds)
     : { data: [], error: null }
   if (prodErr) throw new Error(`Не удалось прочитать склад: ${prodErr.message}`)
 
   const priceMap = new Map((products ?? []).map((p) => [p.id, p]))
 
-  // Сколько единиц каждого товара уходит в этом чеке — проверяем суммарно.
-  const requested = new Map<string, number>()
-  for (const i of items) {
-    if (i.kind === "scrap" || !i.product_id) continue
-    const qty = Math.max(1, Math.floor(Number(i.quantity) || 1))
-    requested.set(i.product_id, (requested.get(i.product_id) ?? 0) + qty)
-  }
-  for (const [id, qty] of requested) {
-    const p = priceMap.get(id)
-    if (!p) throw new Error("Один из товаров был удалён со склада — обновите страницу")
-    if (qty > p.quantity) {
-      throw new Error(`«${p.name}»: на складе осталось ${p.quantity} шт., в чеке ${qty} шт.`)
+  for (const item of items) {
+    if (item.kind !== "scrap" && item.product_id && !priceMap.has(item.product_id)) {
+      throw new Error("Один из товаров был удалён со склада — обновите страницу")
     }
   }
 
@@ -90,8 +87,6 @@ export async function checkout(input: CheckoutInput) {
   const validated: SaleItem[] = []
 
   for (const item of items) {
-    const qty = Math.max(1, Math.floor(Number(item.quantity) || 1))
-
     // ------------------------------------------------------------- лом
     if (item.kind === "scrap") {
       const weight = Number(item.weight)
@@ -111,16 +106,16 @@ export async function checkout(input: CheckoutInput) {
       if (rate <= 0) throw new Error(`Не задан курс лома для «${metal || "металла"}»`)
 
       const price = Math.round(weight * rate)
-      subtotal += price * qty
-      costTotal += price * qty // лом продаётся по курсу — прибыль в нём не заложена
+      subtotal += price
+      costTotal += price // лом продаётся по курсу — прибыль в нём не заложена
       validated.push({
         product_id: null,
         kind: "scrap",
+        quantity: 1,
         name: item.name?.trim() || `Лом · ${metal}`,
         weight,
         metal,
         price_per_gram: rate,
-        quantity: qty,
         price,
         cost: price,
       })
@@ -130,7 +125,7 @@ export async function checkout(input: CheckoutInput) {
     // ---------------------------------------------------------- товар
     const p = priceMap.get(item.product_id as string)
     if (!p) throw new Error("Товар не найден на складе")
-    if (p.status === "sold" || p.quantity <= 0) throw new Error(`«${p.name}» уже продан`)
+    if (p.status !== "in_stock") throw new Error(`«${p.name}» уже продан или недоступен`)
 
     const basePrice = Number(p.sale_price)
     const requestedPrice = Number(item.price)
@@ -142,16 +137,16 @@ export async function checkout(input: CheckoutInput) {
     }
 
     const price = Math.round(requestedPrice)
-    subtotal += price * qty
-    costTotal += Number(p.purchase_price) * qty
+    subtotal += price
+    costTotal += Number(p.purchase_price)
     validated.push({
       product_id: p.id,
       kind: "product",
+      quantity: 1,
       name: p.name,
       weight: Number(p.weight) || Number(item.weight) || 0,
       metal: p.metal ?? item.metal ?? null,
       price_per_gram: Number(p.weight) > 0 ? Math.round(price / Number(p.weight)) : null,
-      quantity: qty,
       price,
       cost: Number(p.purchase_price),
     })
@@ -260,15 +255,11 @@ export async function checkout(input: CheckoutInput) {
   })
   if (saleErr) throw new Error(`Не удалось провести продажу: ${saleErr.message}`)
 
-  // Списание остатков (лом склада не касается).
-  for (const [id, qty] of requested) {
-    const p = priceMap.get(id)!
-    const remaining = p.quantity - qty
-    const { error: updErr } = await supabase
-      .from("products")
-      .update({ quantity: remaining, status: remaining <= 0 ? "sold" : "in_stock" })
-      .eq("id", id)
-    if (updErr) console.error("[sales] stock update error:", updErr.message)
+  // Атомарно переводим каждую физическую единицу в sold.
+  for (const item of validated) {
+    if (item.kind !== "product" || !item.product_id) continue
+    const { error: updErr } = await supabase.rpc("sell_product", { _product_id: item.product_id })
+    if (updErr) throw new Error(`Не удалось списать товар: ${updErr.message}`)
   }
 
   if (bonusEarned > 0) {

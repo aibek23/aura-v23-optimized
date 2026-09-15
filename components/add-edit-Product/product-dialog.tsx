@@ -123,7 +123,7 @@ export function ProductDialog({
         try {
           await takeProductOnConsignment(saved.id)
           toast.success(
-            `Взято на реализацию: долг поставщику ${formatSom(saved.purchase_price * Math.max(saved.quantity, 1))}`
+            `Взято на реализацию: долг поставщику ${formatSom(saved.purchase_price)}`
           )
         } catch (e) {
           toast.error(e instanceof Error ? e.message : "Товар сохранён, но взять на реализацию не удалось")
@@ -183,8 +183,8 @@ export function ProductDialog({
             onRefreshArticle={() => void requestArticle(form.category, form.metal, form.metal_color, true)}
           />
 
-          {/* Вес, Размер, Кол-во */}
-          <div className="grid grid-cols-3 gap-3">
+          {/* Вес и размер: одна строка — одна физическая единица. */}
+          <div className="grid grid-cols-2 gap-3">
             <div className="grid gap-2">
               <Label htmlFor="p-weight">Вес (г)</Label>
               <Input
@@ -199,16 +199,6 @@ export function ProductDialog({
             <div className="grid gap-2">
               <Label htmlFor="p-size">Размер</Label>
               <Input id="p-size" value={form.size} onChange={(e) => setField("size", e.target.value)} />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="p-qty">Кол-во</Label>
-              <Input
-                id="p-qty"
-                type="number"
-                min={0}
-                value={form.quantity}
-                onChange={(e) => setField("quantity", Number(e.target.value))}
-              />
             </div>
           </div>
 

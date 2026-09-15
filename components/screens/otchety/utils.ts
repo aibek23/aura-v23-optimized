@@ -1,7 +1,7 @@
 // ─── Вспомогательные функции: даты, лом, агрегации ─────────────────────────
 
 import type { DateRange, KpiSummary, PeakHint, PeriodId, PurityRow } from "./types"
-import type { Product, Sale, SaleItem } from "@/lib/types"
+import type { Product, Sale, SaleItem, SaleReturn } from "@/lib/types"
 
 /* ─── Константы ─────────────────────────────────────────────────────────── */
 
@@ -132,10 +132,18 @@ export function purityOf(p: Pick<Product, "metal">): string {
 
 /* ─── Агрегации ─────────────────────────────────────────────────────────── */
 
-export function summarise(sales: Sale[]): KpiSummary {
-  const revenue = sales.reduce((sum, s) => sum + s.total, 0)
-  const cost = sales.reduce((sum, s) => sum + s.cost_total, 0)
-  const profit = sales.reduce((sum, s) => sum + s.profit, 0)
+/**
+ * Итоги периода. Возвраты уменьшают выручку и себестоимость: проданный товар
+ * вернулся на склад, а деньги ушли из кассы, поэтому и прибыль пересчитывается.
+ */
+export function summarise(sales: Sale[], returns: SaleReturn[] = []): KpiSummary {
+  const returnedAmount = returns.reduce((sum, r) => sum + Number(r.amount), 0)
+  const returnedCost = returns.reduce((sum, r) => sum + Number(r.cost), 0)
+
+  const revenue = sales.reduce((sum, s) => sum + s.total, 0) - returnedAmount
+  const cost = sales.reduce((sum, s) => sum + s.cost_total, 0) - returnedCost
+  const profit = revenue - cost
+
   return {
     revenue,
     cost,
@@ -158,6 +166,23 @@ export function delta(current: number, previous: number): number | null {
   return ((current - previous) / Math.abs(previous)) * 100
 }
 
+/** Категория возвращённой позиции: по товару на складе, иначе «Прочее». */
+export function returnCategoryOf(
+  r: SaleReturn,
+  productById: Map<string, Product>,
+): string {
+  return productById.get(r.product_id ?? "")?.category ?? "Прочее"
+}
+
+/** Проба возвращённой позиции: по металлу из чека, иначе по товару. */
+export function returnPurityOf(
+  r: SaleReturn,
+  productById: Map<string, Product>,
+): string {
+  const product = productById.get(r.product_id ?? "")
+  return purityOf({ metal: r.item_metal ?? product?.metal ?? null })
+}
+
 /* ─── Строки разбивки по пробам ────────────────────────────────────────── */
 
 export function buildPurityRows(
@@ -170,12 +195,12 @@ export function buildPurityRows(
     { purity: string; weight: number; cost: number; items: number }
   >()
   for (const p of products) {
-    if (p.quantity <= 0) continue
+    if (p.status !== "in_stock") continue
     const key = purityOf(p)
     const row = buckets.get(key) ?? { purity: key, weight: 0, cost: 0, items: 0 }
-    row.weight += (p.weight || 0) * p.quantity
-    row.cost += (p.purchase_price || 0) * p.quantity
-    row.items += p.quantity
+    row.weight += p.weight || 0
+    row.cost += p.purchase_price || 0
+    row.items += 1
     buckets.set(key, row)
   }
   return [...buckets.values()]
@@ -204,6 +229,7 @@ export function buildHeatGrid(
   sales: Sale[],
   heatCategory: string,
   productById: Map<string, Product>,
+  returns: SaleReturn[] = [],
 ): { grid: number[][]; max: number } {
   const grid: number[][] = WEEKDAYS.map(() => TIME_SLOTS.map(() => 0))
   for (const s of sales) {
@@ -219,6 +245,15 @@ export function buildHeatGrid(
         continue
       grid[wd][sl] += item.price * item.quantity
     }
+  }
+  // Возвраты вычитаются из той же ячейки, в которой они оформлены.
+  for (const r of returns) {
+    const d = new Date(r.created_at)
+    const wd = weekdayIndex(d)
+    const sl = slotIndex(d)
+    if (sl < 0) continue
+    if (heatCategory !== "all" && returnCategoryOf(r, productById) !== heatCategory) continue
+    grid[wd][sl] -= Number(r.amount)
   }
   const max = Math.max(1, ...grid.flat())
   return { grid, max }
@@ -259,7 +294,7 @@ export function buildPeakHints(
 
 /* ─── Временной ряд ─────────────────────────────────────────────────────── */
 
-export function buildSeries(sales: Sale[]) {
+export function buildSeries(sales: Sale[], returns: SaleReturn[] = []) {
   const byDay = new Map<
     string,
     {
@@ -285,6 +320,24 @@ export function buildSeries(sales: Sale[]) {
     row.profit += s.profit
     byDay.set(key, row)
   }
+  // Возвраты попадают в день оформления возврата — это и есть кассовый поток.
+  for (const r of returns) {
+    const d = new Date(r.created_at)
+    const key = toInputDate(d)
+    const amount = Number(r.amount)
+    const cost = Number(r.cost)
+    const row = byDay.get(key) ?? {
+      key,
+      label: d.toLocaleDateString("ru-RU", { day: "2-digit", month: "short" }),
+      revenue: 0,
+      cost: 0,
+      profit: 0,
+    }
+    row.revenue -= amount
+    row.cost -= cost
+    row.profit -= amount - cost
+    byDay.set(key, row)
+  }
   return [...byDay.values()]
     .sort((a, b) => a.key.localeCompare(b.key))
     .map((r) => ({
@@ -298,6 +351,7 @@ export function buildSeries(sales: Sale[]) {
 export function buildCategoryRows(
   sales: Sale[],
   productById: Map<string, Product>,
+  returns: SaleReturn[] = [],
 ) {
   const rows = new Map<
     string,
@@ -330,12 +384,33 @@ export function buildCategoryRows(
       rows.set(key, row)
     }
   }
+  // Возвраты снимают выручку и себестоимость из своей категории/пробы.
+  for (const r of returns) {
+    const category = returnCategoryOf(r, productById)
+    const purity = returnPurityOf(r, productById)
+    const key = `${category}|${purity}`
+    const row = rows.get(key) ?? {
+      key,
+      category,
+      purity,
+      count: 0,
+      revenue: 0,
+      cost: 0,
+    }
+    row.count -= 1
+    row.revenue -= Number(r.amount)
+    row.cost -= Number(r.cost)
+    rows.set(key, row)
+  }
   const totalRevenue = [...rows.values()].reduce((sum, r) => sum + r.revenue, 0)
-  return [...rows.values()].map((r) => ({
-    ...r,
-    profit: r.revenue - r.cost,
-    avgPrice: r.count > 0 ? r.revenue / r.count : 0,
-    margin: r.revenue > 0 ? ((r.revenue - r.cost) / r.revenue) * 100 : 0,
-    share: totalRevenue > 0 ? (r.revenue / totalRevenue) * 100 : 0,
-  }))
+  return [...rows.values()]
+    .filter((r) => r.count !== 0 || r.revenue !== 0 || r.cost !== 0)
+    .map((r) => ({
+      ...r,
+      count: Math.max(0, r.count),
+      profit: r.revenue - r.cost,
+      avgPrice: r.count > 0 ? r.revenue / r.count : 0,
+      margin: r.revenue > 0 ? ((r.revenue - r.cost) / r.revenue) * 100 : 0,
+      share: totalRevenue > 0 ? (r.revenue / totalRevenue) * 100 : 0,
+    }))
 }

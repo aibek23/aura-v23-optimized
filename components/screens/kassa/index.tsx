@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react"
-import type { MetalRate, Product, Profile, Role, Sale, SaleItem, Customer } from "@/lib/types"
+import type { MetalRate, Product, Profile, Role, Sale, SaleItem, Customer, SaleReturn } from "@/lib/types"
 import { formatSom } from "@/lib/format"
 import { buildRateMap, scrapRateOf } from "@/lib/rates"
 import { round, toNumber } from "@/hooks/useCalculator"
@@ -40,6 +40,7 @@ export function KassaScreen({
   cash,
   rates = [],
   clients = [],
+  returns = [],
 }: {
   products: Product[]
   profile: Profile
@@ -48,6 +49,7 @@ export function KassaScreen({
   cash: CashData
   rates?: MetalRate[]
   clients?: Customer[]
+  returns?: SaleReturn[]
 }) {
   const router = useRouter()
   const [, startTransition] = useTransition()
@@ -87,7 +89,11 @@ export function KassaScreen({
       const saved = localStorage.getItem(LOCAL_STORAGE_KEY)
       if (saved) {
         const parsed = JSON.parse(saved)
-        if (Array.isArray(parsed.cart)) setCart(parsed.cart)
+            if (Array.isArray(parsed.cart)) {
+              // Старые черновики могли содержать количество больше единицы.
+              // В ювелирном CRM каждая строка — отдельное уникальное изделие.
+              setCart(parsed.cart.map((item: ExtendedSaleItem) => ({ ...item, quantity: 1 })))
+            }
         if (parsed.bonusUsed !== undefined) setBonusUsed(parsed.bonusUsed)
         if (parsed.payment !== undefined) setPayment(parsed.payment)
         if (parsed.customerName !== undefined) setCustomerName(parsed.customerName)
@@ -148,19 +154,18 @@ export function KassaScreen({
   const recentProducts = useMemo(
     () =>
       [...products]
-        .filter((p) => p.status !== "sold" && p.quantity > 0 && !p.is_hidden)
+        .filter((p) => p.status === "in_stock" && !p.is_hidden)
         .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
         .slice(0, 3),
     [products],
   )
 
-  const stockOf = (id: string) => products.find((p) => p.id === id)?.quantity ?? 0
   const qtyInCart = (id: string) => cart.filter((i) => i.product_id === id).length
 
   const results = useMemo(() => {
     if (!isSearchReady(debounced, MIN_QUERY)) return []
     return filterProducts(products, debounced).filter(
-      (p) => p.quantity > 0 && p.status !== "sold" && !p.is_hidden,
+      (p) => p.status === "in_stock" && !p.is_hidden,
     )
   }, [products, debounced])
 
@@ -178,8 +183,8 @@ export function KassaScreen({
   const addToCart = (p: Product) => {
     setCart((prev) => {
       const already = prev.filter((i) => i.product_id === p.id).length
-      if (already >= p.quantity) {
-        toast.error(`Достигнуто максимальное количество товара в наличии (Остаток: ${p.quantity} шт.)`)
+      if (already >= 1) {
+        toast.error("Этот товар уже добавлен в чек")
         return prev
       }
       if (p.sale_price < p.purchase_price) {
@@ -285,17 +290,6 @@ export function KassaScreen({
         return { ...i, discountSom: validSom, discountPercent: Number(pct.toFixed(1)) }
       }),
     )
-  }
-
-  const applyDiscountToAll = (line: ExtendedSaleItem) => {
-    setCart((prev) =>
-      prev.map((i) =>
-        i.product_id === line.product_id
-          ? { ...i, discountSom: line.discountSom ?? 0, discountPercent: line.discountPercent ?? 0 }
-          : i,
-      ),
-    )
-    toast.success("Скидка применена ко всем единицам товара")
   }
 
   const removeItem = (lineId: string) => setCart((prev) => prev.filter((i) => i.lineId !== lineId))
@@ -429,7 +423,15 @@ export function KassaScreen({
             recent={recentProducts}
           />
           <div className="hidden lg:block">
-             <SalesHistory sales={sales} canSeeProfit={canSeeProfit} sellers={sellers} />
+             <SalesHistory
+               sales={sales}
+               returns={returns}
+               products={products}
+               canSeeProfit={canSeeProfit}
+               canReturn
+               sellers={sellers}
+               onReturned={() => startTransition(() => router.refresh())}
+             />
           </div>
         </div>
         <div className="order-2 w-full lg:sticky lg:top-4 z-10 min-w-0">
@@ -442,16 +444,13 @@ export function KassaScreen({
             hasLoss={hasLoss}
             lossAmount={lossAmount}
             lossItems={lossItems}
-            stockOf={stockOf}
             removeItem={removeItem}
-            addToCart={addToCart}
             products={products}
             changeItemPricePerGram={changeItemPricePerGram}
             changeItemWeight={changeItemWeight}
             scrapRateOf={(metal: string) => scrapRateOf(rateMap, metal)}
             changeItemDiscountSom={changeItemDiscountSom}
             changeItemDiscountPercent={changeItemDiscountPercent}
-            applyDiscountToAll={applyDiscountToAll}
             customers={clients}
             customerName={customerName}
             setCustomerName={setCustomerName}
@@ -488,7 +487,15 @@ export function KassaScreen({
               onRequestDeposit={() => window.dispatchEvent(new Event(OPEN_CASH_INCOME_EVENT))}
             /> */}
           </div>
-           <SalesHistory sales={sales} canSeeProfit={canSeeProfit} sellers={sellers} />
+           <SalesHistory
+             sales={sales}
+             returns={returns}
+             products={products}
+             canSeeProfit={canSeeProfit}
+             canReturn
+             sellers={sellers}
+             onReturned={() => startTransition(() => router.refresh())}
+           />
         </div>
       </div>
 

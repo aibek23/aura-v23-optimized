@@ -9,8 +9,6 @@ import {
   AlertTriangle, 
   ChevronDown, 
   ChevronUp, 
-  Minus, 
-  Plus, 
   RefreshCw, 
   ShoppingCart, 
   Recycle,
@@ -33,16 +31,13 @@ interface KassaCartProps {
   hasLoss: boolean
   lossAmount: number
   lossItems: ExtendedSaleItem[]
-  stockOf: (id: string) => number
   removeItem: (lineId: string) => void
-  addToCart: (p: Product) => void
   products: Product[]
   changeItemPricePerGram: (lineId: string, val: number) => void
   changeItemWeight: (lineId: string, val: number) => void
   scrapRateOf: (metal: string) => number
   changeItemDiscountSom: (lineId: string, val: number) => void
   changeItemDiscountPercent: (lineId: string, val: number) => void
-  applyDiscountToAll: (item: ExtendedSaleItem) => void
   customerName: string
   setCustomerName: (name: string) => void
   customerPhone: string
@@ -80,16 +75,13 @@ export function KassaCart({
   hasLoss,
   lossAmount,
   lossItems,
-  stockOf,
   removeItem,
-  addToCart,
   products,
   changeItemPricePerGram,
   changeItemWeight,
   scrapRateOf,
   changeItemDiscountSom,
   changeItemDiscountPercent,
-  applyDiscountToAll,
   customerName,
   setCustomerName,
   customerPhone,
@@ -211,10 +203,6 @@ export function KassaCart({
           ) : (
             cart.map((i) => {
               const isScrap = i.kind === "scrap"
-              const stock = isScrap ? 0 : stockOf(i.product_id ?? "")
-              const sameProduct = isScrap ? [i] : cart.filter((c) => c.product_id === i.product_id)
-              const unitNo = sameProduct.findIndex((c) => c.lineId === i.lineId) + 1
-              const canAddMore = !isScrap && sameProduct.length < stock
               const discountVal = i.discountSom ?? ((i.price * (i.discountPercent || 0)) / 100)
               const effectiveUnitPrice = Math.max(0, i.price - discountVal)
               const itemLoss = !isScrap && effectiveUnitPrice < i.cost
@@ -229,11 +217,6 @@ export function KassaCart({
                       <div className="line-clamp-1 text-xs font-semibold">
                         {isScrap && <Recycle className="mr-1 inline h-3 w-3 text-primary" />}
                         {i.name}
-                        {!isScrap && sameProduct.length > 1 && (
-                          <span className="ml-1.5 text-[10px] font-normal text-muted-foreground bg-muted px-1.5 py-0.2 rounded">
-                            ед. {unitNo} из {sameProduct.length}
-                          </span>
-                        )}
                       </div>
                       <div className="font-mono text-[11px] text-muted-foreground mt-0.5">
                         {discountVal > 0 ? (
@@ -245,7 +228,7 @@ export function KassaCart({
                           formatSom(i.price)
                         )}{" "}
                         <span className="text-[10px] opacity-70">
-                          {isScrap ? `· ${formatWeight(i.weight)} лома` : `· остаток ${stock} шт.`}
+                          {isScrap ? `· ${formatWeight(i.weight)} лома` : "· 1 ед."}
                         </span>
                       </div>
                       {product && (
@@ -270,30 +253,6 @@ export function KassaCart({
                       )}
                     </div>
                     
-                    {!isScrap && (
-                    <div className="flex items-center gap-1 bg-muted/40 rounded-lg p-0.5 border border-border/40">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6 rounded-md hover:bg-background"
-                        title="Убрать единицу"
-                        onClick={() => removeItem(i.lineId)}
-                      >
-                        <Minus className="h-3 w-3" />
-                      </Button>
-                      <span className="w-5 text-center text-xs font-mono font-medium tabular-nums">1</span>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6 rounded-md hover:bg-background"
-                        disabled={!canAddMore || !product}
-                        title={canAddMore ? "Добавить ещё единицу" : `Остаток: ${stock} шт.`}
-                        onClick={() => product && addToCart(product)}
-                      >
-                        <Plus className="h-3 w-3" />
-                      </Button>
-                    </div>
-                    )}
                     <Button
                       variant="ghost"
                       size="icon"
@@ -377,14 +336,6 @@ export function KassaCart({
                         />
                         <span className="text-[10px] text-muted-foreground">%</span>
                       </div>
-                      {sameProduct.length > 1 && (
-                        <button
-                          onClick={() => applyDiscountToAll(i)}
-                          className="rounded border border-border/80 bg-background px-1.5 py-0.5 text-[10px] text-muted-foreground hover:text-primary hover:border-primary transition-colors"
-                        >
-                          Ко всем
-                        </button>
-                      )}
                     </div>
                   </div>
                 </div>

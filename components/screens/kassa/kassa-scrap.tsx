@@ -60,7 +60,6 @@ export function KassaScrap({
   const [name, setName] = useState("")
   const [weight, setWeight] = useState("")
   const [perGram, setPerGram] = useState("")
-  const [quantity, setQuantity] = useState("1")
   const [salePerGram, setSalePerGram] = useState("")
   const [supplierName, setSupplierName] = useState("")
   const [supplierPhone, setSupplierPhone] = useState("")
@@ -89,7 +88,6 @@ export function KassaScrap({
     setPayElectronic("")
     setSupplierName("")
     setSupplierPhone("")
-    setQuantity("1")
   }
 
   const validate = (): string | null => {
@@ -139,7 +137,6 @@ export function KassaScrap({
     setSaving(true)
     try {
       const w = calc.toNumber(weight)
-      const qty = Math.max(1, Number(quantity) || 1)
       await createProduct({
         name: name.trim() || `Лом · ${metal}`,
         category,
@@ -149,7 +146,6 @@ export function KassaScrap({
         weight: w,
         size: "",
         sku: "",
-        quantity: qty,
         purchase_price: total,
         price_per_gram_purchase: effectiveGram,
         price_per_gram_sale: calc.toNumber(salePerGram) || null,
@@ -229,7 +225,7 @@ export function KassaScrap({
               }}
             />
 
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 gap-3">
               <div className="grid gap-2">
                 <Label>Категория</Label>
                 <Select value={category} onValueChange={(v) => setCategory(v ?? category)}>
@@ -255,16 +251,6 @@ export function KassaScrap({
                   value={weight}
                   onChange={(e) => setWeight(e.target.value)}
                   className="font-mono"
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="s-qty">Кол-во</Label>
-                <Input
-                  id="s-qty"
-                  type="number"
-                  min={1}
-                  value={quantity}
-                  onChange={(e) => setQuantity(e.target.value)}
                 />
               </div>
             </div>

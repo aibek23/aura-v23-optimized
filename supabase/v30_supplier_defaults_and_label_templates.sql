@@ -98,8 +98,8 @@ BEGIN
     coalesce(nullif(btrim(v_product.supplier_phone), ''), ''), 0
   ));
 
-  v_amount := round(coalesce(v_product.purchase_price, 0) *
-                    greatest(coalesce(v_product.quantity, 1), 1), 2);
+  -- Every product row is one physical unit.
+  v_amount := round(coalesce(v_product.purchase_price, 0), 2);
   IF v_amount <= 0 THEN
     RAISE EXCEPTION 'Закупочная стоимость товара должна быть больше нуля';
   END IF;

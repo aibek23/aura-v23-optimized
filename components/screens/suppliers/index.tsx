@@ -45,7 +45,7 @@ export function SuppliersScreen({
         group = { key, name, phone, items: [], totalWeight: 0, totalQuantity: 0, byMetal: {} }
         map.set(key, group)
       }
-      const quantity = Math.max(Number(product.quantity) || 0, 0)
+      const quantity = 1
       group.items.push(product)
       group.totalQuantity += quantity
       group.totalWeight += (Number(product.weight) || 0) * quantity

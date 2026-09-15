@@ -90,7 +90,6 @@ export type Product = {
   sku: string | null
   /** Порядковый номер артикула внутри префикса (1–99999). */
   article_seq?: number | null
-  quantity: number
   is_hidden: boolean | null
   purchase_price: number
   /**
@@ -125,11 +124,15 @@ export type SaleItem = {
   /** null для лома — товара нет на складе. */
   product_id: string | null
   kind?: SaleItemKind
+  /**
+   * Историческое поле чеков. Новые позиции всегда сохраняются ровно с
+   * quantity=1, потому что каждое ювелирное изделие — отдельная запись.
+   */
+  quantity: number
   name: string
   weight: number
   metal: string | null
   price_per_gram?: number | null
-  quantity: number
   price: number
   cost: number
 }
@@ -154,6 +157,30 @@ export type Sale = {
   bonus_earned: number
   bonus_used: number
   items: SaleItem[]
+  created_at: string
+}
+
+/** Возврат одной позиции чека (таблица sale_returns, миграция v33). */
+export type SaleReturn = {
+  id: string
+  shop_id: string
+  sale_id: string
+  /** null для лома — товара на складе не было. */
+  product_id: string | null
+  /** Индекс позиции внутри sales.items исходного чека. */
+  item_index: number
+  item_name: string
+  item_metal: string | null
+  item_weight: number
+  /** Сумма, фактически выплаченная покупателю (по оплаченной цене). */
+  amount: number
+  /** Себестоимость возвращённого товара — снова учитывается на складе. */
+  cost: number
+  /** Расходная операция кассы, созданная атомарно вместе с возвратом. */
+  cash_operation_id: string | null
+  reason: string
+  created_by: string
+  author_name: string | null
   created_at: string
 }
 
@@ -306,4 +333,3 @@ export type SuperadminNotification = {
 export type ActionResult<T = void> =
   | { success: true; data: T }
   | { success: false; error: string }
-

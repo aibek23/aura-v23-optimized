@@ -26,7 +26,6 @@ export type FormState = {
   weight: number
   size: string
   sku: string
-  quantity: number
   purchase_price: number
   /** Переименовано из purchase_price_seller (v20). */
   purchase_price_visible: number
@@ -51,7 +50,6 @@ export const EMPTY_FORM: FormState = {
   weight: 0,
   size: "",
   sku: "",
-  quantity: 1,
   purchase_price: 0,
   purchase_price_visible: 0,
   price_per_gram_sale: 0,
@@ -107,7 +105,6 @@ export function useProductForm(open: boolean, product: Product | null) {
         weight: product.weight,
         size: product.size ?? "",
         sku: product.sku ?? "",
-        quantity: product.quantity,
         purchase_price: product.purchase_price,
         purchase_price_visible: product.purchase_price_visible ?? 0,
         price_per_gram_sale: product.price_per_gram_sale ?? 0,
@@ -230,7 +227,7 @@ export function useProductForm(open: boolean, product: Product | null) {
   )
 
   /**
-   * Автогенерация артикула: как только выбраны «Категория» и «Цвет металла»,
+   * Автогенерация артикула: как только выбраны «Категория» и ��Цвет металла»,
    * артикул запрашивается с сервера. Поле в UI доступно только для чтения.
    */
   useEffect(() => {

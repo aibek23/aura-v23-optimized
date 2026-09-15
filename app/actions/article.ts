@@ -58,7 +58,6 @@ export async function createProduct(formData: {
   name: string
   prefix: string
   weight: number
-  quantity: number
   sale_price: number
   purchase_price: number
   photos?: string[]
@@ -78,7 +77,6 @@ export async function createProduct(formData: {
       article_seq: generated.seq,
       sku: generated.article,
       weight: formData.weight,
-      quantity: formData.quantity,
       sale_price: formData.sale_price,
       purchase_price: formData.purchase_price,
       images,

@@ -18,8 +18,9 @@
 //   sections/category-table.tsx    — таблица по категориям
 
 import { useMemo, useState } from "react"
-import { Lock } from "lucide-react"
-import type { Product, Profile, Role, Sale } from "@/lib/types"
+import { Lock, Undo2 } from "lucide-react"
+import type { Product, Profile, Role, Sale, SaleReturn } from "@/lib/types"
+import { formatSom } from "@/lib/format"
 import {
   DEFAULT_SCRAP_PRICES,
   addDays,
@@ -45,11 +46,14 @@ import type { PeriodId, SortKey } from "./types"
 export function OtchetyScreen({
   sales,
   products,
+  returns = [],
   viewRole,
   profile,
 }: {
   sales: Sale[]
   products: Product[]
+  /** Возвраты товара — уменьшают выручку, себестоимость и прибыль. */
+  returns?: SaleReturn[]
   viewRole: Role
   profile: Profile
 }) {
@@ -100,11 +104,38 @@ export function OtchetyScreen({
     [sales, prev],
   )
 
-  const kpi = useMemo(() => summarise(inRange), [inRange])
-  const prevKpi = useMemo(() => summarise(inPrevRange), [inPrevRange])
+  // Возвраты учитываются в том периоде, когда деньги вернулись покупателю.
+  const returnsInRange = useMemo(
+    () =>
+      returns.filter((r) => {
+        const t = new Date(r.created_at).getTime()
+        return t >= range.from.getTime() && t < range.to.getTime()
+      }),
+    [returns, range],
+  )
+
+  const returnsInPrevRange = useMemo(
+    () =>
+      returns.filter((r) => {
+        const t = new Date(r.created_at).getTime()
+        return t >= prev.from.getTime() && t < prev.to.getTime()
+      }),
+    [returns, prev],
+  )
+
+  const kpi = useMemo(() => summarise(inRange, returnsInRange), [inRange, returnsInRange])
+  const prevKpi = useMemo(
+    () => summarise(inPrevRange, returnsInPrevRange),
+    [inPrevRange, returnsInPrevRange],
+  )
+
+  const returnsTotal = useMemo(
+    () => returnsInRange.reduce((sum, r) => sum + Number(r.amount), 0),
+    [returnsInRange],
+  )
 
   const stockCount = useMemo(
-    () => products.reduce((sum, p) => sum + Math.max(0, p.quantity), 0),
+    () => products.filter((p) => p.status === "in_stock").length,
     [products],
   )
 
@@ -143,8 +174,8 @@ export function OtchetyScreen({
   }, [inRange, productById])
 
   const heat = useMemo(
-    () => buildHeatGrid(inRange, heatCategory, productById),
-    [inRange, heatCategory, productById],
+    () => buildHeatGrid(inRange, heatCategory, productById, returnsInRange),
+    [inRange, heatCategory, productById, returnsInRange],
   )
 
   const peakHints = useMemo(
@@ -152,11 +183,11 @@ export function OtchetyScreen({
     [inRange, productById],
   )
 
-  const series = useMemo(() => buildSeries(inRange), [inRange])
+  const series = useMemo(() => buildSeries(inRange, returnsInRange), [inRange, returnsInRange])
 
   const categoryRows = useMemo(
-    () => buildCategoryRows(inRange, productById),
-    [inRange, productById],
+    () => buildCategoryRows(inRange, productById, returnsInRange),
+    [inRange, productById, returnsInRange],
   )
 
   const visibleRows = useMemo(() => {
@@ -209,6 +240,18 @@ export function OtchetyScreen({
       />
 
       <KpiSection kpi={kpi} prevKpi={prevKpi} stockCount={stockCount} />
+
+      {returnsInRange.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-2.5 text-xs text-destructive">
+          <Undo2 className="h-3.5 w-3.5 shrink-0" />
+          <span className="font-medium">
+            Возвратов за период: {returnsInRange.length} на {formatSom(returnsTotal)}
+          </span>
+          <span className="text-muted-foreground">
+            выручка и прибыль в отчёте уже пересчитаны с их учётом
+          </span>
+        </div>
+      )}
 
       <ScrapAnalysis
         markup={markup}

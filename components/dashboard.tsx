@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useTransition, useEffect, useRef, useCallback } from "react"
-import type { Customer, Product, Profile, Role, Sale } from "@/lib/types"
+import type { Customer, Product, Profile, Role, Sale, SaleReturn } from "@/lib/types"
 import { Toaster } from "@/components/ui/sonner"
 import { AppHeader } from "@/components/app-header"
 import { RatesTicker } from "@/components/rates-ticker"
@@ -92,6 +92,7 @@ export function Dashboard({
   profile,
   products,
   sales,
+  returns = [],
   cabinet,
   rates = [],
   cash,
@@ -106,6 +107,8 @@ export function Dashboard({
   profile: Profile
   products: Product[]
   sales: Sale[]
+  /** Возвраты товара — уменьшают кассу, выручку и прибыль. */
+  returns?: SaleReturn[]
   cabinet: CabinetData
   rates?: MetalRate[]
   cash: CashData
@@ -268,6 +271,7 @@ export function Dashboard({
             products={products}
             viewRole={viewRole}
             sales={sales}
+            returns={returns}
             cash={cash}
             rates={rates}
             clients={clients}
@@ -296,10 +300,23 @@ export function Dashboard({
           />
         )}
         {activeScreen === "kabinet" && (
-          <KabinetScreen profile={profile} viewRole={viewRole} sales={sales} data={cabinet} email={email} />
+          <KabinetScreen
+            profile={profile}
+            viewRole={viewRole}
+            sales={sales}
+            returns={returns}
+            data={cabinet}
+            email={email}
+          />
         )}
         {activeScreen === "otchety" && isAdmin && (
-          <OtchetyScreen sales={sales} products={products} viewRole={viewRole} profile={profile} />
+          <OtchetyScreen
+            sales={sales}
+            products={products}
+            returns={returns}
+            viewRole={viewRole}
+            profile={profile}
+          />
         )}
         {activeScreen === "shops" && isSuperAdmin && superAdminShops && (
           <SuperAdminShopsScreen initialShops={superAdminShops} />

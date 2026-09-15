@@ -18,7 +18,6 @@ const PRODUCT_COLUMNS = [
   "size",
   "sku",
   "article_seq",
-  "quantity",
   "is_hidden",
   "purchase_price",
   "purchase_price_visible",
@@ -146,7 +145,6 @@ export type ProductInput = {
   weight: number
   size: string
   sku: string
-  quantity: number
   purchase_price: number
   /** Закупочная цена видимая для продавца (переименовано из purchase_price_seller). */
   purchase_price_visible?: number | null
@@ -169,7 +167,6 @@ function validate(input: Partial<ProductInput>) {
   }
   const numeric: [keyof ProductInput, string][] = [
     ["weight", "Вес"],
-    ["quantity", "Количество"],
     ["sale_price", "Цена продажи"],
     ["purchase_price", "Закупочная цена"],
   ]
@@ -260,17 +257,16 @@ export async function updateProduct(
   const { supabase } = await requireProfile()
   const { data: current } = await supabase
     .from("products")
-    .select("consignment_operation_id, purchase_price, supplier_name, supplier_phone, quantity")
+    .select("consignment_operation_id, purchase_price, supplier_name, supplier_phone")
     .eq("id", id)
     .single()
   const restrictedChanged = current?.consignment_operation_id && (
     (input.purchase_price !== undefined && Number(input.purchase_price) !== Number(current.purchase_price)) ||
     (input.supplier_name !== undefined && (input.supplier_name ?? null) !== (current.supplier_name ?? null)) ||
-    (input.supplier_phone !== undefined && (input.supplier_phone ?? null) !== (current.supplier_phone ?? null)) ||
-    (input.quantity !== undefined && Number(input.quantity) !== Number(current.quantity))
+    (input.supplier_phone !== undefined && (input.supplier_phone ?? null) !== (current.supplier_phone ?? null))
   )
   if (restrictedChanged) {
-    throw new Error("Товар уже взят на реализацию: закупочную цену, поставщика и количество менять нельзя")
+    throw new Error("Товар уже взят на реализацию: закупочную цену и поставщика менять нельзя")
   }
   validate(input)
   const { data, error } = await supabase

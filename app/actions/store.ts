@@ -19,7 +19,6 @@ export type PublicProduct = {
   stones: string | null
   description: string | null
   sale_price: number
-  quantity: number
   status: string
   images: string[] | null
   image_url: string | null

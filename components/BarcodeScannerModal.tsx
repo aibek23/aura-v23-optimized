@@ -5,6 +5,7 @@ import { BrowserMultiFormatReader, type IScannerControls } from "@zxing/browser"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { AlertTriangle, EyeOff, Image as ImageIcon, Keyboard, RefreshCw, X, Zap, ZapOff } from "lucide-react"
+import { playScanBeep } from "@/lib/sound"
 
 interface BarcodeScannerProps {
   onClose: () => void
@@ -113,6 +114,9 @@ export function BarcodeScannerModal({ onClose, onScan }: BarcodeScannerProps) {
       const clean = text.trim()
       if (clean.length < 3 || closedRef.current) return
       closedRef.current = true
+
+      // «Пик» кассового аппарата при успешном распознавании кода.
+      playScanBeep()
 
       if (typeof navigator !== "undefined" && navigator.vibrate) {
         navigator.vibrate(80)

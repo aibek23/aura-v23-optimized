@@ -227,7 +227,7 @@ export function SkladScreen({
                   <TableCell className="text-sm">{formatWeight(p.weight)}</TableCell>
                   <TableCell className="text-sm text-muted-foreground">{formatDate(p.created_at)}</TableCell>
                   <TableCell className="text-right">
-                    <QtyBadge qty={p.quantity} />
+                    <QtyBadge status={p.status} />
                   </TableCell>
                   {canSeePurchasePrice && (
                     <TableCell className="hidden text-right font-mono text-sm text-muted-foreground lg:table-cell">
@@ -239,7 +239,7 @@ export function SkladScreen({
                      <ActualSaleSummary
                        sale={salesByProduct.get(p.id)}
                        canSeeProfit={canSeePurchasePrice}
-                       sold={p.status === "sold" || p.quantity <= 0}
+                       sold={p.status !== "in_stock"}
                      />
                   </TableCell>
                   <TableCell>
@@ -295,7 +295,7 @@ export function SkladScreen({
                    <ActualSaleSummary
                      sale={salesByProduct.get(p.id)}
                      canSeeProfit={canSeePurchasePrice}
-                      sold={p.status === "sold" || p.quantity <= 0}
+                      sold={p.status !== "in_stock"}
                    />
                   {canSeePurchasePrice && (
                     <div className="font-mono text-xs text-muted-foreground">{formatSom(p.purchase_price)}</div>
@@ -314,7 +314,7 @@ export function SkladScreen({
                   <span className="font-medium text-foreground/70">Вес:</span> {formatWeight(p.weight)}
                 </span>
                 <span className="flex items-center gap-1">
-                  <span className="font-medium text-foreground/70">Кол-во:</span> <QtyBadge qty={p.quantity} />
+                  <span className="font-medium text-foreground/70">Кол-во:</span> <QtyBadge status={p.status} />
                 </span>
                 <span className="flex items-center gap-1">
                   <span className="font-medium text-foreground/70">Дата:</span> {formatDate(p.created_at)}
@@ -442,10 +442,9 @@ export function SkladScreen({
   )
 }
 
-function QtyBadge({ qty }: { qty: number }) {
-  if (qty <= 0) return <Badge variant="destructive" className="text-[10px]">Нет</Badge>
-  if (qty <= 2) return <Badge variant="secondary" className="text-[10px]">{qty}</Badge>
-  return <span className="tabular-nums text-sm">{qty}</span>
+function QtyBadge({ status }: { status: Product["status"] }) {
+  if (status !== "in_stock") return <Badge variant="destructive" className="text-[10px]">Нет</Badge>
+  return <Badge variant="secondary" className="text-[10px]">1</Badge>
 }
 
 function ActionButtons({

@@ -22,7 +22,7 @@ export function SkladStats({ products, canSeePurchasePrice, isAdmin }: SkladStat
     const byMetal: Record<string, number> = {} // Группировка общего веса по металлу
 
     for (const p of products) {
-      const q = p.quantity
+      const q = p.status === "in_stock" ? 1 : 0
       const w = p.weight * q
 
       count += q

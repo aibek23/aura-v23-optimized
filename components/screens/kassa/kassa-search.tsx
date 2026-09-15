@@ -169,7 +169,7 @@ export function KassaSearch({
                   key={p.id}
                   p={p}
                   inCart={qtyInCart(p.id)}
-                  full={qtyInCart(p.id) >= p.quantity}
+                  full={qtyInCart(p.id) >= 1}
                   isLoss={p.sale_price < p.purchase_price}
                   addToCart={addToCart}
                 />
@@ -194,7 +194,7 @@ export function KassaSearch({
                   key={p.id}
                   p={p}
                   inCart={qtyInCart(p.id)}
-                  full={qtyInCart(p.id) >= p.quantity}
+                  full={qtyInCart(p.id) >= 1}
                   isLoss={p.sale_price < p.purchase_price}
                   addToCart={addToCart}
                 />

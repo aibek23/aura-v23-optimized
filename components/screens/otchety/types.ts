@@ -1,6 +1,6 @@
 // ─── Типы и интерфейсы экрана «Отчёты» ─────────────────────────────────────
 
-import type { Product, Sale, SaleItem } from "@/lib/types"
+import type { Product, Sale, SaleItem, SaleReturn } from "@/lib/types"
 
 // Идентификатор периода фильтрации
 export type PeriodId = "today" | "yesterday" | "7d" | "30d" | "month" | "all" | "custom"
@@ -100,9 +100,11 @@ export interface PeakHint {
 export interface OtchetyScreenProps {
   sales: Sale[]
   products: Product[]
+  /** Возвраты товара — уменьшают выручку, себестоимость и прибыль. */
+  returns?: SaleReturn[]
   viewRole: string
   profile: { full_name?: string | null }
 }
 
 // Реэкспорт для удобства
-export type { Product, Sale, SaleItem }
+export type { Product, Sale, SaleItem, SaleReturn }

@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState, useTransition } from "react"
-import type { Profile, Role, Sale } from "@/lib/types"
+import type { Profile, Role, Sale, SaleReturn } from "@/lib/types"
 import { formatSom, roleLabel } from "@/lib/format"
 import {
   approveRequest,
@@ -81,26 +81,45 @@ function rangeBounds(id: RangeId, from: string, to: string): [number, number] {
   }
 }
 
-function SellerStats({ sales, profile }: { sales: Sale[]; profile: Profile }) {
+function SellerStats({
+  sales,
+  returns,
+  profile,
+}: {
+  sales: Sale[]
+  returns: SaleReturn[]
+  profile: Profile
+}) {
   const [range, setRange] = useState<RangeId>("today")
   const [from, setFrom] = useState("")
   const [to, setTo] = useState("")
 
   const mine = useMemo(() => sales.filter((s) => s.seller_id === profile.id), [sales, profile.id])
+  const mySaleIds = useMemo(() => new Set(mine.map((s) => s.id)), [mine])
+  const myReturns = useMemo(
+    () => returns.filter((r) => mySaleIds.has(r.sale_id)),
+    [returns, mySaleIds],
+  )
 
   const stats = useMemo(() => {
     const [a, b] = rangeBounds(range, from, to)
-    const rows = mine.filter((s) => {
-      const t = new Date(s.created_at).getTime()
+    const inWindow = (iso: string) => {
+      const t = new Date(iso).getTime()
       return t >= a && t < b
-    })
+    }
+    const rows = mine.filter((s) => inWindow(s.created_at))
+    // Возвраты уменьшают выручку продавца и пересчитывают его прибыль.
+    const retRows = myReturns.filter((r) => inWindow(r.created_at))
+    const returnedAmount = retRows.reduce((s, r) => s + Number(r.amount), 0)
+    const returnedCost = retRows.reduce((s, r) => s + Number(r.cost), 0)
     return {
       count: rows.length,
-      revenue: rows.reduce((s, r) => s + Number(r.total), 0),
-      profit: rows.reduce((s, r) => s + Number(r.profit), 0),
+      revenue: rows.reduce((s, r) => s + Number(r.total), 0) - returnedAmount,
+      profit:
+        rows.reduce((s, r) => s + Number(r.profit), 0) - (returnedAmount - returnedCost),
       bonus: rows.reduce((s, r) => s + Number(r.bonus_earned), 0),
     }
-  }, [mine, range, from, to])
+  }, [mine, myReturns, range, from, to])
 
   return (
     <Card>
@@ -161,6 +180,7 @@ function SellerStats({ sales, profile }: { sales: Sale[]; profile: Profile }) {
 
 function TeamSales({
   sales,
+  returns,
   profile,
   team,
   onResetBonus,
@@ -168,6 +188,7 @@ function TeamSales({
   busy,
 }: {
   sales: Sale[]
+  returns: SaleReturn[]
   profile: Profile
   team: Profile[]
   onResetBonus: (id: string, name: string) => void
@@ -188,10 +209,26 @@ function TeamSales({
 
   const rows = useMemo(() => {
     const [a, b] = rangeBounds(range, from, to)
-    const inRange = sales.filter((s) => {
-      const t = new Date(s.created_at).getTime()
+    const inWindow = (iso: string) => {
+      const t = new Date(iso).getTime()
       return t >= a && t < b
-    })
+    }
+    const inRange = sales.filter((s) => inWindow(s.created_at))
+
+    // Возврат привязываем к продавцу исходной продажи.
+    const sellerBySale = new Map<string, string>()
+    for (const s of sales) sellerBySale.set(s.id, s.seller_id)
+
+    const returnsBySeller = new Map<string, { amount: number; cost: number }>()
+    for (const r of returns) {
+      if (!inWindow(r.created_at)) continue
+      const sellerId = sellerBySale.get(r.sale_id)
+      if (!sellerId) continue
+      const acc = returnsBySeller.get(sellerId) ?? { amount: 0, cost: 0 }
+      acc.amount += Number(r.amount)
+      acc.cost += Number(r.cost)
+      returnsBySeller.set(sellerId, acc)
+    }
 
     return people
       .map((p) => {
@@ -200,17 +237,19 @@ function TeamSales({
           (sum, s) => sum + (s.items ?? []).reduce((n, it) => n + Number(it.quantity || 0), 0),
           0,
         )
+        const ret = returnsBySeller.get(p.id) ?? { amount: 0, cost: 0 }
         return {
           profile: p,
-          revenue: own.reduce((sum, s) => sum + Number(s.total), 0),
-          profit: own.reduce((sum, s) => sum + Number(s.profit), 0),
+          revenue: own.reduce((sum, s) => sum + Number(s.total), 0) - ret.amount,
+          profit:
+            own.reduce((sum, s) => sum + Number(s.profit), 0) - (ret.amount - ret.cost),
           units,
           receipts: own.length,
           bonus: Number(p.bonus_points ?? 0),
         }
       })
       .sort((x, y) => y.revenue - x.revenue)
-  }, [people, sales, range, from, to])
+  }, [people, sales, returns, range, from, to])
 
   return (
     <Card>
@@ -442,12 +481,15 @@ export function KabinetScreen({
   profile,
   viewRole,
   sales,
+  returns = [],
   data,
   email,
 }: {
   profile: Profile
   viewRole: Role
   sales: Sale[]
+  /** Возвраты товара — уменьшают выручку и прибыль продавцов. */
+  returns?: SaleReturn[]
   data: CabinetData
   email: string
 }) {
@@ -512,7 +554,7 @@ export function KabinetScreen({
       </Card>
 
       {/* Продавец: статистика продаж */}
-      {!isAdmin && <SellerStats sales={sales} profile={profile} />}
+      {!isAdmin && <SellerStats sales={sales} returns={returns} profile={profile} />}
 
       {isAdmin && (
         <div className="grid gap-4 sm:grid-cols-3">
@@ -551,6 +593,7 @@ export function KabinetScreen({
       {isAdmin && (
         <TeamSales
           sales={sales}
+          returns={returns}
           profile={profile}
           team={data.team}
           busy={pending}

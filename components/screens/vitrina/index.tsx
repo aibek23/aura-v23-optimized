@@ -22,7 +22,7 @@ function galleryOf(p: Product): string[] {
 }
 
 function isActive(p: Product) {
-  return p.quantity > 0 && p.status !== "sold"
+  return p.status === "in_stock"
 }
 
 export function VitrinaScreen({
@@ -326,7 +326,6 @@ function ProductOverlay({
             <Info label="Артикул" value={product.sku || "—"} />
             <Info label="Вес" value={formatWeight(product.weight)} />
             <Info label="Размер" value={product.size || "—"} />
-            <Info label="Остаток" value={String(product.quantity)} />
             <Info label="Цена" value={formatSom(product.sale_price)} accent />
             {canSeePurchasePrice && <Info label="Закупка" value={formatSom(product.purchase_price)} />}
             {canSeePurchasePrice && (
