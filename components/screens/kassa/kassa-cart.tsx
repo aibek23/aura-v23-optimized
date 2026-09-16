@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState, useMemo } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -16,12 +16,13 @@ import {
   User,
   Phone,
   Gift,
-  CreditCard
+  CreditCard,
+  Tag
 } from "lucide-react"
 import { PAYMENT_METHODS, type Customer, type Product } from "@/lib/types"
 import { formatSom, formatWeight } from "@/lib/format"
 import { cn } from "@/lib/utils"
-import type { ExtendedSaleItem } from "./index" // или ваш файл типов
+import type { ExtendedSaleItem } from "./index"
 
 interface KassaCartProps {
   cart: ExtendedSaleItem[]
@@ -42,19 +43,16 @@ interface KassaCartProps {
   setCustomerName: (name: string) => void
   customerPhone: string
   setCustomerPhone: (phone: string) => void
-  /** Список клиентов магазина для автодополнения */
   customers?: Customer[]
   showBonus: boolean
   bonusUsed: string
   setBonusUsed: (bonus: string) => void
   payment: string
   setPayment: (payment: string | null) => void
-  /** Смешанная оплата: наличная и безналичная части. */
   payCash: string
   setPayCash: (v: string) => void
   payElectronic: string
   setPayElectronic: (v: string) => void
-  /** Админ видит реальную закупку, продавец — только закупку для продавца. */
   isAdmin: boolean
   subtotal: number
   totalDiscountAmount: number
@@ -107,18 +105,29 @@ export function KassaCart({
   submit,
   handleReset,
 }: KassaCartProps) {
-  // Автодополнение клиента
   const [showSuggestions, setShowSuggestions] = useState(false)
   const autocompleteRef = useRef<HTMLDivElement>(null)
 
-  const filteredCustomers = customerName.trim().length >= 1
-    ? customers.filter((c) =>
-        (c.name ?? "").toLowerCase().includes(customerName.toLowerCase()) ||
-        (c.phone ?? "").includes(customerName)
-      ).slice(0, 8)
-    : []
+  // Локальное состояние для плавного ввода "Своей цены" без багов ререндера
+  const [customPriceInputs, setCustomPriceInputs] = useState<Record<string, string>>({})
 
-  // Клиент, выбранный из автодополнения (для показа счётчика покупок)
+  // Оптимизация: быстрый словарь для поиска товаров за O(1)
+  const productsMap = useMemo(() => {
+    return new Map(products.map((p) => [p.id, p]))
+  }, [products])
+
+  // Оптимизация: мемоизация фильтрации клиентов
+  const filteredCustomers = useMemo(() => {
+    const q = customerName.trim().toLowerCase()
+    if (q.length < 1) return []
+    return customers
+      .filter((c) =>
+        (c.name ?? "").toLowerCase().includes(q) ||
+        (c.phone ?? "").includes(q)
+      )
+      .slice(0, 8)
+  }, [customerName, customers])
+
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null)
 
   const handleSelectCustomer = (c: Customer) => {
@@ -128,12 +137,10 @@ export function KassaCart({
     setShowSuggestions(false)
   }
 
-  // Сбрасываем выбранного клиента если имя очищено вручную
   useEffect(() => {
     if (!customerName.trim()) setSelectedCustomer(null)
   }, [customerName])
 
-  // Закрыть список при клике вне
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (autocompleteRef.current && !autocompleteRef.current.contains(e.target as Node)) {
@@ -143,6 +150,29 @@ export function KassaCart({
     document.addEventListener("mousedown", handler)
     return () => document.removeEventListener("mousedown", handler)
   }, [])
+
+  // Обработчик ручного ввода "Своей цены" без потери точности при округлении
+  const handleCustomPriceInputChange = (item: ExtendedSaleItem, rawVal: string) => {
+    setCustomPriceInputs((prev) => ({ ...prev, [item.lineId]: rawVal }))
+
+    if (rawVal === "") {
+      changeItemDiscountSom(item.lineId, 0)
+      changeItemDiscountPercent(item.lineId, 0)
+      return
+    }
+
+    const customPriceVal = parseFloat(rawVal)
+    if (isNaN(customPriceVal) || customPriceVal < 0) return
+
+    const basePrice = item.price
+    // Точная фиксация скидки в сомах (округление до целого сома)
+    const discountSom = Math.max(0, Math.round(basePrice - customPriceVal))
+    // Процент рассчитывается без грубого округления до 2 знаков, исключая накопительную ошибку
+    const discountPercent = basePrice > 0 ? (discountSom / basePrice) * 100 : 0
+
+    changeItemDiscountSom(item.lineId, discountSom)
+    changeItemDiscountPercent(item.lineId, Math.min(100, discountPercent))
+  }
 
   return (
     <div className="flex flex-col rounded-2xl border border-border/80 bg-card/90 backdrop-blur shadow-xl overflow-hidden">
@@ -206,9 +236,15 @@ export function KassaCart({
               const discountVal = i.discountSom ?? ((i.price * (i.discountPercent || 0)) / 100)
               const effectiveUnitPrice = Math.max(0, i.price - discountVal)
               const itemLoss = !isScrap && effectiveUnitPrice < i.cost
-              const product = products.find((p) => p.id === i.product_id)
+              
+              const product = productsMap.get(i.product_id!)
+              
               const marketRate = isScrap ? scrapRateOf(i.metal ?? "") : 0
               const offMarket = isScrap && marketRate > 0 && Math.abs((i.price_per_gram ?? 0) - marketRate) / marketRate > 0.15
+
+              const customPriceInputValue = customPriceInputs[i.lineId] !== undefined 
+                ? customPriceInputs[i.lineId] 
+                : (discountVal > 0 ? String(effectiveUnitPrice) : "")
 
               return (
                 <div key={i.lineId} className="flex flex-col border-b border-border/50 py-3 last:border-0 gap-2">
@@ -263,7 +299,6 @@ export function KassaCart({
                     </Button>
                   </div>
 
-                  {/* Пересчёт по граммам прямо в чеке */}
                   {(isScrap || i.weight > 0) && (
                     <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border/30 bg-muted/30 p-1.5 text-[10px]">
                       <span className="font-medium text-muted-foreground">По граммам:</span>
@@ -277,7 +312,7 @@ export function KassaCart({
                             placeholder="0"
                             value={i.weight || ""}
                             disabled={!isScrap}
-                            onChange={(e) => changeItemWeight(i.lineId, parseFloat(e.target.value))}
+                            onChange={(e) => changeItemWeight(i.lineId, parseFloat(e.target.value) || 0)}
                             className="h-6 w-16 bg-background px-1 text-center font-mono text-[11px]"
                             title={isScrap ? "Вес лома" : "Вес изделия берётся из карточки"}
                           />
@@ -291,7 +326,7 @@ export function KassaCart({
                             inputMode="decimal"
                             placeholder="0"
                             value={i.price_per_gram || ""}
-                            onChange={(e) => changeItemPricePerGram(i.lineId, parseFloat(e.target.value))}
+                            onChange={(e) => changeItemPricePerGram(i.lineId, parseFloat(e.target.value) || 0)}
                             className={cn(
                               "h-6 w-20 bg-background px-1 text-center font-mono text-[11px]",
                               offMarket && "border-destructive text-destructive",
@@ -310,31 +345,65 @@ export function KassaCart({
                     </div>
                   )}
 
-                  <div className="flex flex-wrap items-center justify-between text-[10px] bg-muted/30 p-1.5 rounded-lg border border-border/30 gap-2">
-                    <span className="text-muted-foreground font-medium">Скидка на ед:</span>
-                    <div className="flex items-center gap-2">
-                      <div className="flex items-center gap-1">
-                        <Input
-                          type="number"
-                          min={0}
-                          placeholder="0"
-                          value={i.discountSom || ""}
-                          onChange={(e) => changeItemDiscountSom(i.lineId, parseFloat(e.target.value))}
-                          className="h-6 w-14 text-center px-1 text-[11px] font-mono bg-background"
-                        />
-                        <span className="text-[10px] text-muted-foreground">с</span>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <Input
-                          type="number"
-                          min={0}
-                          max={100}
-                          placeholder="0"
-                          value={i.discountPercent || ""}
-                          onChange={(e) => changeItemDiscountPercent(i.lineId, parseFloat(e.target.value))}
-                          className="h-6 w-12 text-center px-1 text-[11px] font-mono bg-background"
-                        />
-                        <span className="text-[10px] text-muted-foreground">%</span>
+                  <div className="grid grid-cols-1 gap-1.5 bg-muted/30 p-1.5 rounded-lg border border-border/30 text-[10px]">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-muted-foreground font-medium flex items-center gap-1">
+                        <Tag className="h-3 w-3 text-primary" /> Своя цена:
+                      </span>
+                      <Input
+                        type="number"
+                        min={0}
+                        inputMode="decimal"
+                        placeholder={formatSom(i.price)}
+                        value={customPriceInputValue}
+                        onChange={(e) => handleCustomPriceInputChange(i, e.target.value)}
+                        onBlur={() => {
+                          setCustomPriceInputs((prev) => {
+                            const next = { ...prev }
+                            delete next[i.lineId]
+                            return next
+                          })
+                        }}
+                        className="h-6 w-24 text-center px-1 text-[11px] font-mono font-semibold text-primary bg-background border-primary/30 focus:border-primary placeholder:text-muted-foreground placeholder:opacity-60"
+                      />
+                    </div>
+
+                    <div className="flex items-center justify-between gap-2 pt-1 border-t border-border/20">
+                      <span className="text-muted-foreground font-medium">Скидка:</span>
+                      <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1">
+                          <Input
+                            type="number"
+                            min={0}
+                            placeholder="0"
+                            value={i.discountSom || ""}
+                            onChange={(e) => {
+                              const val = Math.max(0, Math.round(parseFloat(e.target.value) || 0))
+                              changeItemDiscountSom(i.lineId, val)
+                              if (i.price > 0) {
+                                changeItemDiscountPercent(i.lineId, (val / i.price) * 100)
+                              }
+                            }}
+                            className="h-6 w-16 text-center px-1 text-[11px] font-mono bg-background"
+                          />
+                          <span className="text-[10px] text-muted-foreground">с</span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <Input
+                            type="number"
+                            min={0}
+                            max={100}
+                            placeholder="0"
+                            value={i.discountPercent ? Math.round(i.discountPercent * 100) / 100 : ""}
+                            onChange={(e) => {
+                              const val = Math.min(100, Math.max(0, parseFloat(e.target.value) || 0))
+                              changeItemDiscountPercent(i.lineId, val)
+                              changeItemDiscountSom(i.lineId, Math.round((i.price * val) / 100))
+                            }}
+                            className="h-6 w-12 text-center px-1 text-[11px] font-mono bg-background"
+                          />
+                          <span className="text-[10px] text-muted-foreground">%</span>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -346,7 +415,6 @@ export function KassaCart({
 
         <div className="space-y-3 border-t border-border/80 p-4 bg-muted/20">
           <div className="grid grid-cols-2 gap-2">
-            {/* Поле клиента с автодополнением */}
             <div className="relative" ref={autocompleteRef}>
               <User className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground z-10" />
               <Input
@@ -379,7 +447,6 @@ export function KassaCart({
                   ))}
                 </div>
               )}
-              {/* Индикатор покупок под полем после выбора клиента */}
               {selectedCustomer && !showSuggestions && (selectedCustomer.purchase_count ?? 0) > 0 && (
                 <div className="absolute left-0 right-0 top-full z-40 mt-1 flex items-center gap-1.5 rounded-lg border border-primary/20 bg-primary/5 px-2.5 py-1.5">
                   <span className="text-[10px] text-primary font-medium">
@@ -514,7 +581,7 @@ export function KassaCart({
             disabled={cart.length === 0 || submitting} 
             onClick={submit}
           >
-            {submitting ? "Оформление..." : `Оформить · ${formatSom(total)}`}
+            {submitting ? "Оформить..." : `Оформить · ${formatSom(total)}`}
           </Button>
         </div>
       </div>
