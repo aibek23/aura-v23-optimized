@@ -114,7 +114,7 @@ export function HistorySheet({
                       "font-semibold",
                       op.operation_type === "payment"
                         ? "text-emerald-600 dark:text-emerald-400"
-                        : "text-[#B57C1B]",
+                        : "text-primary",
                     )}
                   >
                     {op.operation_type === "payment" ? "−" : "+"}{formatSom(op.amount)}

@@ -122,6 +122,8 @@ export function Dashboard({
   const [activeScreen, setActiveScreen] = useState<ScreenId>(screen)
   const [viewRole, setViewRole] = useState<Role>(profile.role ?? "seller")
   const [showExitModal, setShowExitModal] = useState(false)
+  const [mobileNavOpen, setMobileNavOpen] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
 
   // Счётчик нажатий «Назад» с главного экрана (0 или 1)
   const backCountRef = useRef(0)
@@ -256,15 +258,34 @@ export function Dashboard({
         onChangeViewRole={setViewRole}
         onOpenCabinet={() => handleScreenChange("kabinet")}
         onOpenNotifications={() => handleScreenChange("notifications")}
-      />
-      <AppNav
-        screen={activeScreen}
-        isAdmin={isAdmin}
-        isSuperAdmin={isSuperAdmin}
+        onOpenNav={() => {
+          if (window.matchMedia("(min-width: 1024px)").matches) {
+            setSidebarCollapsed((value) => !value)
+          } else {
+            setMobileNavOpen(true)
+          }
+        }}
         onNavigate={handleScreenChange}
+        products={products}
+        clients={clients}
       />
+      <div className="flex min-h-0 flex-1">
+<AppNav
+  screen={activeScreen}
+  profile={profile} 
+  isAdmin={isAdmin}
+  viewRole={viewRole}                      
+  onChangeViewRole={setViewRole}  
+  isSuperAdmin={isSuperAdmin}
+  onNavigate={handleScreenChange}
+  onOpenCabinet={() => handleScreenChange("kabinet")} 
+  mobileOpen={mobileNavOpen}
+  onClose={() => setMobileNavOpen(false)}
+  collapsed={sidebarCollapsed}
+  onToggleCollapsed={() => setSidebarCollapsed((value) => !value)}
+/>
 
-      <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 md:px-6">
+        <main className="mx-auto w-full min-w-0 max-w-7xl flex-1 px-4 py-6 md:px-6">
         {activeScreen === "kassa" && (
           <KassaScreen
             profile={profile}
@@ -322,7 +343,8 @@ export function Dashboard({
           <SuperAdminShopsScreen initialShops={superAdminShops} />
         )}
         {activeScreen === "notifications" && isSuperAdmin && <NotificationsPage />}
-      </main>
+        </main>
+      </div>
       <Toaster position="top-center" richColors />
     </div>
   )

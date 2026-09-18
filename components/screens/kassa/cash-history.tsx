@@ -88,7 +88,7 @@ export function CashHistory({
                       isIncome
                         ? "bg-success/15 text-success"
                         : isCollection
-                          ? "bg-[#E5AC4C]/15 text-[#E5AC4C]"
+                          ? "bg-primary/15 text-primary"
                           : "bg-destructive/15 text-destructive",
                     )}
                   >
@@ -106,7 +106,7 @@ export function CashHistory({
               <div
                 className={cn(
                   "shrink-0 font-mono text-sm font-semibold",
-                  isIncome ? "text-success" : isCollection ? "text-[#E5AC4C]" : "text-destructive",
+                  isIncome ? "text-success" : isCollection ? "text-primary" : "text-destructive",
                 )}
               >
                 {isIncome ? "+" : isCollection ? "⇄ " : "−"}

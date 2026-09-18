@@ -115,7 +115,7 @@ export function SupplierCard({
               className={cn(
                 "font-mono text-base font-bold",
                 hasDebt
-                  ? "text-[#B57C1B] dark:text-[#E5AC4C]"
+                  ? "text-primary"
                   : "text-muted-foreground",
               )}
             >

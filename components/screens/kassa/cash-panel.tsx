@@ -99,7 +99,7 @@ export function CashPanel({
           <div className="flex flex-wrap gap-2">
             <Button
               variant="outline"
-              className="border-[#E5AC4C]/50 bg-transparent text-[#E5AC4C] hover:bg-[#E5AC4C]/10"
+              className="border-primary/50 bg-transparent text-primary hover:bg-primary/10"
               onClick={handleCollection}
               title="Инкассация: перевод наличных в электронные средства"
             >

@@ -324,7 +324,7 @@ export function ProductDialog({
                   "inline-flex items-center gap-2 text-xs font-medium",
                   product?.consignment_operation_id
                     ? "cursor-not-allowed text-emerald-600"
-                    : "cursor-pointer text-[#B57C1B]",
+                    : "cursor-pointer text-primary",
                 )}
                 title={
                   product?.consignment_operation_id
@@ -337,7 +337,7 @@ export function ProductDialog({
                   checked={consignmentChecked}
                   disabled={saving || Boolean(product?.consignment_operation_id)}
                   onChange={(e) => setConsignmentChecked(e.target.checked)}
-                  className="h-4 w-4 rounded border-border accent-[#B57C1B]"
+                  className="h-4 w-4 rounded border-border accent-primary"
                 />
                 <span className="inline-flex items-center gap-1">
                   {product?.consignment_operation_id && <CheckCircle2 className="h-3.5 w-3.5" />}
