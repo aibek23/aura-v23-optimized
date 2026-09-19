@@ -7,29 +7,17 @@ import { Button } from "@/components/ui/button"
 import { BarcodeScannerModal } from "@/components/BarcodeScannerModal"
 import { cn } from "@/lib/utils"
 import { parseProductSearchQuery } from "@/lib/product-search"
+import { parseQrCode } from "@/lib/qr-code"
+import { checkQrShop } from "@/app/actions/qr"
+import { toast } from "sonner"
 
+/**
+ * Из содержимого QR/штрихкода извлекает значение для строки поиска (SKU).
+ * Формат QR на этикетке: "{ID магазина}/{SKU}", например "1/RY00042" —
+ * цифры до "/" это seq_id магазина, после — артикул.
+ */
 export function extractSearchValue(raw: string): string {
-  const clean = raw.trim()
-  if (!clean) return ""
-
-  try {
-    const url = new URL(clean)
-    const segments = url.pathname.split("/").filter(Boolean)
-    const qIndex = segments.indexOf("q")
-    if (qIndex >= 0 && segments[qIndex + 2]) {
-      return decodeURIComponent(segments[qIndex + 2]).toUpperCase()
-    }
-    const productIndex = segments.lastIndexOf("product")
-    if (productIndex >= 0 && segments[productIndex + 1]) {
-      return decodeURIComponent(segments[productIndex + 1]).toUpperCase()
-    }
-    const skuFromQuery = url.searchParams.get("sku") ?? url.searchParams.get("article")
-    if (skuFromQuery) return skuFromQuery.toUpperCase()
-  } catch {
-    // Обычный штрихкод/артикул — это не URL.
-  }
-
-  return clean
+  return parseQrCode(raw).sku
 }
 
 type ProductSearchProps = {
@@ -50,6 +38,32 @@ export function ProductSearch({
   inputClassName,
 }: ProductSearchProps) {
   const [scannerOpen, setScannerOpen] = useState(false)
+
+  const handleScan = async (raw: string) => {
+    const parsed = parseQrCode(raw)
+    if (!parsed.sku) return
+
+    // QR содержит ID магазина — сверяем с текущим магазином сотрудника.
+    if (parsed.shopSeqId !== null) {
+      try {
+        const check = await checkQrShop(parsed.shopSeqId)
+        if (!check.ok && check.reason === "foreign_shop") {
+          const own = check.ownShopName
+            ? `${check.ownShopName}, ID ${check.ownSeqId}`
+            : `ID ${check.ownSeqId}`
+          toast.error(
+            `Ошибка: QR-код принадлежит другому магазину (ID ${check.scannedSeqId}). Ваш магазин (${own})`,
+            { duration: 6000 },
+          )
+          return
+        }
+      } catch (e) {
+        console.error("[product-search] checkQrShop error:", e)
+      }
+    }
+
+    onChange(parsed.sku)
+  }
   const parsed = parseProductSearchQuery(value)
   const hint =
     parsed.kind === "weight"
@@ -101,7 +115,7 @@ export function ProductSearch({
       {scannerOpen && (
         <BarcodeScannerModal
           onClose={() => setScannerOpen(false)}
-          onScan={(raw) => onChange(extractSearchValue(raw))}
+          onScan={(raw) => void handleScan(raw)}
         />
       )}
     </>
