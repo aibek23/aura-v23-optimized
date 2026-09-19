@@ -23,7 +23,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { toast } from "sonner"
 import { useRouter } from "next/navigation"
 import { cn } from "@/lib/utils"
-import { BadgeCheck, Coins, Gift, RotateCcw, Trash2, UserCheck, UserX, Users, Wifi } from "lucide-react"
+import { BadgeCheck, Coins, Gift, LogOut, RotateCcw, Trash2, UserCheck, UserX, Users, Wifi } from "lucide-react"
+import { createClient } from "@/lib/supabase/client"
 
 const ONLINE_WINDOW_MS = 3 * 60 * 1000
 
@@ -716,6 +717,26 @@ export function KabinetScreen({
           </CardContent>
         </Card>
       )}
+
+      {/* Выход из системы */}
+      <div className="pt-2 pb-6">
+        <Button
+          variant="outline"
+          className="w-full gap-2 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+          onClick={async () => {
+            try {
+              const supabase = createClient()
+              await supabase.auth.signOut()
+            } catch {
+              // игнорируем ошибку сети — всё равно перенаправляем
+            }
+            router.push("/auth/login")
+          }}
+        >
+          <LogOut className="h-4 w-4" />
+          Выйти из системы
+        </Button>
+      </div>
     </div>
   )
 }

@@ -4,7 +4,6 @@ import { useState, useTransition, useEffect, useRef, useCallback } from "react"
 import type { Customer, Product, Profile, Role, Sale, SaleReturn } from "@/lib/types"
 import { Toaster } from "@/components/ui/sonner"
 import { AppHeader } from "@/components/app-header"
-import { RatesTicker } from "@/components/rates-ticker"
 import { AppNav, SCREEN_PATHS, type ScreenId } from "@/components/app-nav"
 import { KassaScreen } from "@/components/screens/kassa/index"
 import { VitrinaScreen } from "@/components/screens/vitrina"
@@ -251,7 +250,6 @@ export function Dashboard({
         />
       )}
 
-      <RatesTicker />
       <AppHeader
         profile={profile}
         viewRole={viewRole}
