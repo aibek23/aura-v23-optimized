@@ -39,30 +39,31 @@ export function ProductSearch({
 }: ProductSearchProps) {
   const [scannerOpen, setScannerOpen] = useState(false)
 
-  const handleScan = async (raw: string) => {
+  const handleScan = (raw: string) => {
     const parsed = parseQrCode(raw)
     if (!parsed.sku) return
 
-    // QR содержит ID магазина — сверяем с текущим магазином сотрудника.
-    if (parsed.shopSeqId !== null) {
-      try {
-        const check = await checkQrShop(parsed.shopSeqId)
-        if (!check.ok && check.reason === "foreign_shop") {
-          const own = check.ownShopName
-            ? `${check.ownShopName}, ID ${check.ownSeqId}`
-            : `ID ${check.ownSeqId}`
-          toast.error(
-            `Ошибка: QR-код принадлежит другому магазину (ID ${check.scannedSeqId}). Ваш магазин (${own})`,
-            { duration: 6000 },
-          )
-          return
-        }
-      } catch (e) {
-        console.error("[product-search] checkQrShop error:", e)
-      }
-    }
-
+    // 1. Сразу запускаем поиск по артикулу — без ожидания проверки магазина.
     onChange(parsed.sku)
+
+    // 2. Проверку магазина выполняем в фоне — не блокируем поиск.
+    if (parsed.shopSeqId !== null) {
+      checkQrShop(parsed.shopSeqId)
+        .then((check) => {
+          if (!check.ok && check.reason === "foreign_shop") {
+            const own = check.ownShopName
+              ? `${check.ownShopName}, ID ${check.ownSeqId}`
+              : `ID ${check.ownSeqId}`
+            toast.error(
+              `Ошибка: QR-код принадлежит другому магазину (ID ${check.scannedSeqId}). Ваш магазин (${own})`,
+              { duration: 6000 },
+            )
+          }
+        })
+        .catch((e) => {
+          console.error("[product-search] checkQrShop error:", e)
+        })
+    }
   }
   const parsed = parseProductSearchQuery(value)
   const hint =
@@ -115,7 +116,7 @@ export function ProductSearch({
       {scannerOpen && (
         <BarcodeScannerModal
           onClose={() => setScannerOpen(false)}
-          onScan={(raw) => void handleScan(raw)}
+          onScan={handleScan}
         />
       )}
     </>
