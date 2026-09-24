@@ -25,7 +25,7 @@ import {
 import { Pencil, Trash2, Sparkles, PackageX, Printer, Plus, ChevronLeft, ChevronRight, CheckCircle2 } from "lucide-react"
 import { toast } from "sonner"
 import { useRouter } from "next/navigation"
-import { ProductDialog } from "@/components/add-edit-Product/product-dialog"
+import { ProductDialog } from "@/components/screens/sklad/add-edit-Product/product-dialog"
 import { SkladStats } from "./sklad-stats"
 import { cn } from "@/lib/utils"
 import { filterProducts } from "@/lib/product-search"

@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { toast } from "sonner"
 import { Camera, ImagePlus, Loader2, X } from "lucide-react"
-import { CameraCapture } from "@/components/add-edit-Product/camera-capture"
+import { CameraCapture } from "@/components/screens/sklad/add-edit-Product/camera-capture"
 
 const BUCKET = "product-images"
 

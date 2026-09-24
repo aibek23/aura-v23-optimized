@@ -82,7 +82,8 @@ const CanvasRulers = memo(function CanvasRulers({
         onPointerUp={onPointerUp}
         style={{
           position: "absolute", left: 0, top: 0,
-          width: totalW, height: RULER_SIZE,
+          // Размер задаёт prepareFixed() по реальному контейнеру
+          height: RULER_SIZE,
           pointerEvents: "auto",
           zIndex: 10,
         }}
@@ -94,7 +95,7 @@ const CanvasRulers = memo(function CanvasRulers({
         onPointerUp={onPointerUp}
         style={{
           position: "absolute", left: 0, top: 0,
-          width: RULER_SIZE, height: totalH,
+          width: RULER_SIZE,
           pointerEvents: "auto",
           zIndex: 10,
         }}
@@ -117,7 +118,6 @@ const CanvasGuides = memo(function CanvasGuides({
       ref={guidesRef}
       style={{
         position: "absolute", left: 0, top: 0,
-        width: totalW, height: totalH,
         pointerEvents: "none",
         zIndex: 12,
       }}

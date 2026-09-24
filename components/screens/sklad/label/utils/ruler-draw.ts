@@ -237,8 +237,8 @@ export function drawVerticalRuler({
   ctx.restore()
 }
 
-export function computeAxisScreenPositions(params: {
-  axis: "x" | "y"
+export interface ComputeAxisScreenPositionsParams {
+  axis?: "x" | "y"
   screenAxis: "x" | "y"
   so: StageOrigin
   offsetX: number
@@ -249,8 +249,24 @@ export function computeAxisScreenPositions(params: {
   cosR: number
   sinR: number
   pxPerMm: number
-}): { at0: number; at1: number } | null {
-  const { axis, screenAxis, so, offsetX, offsetY, stageW, stageH, zoom, cosR, sinR, pxPerMm } = params
+  labelW_px?: number
+  labelH_px?: number
+}
+
+export function computeAxisScreenPositions(params: ComputeAxisScreenPositionsParams): { at0: number; at1: number } | null {
+  const {
+    axis = "x",
+    screenAxis,
+    so,
+    offsetX,
+    offsetY,
+    stageW,
+    stageH,
+    zoom,
+    cosR,
+    sinR,
+    pxPerMm,
+  } = params
   const cx = stageW / 2
   const cy = stageH / 2
 
@@ -268,17 +284,28 @@ export function computeAxisScreenPositions(params: {
     }
   }
 
-  // Для оси X берём шаг (pxPerMm, 0), для оси Y — (0, pxPerMm).
-  // После поворота выбираем одну составляющую. Нельзя переключаться между
-  // составляющими на каждом кадре — это даёт скачок делений возле 45°.
+  const mmStep = pxPerMm * zoom
+  if (mmStep < 1e-5) return null
+
+  // Проецируем точку начала координат этикетки (0, 0)
   const p0 = projectPoint(0, 0)
+  // Проецируем точку 1 мм вдоль соответствующей оси на холсте
   const p1 = projectPoint(axis === "x" ? pxPerMm : 0, axis === "y" ? pxPerMm : 0)
 
-  if (screenAxis === "x") {
-    if (Math.abs(p1.x - p0.x) < 1e-5) return null
-    return { at0: p0.x, at1: p1.x }
-  } else {
-    if (Math.abs(p1.y - p0.y) < 1e-5) return null
-    return { at0: p0.y, at1: p1.y }
+  const at0 = screenAxis === "x" ? p0.x : p0.y
+  let at1 = screenAxis === "x" ? p1.x : p1.y
+
+  if (Math.abs(at1 - at0) < 1e-5) {
+    // В случае если переданная ось не дает проекции на данную экранную линейку,
+    // используем перпендикулярную ось
+    const altP1 = projectPoint(axis === "x" ? 0 : pxPerMm, axis === "y" ? pxPerMm : 0)
+    const altAt1 = screenAxis === "x" ? altP1.x : altP1.y
+    if (Math.abs(altAt1 - at0) >= 1e-5) {
+      at1 = altAt1
+    } else {
+      return null
+    }
   }
+
+  return { at0, at1 }
 }

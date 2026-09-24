@@ -12,6 +12,8 @@ import {
   Printer, Save, RefreshCw, Trash2, Type, Square,
   ChevronDown, ChevronUp, RotateCw, Maximize2,
   ZoomIn, ZoomOut, Upload, Download,
+  Bold, Italic, Underline, Strikethrough,
+  AlignLeft, AlignCenter, AlignRight,
 } from "lucide-react"
 import { Button }    from "@/components/ui/button"
 import { Switch }    from "@/components/ui/switch"
@@ -63,6 +65,21 @@ export interface LabelEditorToolbarProps {
   // SVG рамка
   onLoadSvgFrame?:    (svgText: string, filename: string) => void
   onSaveToFile?:      () => void
+  // Форматирование текста
+  isBold?:             boolean
+  isItalic?:           boolean
+  isUnderline?:        boolean
+  isLinethrough?:      boolean
+  textAlign?:          "left" | "center" | "right"
+  charSpacing?:        number
+  lineHeight?:         number
+  onToggleBold?:       () => void
+  onToggleItalic?:     () => void
+  onToggleUnderline?:  () => void
+  onToggleLinethrough?:() => void
+  onTextAlignChange?:  (align: "left" | "center" | "right") => void
+  onCharSpacingChange?:(spacing: number) => void
+  onLineHeightChange?: (lh: number) => void
 }
 
 // ── Диспетчер зон ─────────────────────────────────────────────────────────────
@@ -168,9 +185,13 @@ function HeaderZone({
 function BottomZone({
   sizeDef, font, fontSize, isPrinting, status,
   autoFit, fitRatio,
+  isBold = false, isItalic = false, isUnderline = false, isLinethrough = false,
+  textAlign = "left", charSpacing = 0, lineHeight = 1.16,
   onAddText, onAddBorder, onRemoveSelected, onRotateCanvas,
   onFontChange, onFontSizeChange,
   onAutoFitChange, onFitRatioChange,
+  onToggleBold, onToggleItalic, onToggleUnderline, onToggleLinethrough,
+  onTextAlignChange, onCharSpacingChange, onLineHeightChange,
   onScaleUp, onScaleDown,
   onLoadSvgFrame,
   onPrint, collapsed = false, onToggleCollapse,
@@ -364,6 +385,138 @@ function BottomZone({
               ))}
             </SelectContent>
           </Select>
+        </div>
+
+        {/* Начертание: Жирный, Курсив, Подчёркивание, Зачёркивание */}
+        <div className="flex flex-col gap-0.5 shrink-0">
+          <span className="text-[9px] text-muted-foreground leading-none px-0.5">Стиль</span>
+          <div className="flex h-7 items-center gap-1">
+            <button
+              type="button"
+              onClick={onToggleBold}
+              className={`flex items-center justify-center h-7 w-7 rounded border transition-colors ${
+                isBold
+                  ? "border-primary bg-primary text-primary-foreground font-bold shadow-xs"
+                  : "border-border bg-background hover:bg-muted text-foreground"
+              }`}
+              title="Жирный"
+            >
+              <Bold className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={onToggleItalic}
+              className={`flex items-center justify-center h-7 w-7 rounded border transition-colors ${
+                isItalic
+                  ? "border-primary bg-primary text-primary-foreground italic shadow-xs"
+                  : "border-border bg-background hover:bg-muted text-foreground"
+              }`}
+              title="Курсив"
+            >
+              <Italic className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={onToggleUnderline}
+              className={`flex items-center justify-center h-7 w-7 rounded border transition-colors ${
+                isUnderline
+                  ? "border-primary bg-primary text-primary-foreground underline shadow-xs"
+                  : "border-border bg-background hover:bg-muted text-foreground"
+              }`}
+              title="Подчёркивание"
+            >
+              <Underline className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={onToggleLinethrough}
+              className={`flex items-center justify-center h-7 w-7 rounded border transition-colors ${
+                isLinethrough
+                  ? "border-primary bg-primary text-primary-foreground line-through shadow-xs"
+                  : "border-border bg-background hover:bg-muted text-foreground"
+              }`}
+              title="Зачёркивание"
+            >
+              <Strikethrough className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </div>
+
+        {/* Выравнивание: По левому краю, По центру, По правому краю */}
+        <div className="flex flex-col gap-0.5 shrink-0">
+          <span className="text-[9px] text-muted-foreground leading-none px-0.5">Выравнивание</span>
+          <div className="flex h-7 items-center gap-1">
+            <button
+              type="button"
+              onClick={() => onTextAlignChange?.("left")}
+              className={`flex items-center justify-center h-7 w-7 rounded border transition-colors ${
+                textAlign === "left"
+                  ? "border-primary bg-primary text-primary-foreground shadow-xs"
+                  : "border-border bg-background hover:bg-muted text-foreground"
+              }`}
+              title="По левому краю"
+            >
+              <AlignLeft className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => onTextAlignChange?.("center")}
+              className={`flex items-center justify-center h-7 w-7 rounded border transition-colors ${
+                textAlign === "center"
+                  ? "border-primary bg-primary text-primary-foreground shadow-xs"
+                  : "border-border bg-background hover:bg-muted text-foreground"
+              }`}
+              title="По центру"
+            >
+              <AlignCenter className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => onTextAlignChange?.("right")}
+              className={`flex items-center justify-center h-7 w-7 rounded border transition-colors ${
+                textAlign === "right"
+                  ? "border-primary bg-primary text-primary-foreground shadow-xs"
+                  : "border-border bg-background hover:bg-muted text-foreground"
+              }`}
+              title="По правому краю"
+            >
+              <AlignRight className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </div>
+
+        {/* Межбуквенный интервал */}
+        <div className="flex flex-col gap-0.5 shrink-0">
+          <span className="text-[9px] text-muted-foreground leading-none px-0.5">Межбукв.</span>
+          <div className="flex h-7 items-center gap-1">
+            <input
+              type="number"
+              min={-200}
+              max={1000}
+              step={10}
+              className="h-7 w-14 rounded-md border border-input bg-background px-1.5 text-[11px] text-center"
+              value={charSpacing ?? 0}
+              onChange={(e) => onCharSpacingChange?.(Number(e.target.value) || 0)}
+              title="Межбуквенный интервал (charSpacing)"
+            />
+          </div>
+        </div>
+
+        {/* Межстрочный интервал */}
+        <div className="flex flex-col gap-0.5 shrink-0">
+          <span className="text-[9px] text-muted-foreground leading-none px-0.5">Межстроч.</span>
+          <div className="flex h-7 items-center gap-1">
+            <input
+              type="number"
+              min={0.5}
+              max={3.0}
+              step={0.1}
+              className="h-7 w-14 rounded-md border border-input bg-background px-1.5 text-[11px] text-center"
+              value={lineHeight ?? 1.16}
+              onChange={(e) => onLineHeightChange?.(Number(e.target.value) || 1.16)}
+              title="Межстрочный интервал (lineHeight)"
+            />
+          </div>
         </div>
 
         {/* Размер шрифта */}

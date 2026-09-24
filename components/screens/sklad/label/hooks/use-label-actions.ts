@@ -30,6 +30,13 @@ export function useLabelActions(
   fontSize:   number,
   autoFit:    boolean,
   fitRatio:   number,
+  isBold = false,
+  isItalic = false,
+  isUnderline = false,
+  isLinethrough = false,
+  textAlign: "left" | "center" | "right" = "left",
+  charSpacing = 0,
+  lineHeight = 1.16,
 ) {
   const applyToSelection = useCallback((patch: Record<string, unknown>) => {
     const canvas  = fabricRef.current
@@ -58,12 +65,22 @@ export function useLabelActions(
       left: 20, top: 20,
       width: Math.round(sizeDef.w_px * 0.5),
       fontSize, fontFamily: font, fill: "#000000",
+      fontWeight: isBold ? "bold" : "normal",
+      fontStyle: isItalic ? "italic" : "normal",
+      underline: isUnderline,
+      linethrough: isLinethrough,
+      textAlign,
+      charSpacing,
+      lineHeight,
       data: { role: `custom-t-${Date.now()}`, autoFit, fitRatio },
     })
     canvas.add(t)
     canvas.setActiveObject(t)
     canvas.renderAll()
-  }, [fabricRef, sizeDef, font, fontSize, autoFit, fitRatio])
+  }, [
+    fabricRef, sizeDef, font, fontSize, autoFit, fitRatio,
+    isBold, isItalic, isUnderline, isLinethrough, textAlign, charSpacing, lineHeight,
+  ])
 
   const addBorder = useCallback((styleKey: BorderStyleKey) => {
     const canvas = fabricRef.current
@@ -102,6 +119,34 @@ export function useLabelActions(
 
   const handleFontSizeChange = useCallback((s: number) => {
     applyToSelection({ fontSize: s })
+  }, [applyToSelection])
+
+  const handleBoldToggle = useCallback((bold: boolean) => {
+    applyToSelection({ fontWeight: bold ? "bold" : "normal" })
+  }, [applyToSelection])
+
+  const handleItalicToggle = useCallback((italic: boolean) => {
+    applyToSelection({ fontStyle: italic ? "italic" : "normal" })
+  }, [applyToSelection])
+
+  const handleUnderlineToggle = useCallback((underline: boolean) => {
+    applyToSelection({ underline })
+  }, [applyToSelection])
+
+  const handleLinethroughToggle = useCallback((linethrough: boolean) => {
+    applyToSelection({ linethrough })
+  }, [applyToSelection])
+
+  const handleTextAlignChange = useCallback((align: "left" | "center" | "right") => {
+    applyToSelection({ textAlign: align })
+  }, [applyToSelection])
+
+  const handleCharSpacingChange = useCallback((spacing: number) => {
+    applyToSelection({ charSpacing: spacing })
+  }, [applyToSelection])
+
+  const handleLineHeightChange = useCallback((lh: number) => {
+    applyToSelection({ lineHeight: lh })
   }, [applyToSelection])
 
   const handleSaveTemplate = useCallback(async () => {
@@ -227,6 +272,8 @@ export function useLabelActions(
     addText, addBorder, removeSelected,
     applyToSelection, handleAutoFitChange, handleFitRatioChange,
     handleFontChange, handleFontSizeChange,
+    handleBoldToggle, handleItalicToggle, handleUnderlineToggle, handleLinethroughToggle,
+    handleTextAlignChange, handleCharSpacingChange, handleLineHeightChange,
     handleSaveTemplate, handleResetTemplate, loadTemplate,
     loadSvgFrame, saveToFile,
   }

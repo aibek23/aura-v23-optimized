@@ -82,12 +82,19 @@ export function LabelEditor({
   const [manualGuides, setManualGuides] = useState<ManualGuide[]>([])
 
   // ── UI-состояние ──────────────────────────────────────────────────────────
-  const [font,        setFont]        = useState("Arial")
-  const [fontSize,    setFontSize]    = useState(16)
-  const [autoFit,     setAutoFit]     = useState(true)
-  const [fitRatio,    setFitRatio]    = useState(1)
-  const [isPrinting,  setIsPrinting]  = useState(false)
-  const [printStatus, setPrintStatus] = useState("")
+  const [font,          setFont]          = useState("Arial")
+  const [fontSize,      setFontSize]      = useState(16)
+  const [autoFit,       setAutoFit]       = useState(true)
+  const [fitRatio,      setFitRatio]      = useState(1)
+  const [isBold,        setIsBold]        = useState(false)
+  const [isItalic,      setIsItalic]      = useState(false)
+  const [isUnderline,   setIsUnderline]   = useState(false)
+  const [isLinethrough, setIsLinethrough] = useState(false)
+  const [textAlign,     setTextAlign]     = useState<"left" | "center" | "right">("left")
+  const [charSpacing,   setCharSpacing]   = useState(0)
+  const [lineHeight,    setLineHeight]    = useState(1.16)
+  const [isPrinting,    setIsPrinting]    = useState(false)
+  const [printStatus,   setPrintStatus]   = useState("")
   const [loaded,      setLoaded]      = useState(false)
   const [collapsed,   setCollapsed]   = useState(false)
 
@@ -120,8 +127,15 @@ export function LabelEditor({
       bus.on("object:modified", onTE)
       bus.on("selection:cleared", onTE)
       setLoaded(false)
-      await actionsRef.current.loadTemplate(canvas)
-      setLoaded(true)
+      try {
+        if (actionsRef.current?.loadTemplate) {
+          await actionsRef.current.loadTemplate(canvas)
+        }
+      } catch (err) {
+        console.error("[LabelEditor] Failed to load template:", err)
+      } finally {
+        setLoaded(true)
+      }
       return () => {
         bus.off("object:scaling",  onTS)
         bus.off("object:rotating", onTS)
@@ -155,6 +169,16 @@ export function LabelEditor({
     fabricRef, pan, offsetX, offsetY, totalW, totalH, rotation, sizeKey,
   )
   useEffect(() => { zoomRefProxy.current = zoomRef.current }, [zoom, zoomRef])
+
+  // При смене формата этикетки сбрасываем сдвиг и ручные направляющие:
+  // старые координаты относятся к другому размеру и сбивают линейку.
+  const prevSizeKeyRef = useRef(sizeKey)
+  useEffect(() => {
+    if (prevSizeKeyRef.current === sizeKey) return
+    prevSizeKeyRef.current = sizeKey
+    setPan({ x: 0, y: 0 })
+    setManualGuides([])
+  }, [sizeKey, setPan])
 
   const getGuidePosition = useCallback((axis: "x" | "y", clientX: number, clientY: number) => {
     const rect = containerRef.current?.getBoundingClientRect()
@@ -226,6 +250,7 @@ export function LabelEditor({
     fabricRef, sizeDef, sizeKey,
     offsetX, offsetY, product, category,
     font, fontSize, autoFit, fitRatio,
+    isBold, isItalic, isUnderline, isLinethrough, textAlign, charSpacing, lineHeight,
   )
   actionsRef.current = actions
 
@@ -234,6 +259,13 @@ export function LabelEditor({
     setFont, setFontSize,
     setAutoFitState: setAutoFit,
     setFitRatioState: setFitRatio,
+    setBold: setIsBold,
+    setItalic: setIsItalic,
+    setUnderline: setIsUnderline,
+    setLinethrough: setIsLinethrough,
+    setTextAlign,
+    setCharSpacing,
+    setLineHeight,
   })
 
   // ── Печать ────────────────────────────────────────────────────────────────
@@ -242,10 +274,14 @@ export function LabelEditor({
     setIsPrinting, setPrintStatus,
   )
 
+  const hasPrintedRef = useRef(false)
   useEffect(() => {
-    if (!isPrinting && loaded && autoPrint) onClose?.()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isPrinting])
+    if (isPrinting) {
+      hasPrintedRef.current = true
+    } else if (hasPrintedRef.current && loaded && autoPrint) {
+      onClose?.()
+    }
+  }, [isPrinting, loaded, autoPrint, onClose])
 
   // ── ЕДИНАЯ ЛОГИКА ПОВОРОТА (без подмены sizeKey) ─────────────────────────
   const handleRotateCanvas = useCallback(() => {
@@ -267,6 +303,7 @@ export function LabelEditor({
     const canvas  = fabricRef.current
     const objects = canvas?.getActiveObjects() ?? []
     if (!canvas || !objects.length) return
+    const active = canvas.getActiveObject()
     objects.forEach((o) => {
       o.set({
         scaleX: (o.scaleX ?? 1) * (1 + ELEM_SCALE_STEP),
@@ -274,6 +311,7 @@ export function LabelEditor({
       })
       o.setCoords()
     })
+    active?.setCoords()
     canvas.requestRenderAll()
   }, [fabricRef])
 
@@ -281,6 +319,7 @@ export function LabelEditor({
     const canvas  = fabricRef.current
     const objects = canvas?.getActiveObjects() ?? []
     if (!canvas || !objects.length) return
+    const active = canvas.getActiveObject()
     objects.forEach((o) => {
       o.set({
         scaleX: Math.max(0.05, (o.scaleX ?? 1) * (1 - ELEM_SCALE_STEP)),
@@ -288,6 +327,7 @@ export function LabelEditor({
       })
       o.setCoords()
     })
+    active?.setCoords()
     canvas.requestRenderAll()
   }, [fabricRef])
 
@@ -313,6 +353,7 @@ export function LabelEditor({
   const toolbarCommon = {
     sizeKey, sizeDef, font, fontSize, isPrinting, status: printStatus,
     autoFit, fitRatio, zoom, isPanMode,
+    isBold, isItalic, isUnderline, isLinethrough, textAlign, charSpacing, lineHeight,
     onSizeChange:     handleSizeChange,
     onAddText:        () => { deactivatePanMode(); actions.addText() },
     onAddBorder:      (k: BorderStyleKey) => { deactivatePanMode(); actions.addBorder(k) },
@@ -323,6 +364,38 @@ export function LabelEditor({
     onFontSizeChange: (s: number) => { setFontSize(s); actions.handleFontSizeChange(s) },
     onAutoFitChange:  (v: boolean) => { setAutoFit(v); actions.handleAutoFitChange(v) },
     onFitRatioChange: handleFitRatioChange,
+    onToggleBold: () => {
+      const next = !isBold
+      setIsBold(next)
+      actions.handleBoldToggle(next)
+    },
+    onToggleItalic: () => {
+      const next = !isItalic
+      setIsItalic(next)
+      actions.handleItalicToggle(next)
+    },
+    onToggleUnderline: () => {
+      const next = !isUnderline
+      setIsUnderline(next)
+      actions.handleUnderlineToggle(next)
+    },
+    onToggleLinethrough: () => {
+      const next = !isLinethrough
+      setIsLinethrough(next)
+      actions.handleLinethroughToggle(next)
+    },
+    onTextAlignChange: (align: "left" | "center" | "right") => {
+      setTextAlign(align)
+      actions.handleTextAlignChange(align)
+    },
+    onCharSpacingChange: (cs: number) => {
+      setCharSpacing(cs)
+      actions.handleCharSpacingChange(cs)
+    },
+    onLineHeightChange: (lh: number) => {
+      setLineHeight(lh)
+      actions.handleLineHeightChange(lh)
+    },
     onZoomTo:         zoomTo,
     onZoomReset:      handleZoomReset,
     onTogglePanMode:  handleTogglePan,

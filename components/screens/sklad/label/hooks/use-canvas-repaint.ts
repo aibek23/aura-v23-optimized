@@ -81,9 +81,7 @@ export function useCanvasRepaint({
 
     const stageW = t.totalW - RULER_SIZE
     const stageH = t.totalH - RULER_SIZE
-    // Для каждой экранной линейки берём ось, которая ближе к ней. В отличие
-    // от старой логики, проекция не меняется внутри computeAxis... на каждом
-    // кадре, поэтому при повороте деления не перескакивают.
+    // Для экранных линеек определяем соответствие осей и рассчитываем экранное положение
     const hAxis: "x" | "y" = Math.abs(trig.cos) >= Math.abs(trig.sin) ? "x" : "y"
     const vAxis: "x" | "y" = hAxis === "x" ? "y" : "x"
 
@@ -91,11 +89,13 @@ export function useCanvasRepaint({
       axis: hAxis, screenAxis: "x", so,
       offsetX: t.offsetX, offsetY: t.offsetY,
       stageW, stageH, zoom: t.zoom, cosR: trig.cos, sinR: trig.sin, pxPerMm,
+      labelW_px: sizeDef.w_px, labelH_px: sizeDef.h_px,
     })
     const vPos = computeAxisScreenPositions({
       axis: vAxis, screenAxis: "y", so,
       offsetX: t.offsetX, offsetY: t.offsetY,
       stageW, stageH, zoom: t.zoom, cosR: trig.cos, sinR: trig.sin, pxPerMm,
+      labelW_px: sizeDef.w_px, labelH_px: sizeDef.h_px,
     })
     if (!hPos || !vPos) return
 
@@ -126,8 +126,12 @@ export function useCanvasRepaint({
     // The ruler coordinates are screen-axis coordinates. This keeps x1/x2
     // tied to the visible left/right boundaries even when the label itself is
     // rotated and the horizontal ruler is backed by the other label axis.
-    const axisValueAt = (position: number, at0: number, at1: number) =>
-      Math.abs(at1 - at0) < 1e-6 ? 0 : (position - at0) / (at1 - at0)
+    const axisValueAt = (position: number, at0: number, at1: number) => {
+      const perMm = at1 - at0
+      if (Math.abs(perMm) < 1e-6) return 0
+      const val = (position - at0) / perMm
+      return Math.abs(val) < 1e-4 ? 0 : Math.round(val * 100) / 100
+    }
     const horizontalLabels = activeBox ? [
       { name: "x1", position: activeBox.x1, value: axisValueAt(activeBox.x1, hPos.at0, hPos.at1) },
       { name: "x2", position: activeBox.x2, value: axisValueAt(activeBox.x2, hPos.at0, hPos.at1) },
@@ -186,9 +190,12 @@ export function useCanvasRepaint({
 
     const manual = manualGuides.map((g) => {
       const isHorizontal = g.axis === "x"
-      const p1 = isHorizontal ? projectStage(0, g.position) : projectStage(g.position, 0)
-      const p2 = isHorizontal ? projectStage(stageW, g.position) : projectStage(g.position, stageH)
-      return { p1, p2, mm: g.position / pxPerMm, labelAt: p1 }
+      const stageX = isHorizontal ? 0 : t.offsetX + g.position
+      const stageY = isHorizontal ? t.offsetY + g.position : 0
+      const p1 = isHorizontal ? projectStage(0, stageY) : projectStage(stageX, 0)
+      const p2 = isHorizontal ? projectStage(stageW, stageY) : projectStage(stageX, stageH)
+      const labelPt = isHorizontal ? proj(0, g.position) : proj(g.position, 0)
+      return { p1, p2, mm: g.position / pxPerMm, labelAt: labelPt }
     })
 
     const guides = [...manual]

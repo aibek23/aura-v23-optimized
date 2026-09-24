@@ -28,7 +28,12 @@ export interface TemplateItem {
   fontSize?:   number
   fontFamily?: string
   fontWeight?: string
+  fontStyle?:  string
+  underline?:  boolean
+  linethrough?: boolean
   textAlign?:  string
+  charSpacing?: number
+  lineHeight?: number
   fill?:       string
   text?:       string
   autoFit?:    boolean

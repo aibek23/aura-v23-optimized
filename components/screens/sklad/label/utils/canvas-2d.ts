@@ -22,9 +22,12 @@ export function prepareFixed(
   if (el.width !== pw || el.height !== ph) {
     el.width  = pw
     el.height = ph
-    el.style.width  = `${w}px`
-    el.style.height = `${h}px`
   }
+  // Стиль выставляем ВСЕГДА: React мог перезаписать width/height при смене
+  // формата этикетки, из-за чего битмап растягивался и линейка «сбивалась».
+  const sw = `${w}px`, sh = `${h}px`
+  if (el.style.width !== sw)  el.style.width  = sw
+  if (el.style.height !== sh) el.style.height = sh
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   ctx.clearRect(0, 0, w, h)
   return ctx

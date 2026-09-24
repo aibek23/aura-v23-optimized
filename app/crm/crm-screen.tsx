@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation"
 import { createClient } from "@/lib/supabase/server"
 import type { Profile } from "@/lib/types"
-import { PendingScreen } from "@/components/add-edit-Product/pending-screen"
+import { PendingScreen } from "@/components/screens/sklad/add-edit-Product/pending-screen"
 import { Dashboard } from "@/components/dashboard"
 import type { ScreenId } from "@/components/app-nav"
 import { getProducts } from "@/app/actions/products"

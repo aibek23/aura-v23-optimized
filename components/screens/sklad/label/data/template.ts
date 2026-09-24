@@ -35,7 +35,12 @@ export function serializeLayout(
       item.fontSize   = r2(tb.fontSize, 12)
       item.fontFamily = String(tb.fontFamily ?? "Arial")
       item.fontWeight = (tb.fontWeight as string) ?? "normal"
+      item.fontStyle  = (tb.fontStyle as string) ?? "normal"
+      item.underline  = Boolean(tb.underline)
+      item.linethrough = Boolean(tb.linethrough)
       item.textAlign  = String(tb.textAlign ?? "left")
+      item.charSpacing = r2(tb.charSpacing, 0)
+      item.lineHeight = r2(tb.lineHeight, 1.16)
       item.fill       = typeof tb.fill === "string" ? tb.fill : "#000000"
       item.autoFit    = isAutoFit(tb)
       item.fitRatio   = r2(getFitRatio(tb), 1)
@@ -95,7 +100,12 @@ export function applyTemplate(canvas: Canvas, tpl: LabelTemplate): void {
         width: item.width || 80,
         fontSize: item.fontSize ?? 12, fontFamily: item.fontFamily ?? "Arial",
         fontWeight: item.fontWeight ?? "normal",
+        fontStyle: item.fontStyle ?? "normal",
+        underline: Boolean(item.underline),
+        linethrough: Boolean(item.linethrough),
         textAlign: (item.textAlign as Textbox["textAlign"]) ?? "left",
+        charSpacing: item.charSpacing ?? 0,
+        lineHeight: item.lineHeight ?? 1.16,
         fill: item.fill ?? "#000000", angle: item.angle ?? 0,
         scaleX: item.scaleX ?? 1, scaleY: 1,
         data: { role: item.role, autoFit: item.autoFit !== false, fitRatio: item.fitRatio ?? 1 },
@@ -137,7 +147,12 @@ export function applyItemToObject(obj: FabricObject, item: TemplateItem): void {
       fontSize: item.fontSize ?? tb.fontSize,
       fontFamily: item.fontFamily ?? tb.fontFamily,
       fontWeight: item.fontWeight ?? tb.fontWeight,
+      fontStyle: item.fontStyle ?? tb.fontStyle,
+      underline: item.underline !== undefined ? item.underline : tb.underline,
+      linethrough: item.linethrough !== undefined ? item.linethrough : tb.linethrough,
       textAlign: (item.textAlign as Textbox["textAlign"]) ?? tb.textAlign,
+      charSpacing: item.charSpacing !== undefined ? item.charSpacing : tb.charSpacing,
+      lineHeight: item.lineHeight !== undefined ? item.lineHeight : tb.lineHeight,
       fill: item.fill ?? tb.fill,
     })
 
