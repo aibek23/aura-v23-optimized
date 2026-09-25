@@ -1,0 +1,467 @@
+"use client"
+
+import { useState, useEffect, useCallback, useTransition } from 'react'
+import type { Customer, Product, Profile, Role, Sale, SaleReturn, MetalRate, CashOperation } from '@/lib/types'
+import type { CashData } from '@/app/actions/cash'
+import type { SupplierDebtData } from '@/app/actions/suppliers'
+import {
+  getLocalDB,
+  getShopRecords,
+  bulkPut,
+  searchLocalProducts,
+} from './db'
+import { enqueueOutbox } from './outbox'
+import { syncEngine } from '../sync/sync-engine'
+import { updateDailyAggregateForDate } from './aggregates'
+import { toast } from 'sonner'
+
+export function useLocalCrm(initialData: {
+  profile: Profile
+  products?: Product[]
+  sales?: Sale[]
+  returns?: SaleReturn[]
+  cash?: CashData
+  rates?: MetalRate[]
+  clients?: Customer[]
+  supplierDebts?: SupplierDebtData
+}) {
+  const shopId = initialData.profile.shop_id || 'default_shop'
+  const [products, setProducts] = useState<Product[]>(initialData.products || [])
+  const [sales, setSales] = useState<Sale[]>(initialData.sales || [])
+  const [returns, setReturns] = useState<SaleReturn[]>(initialData.returns || [])
+  const [cash, setCash] = useState<CashData>(
+    initialData.cash || { operations: [], presets: [] }
+  )
+  const [rates, setRates] = useState<MetalRate[]>(initialData.rates || [])
+  const [clients, setClients] = useState<Customer[]>(initialData.clients || [])
+  const [isReady, setIsReady] = useState(false)
+
+  // 1. Initialize Sync Engine and seed initial server data if local DB is empty
+  useEffect(() => {
+    let mounted = true
+
+    async function initData() {
+      try {
+        const db = await getLocalDB()
+
+        // Seed initial server props into local DB if available
+        if (initialData.products && initialData.products.length > 0) {
+          await bulkPut('products', initialData.products)
+        }
+        if (initialData.sales && initialData.sales.length > 0) {
+          await bulkPut('sales', initialData.sales)
+        }
+        if (initialData.returns && initialData.returns.length > 0) {
+          await bulkPut('sale_returns', initialData.returns)
+        }
+        if (initialData.cash?.operations && initialData.cash.operations.length > 0) {
+          await bulkPut('cash_operations', initialData.cash.operations)
+        }
+        if (initialData.cash?.presets && initialData.cash.presets.length > 0) {
+          await bulkPut('cash_reason_presets', initialData.cash.presets)
+        }
+        if (initialData.clients && initialData.clients.length > 0) {
+          await bulkPut('customers', initialData.clients)
+        }
+        if (initialData.rates && initialData.rates.length > 0) {
+          await bulkPut('metal_rates', initialData.rates)
+        }
+
+        // Read all active records from local DB
+        const [localProducts, localSales, localReturns, localCashOps, localPresets, localClients, localRates] =
+          await Promise.all([
+            getShopRecords<Product>('products', shopId),
+            getShopRecords<Sale>('sales', shopId),
+            getShopRecords<SaleReturn>('sale_returns', shopId),
+            getShopRecords<CashOperation>('cash_operations', shopId),
+            getShopRecords<any>('cash_reason_presets', shopId),
+            getShopRecords<Customer>('customers', shopId),
+            getShopRecords<MetalRate>('metal_rates', shopId),
+          ])
+
+        if (mounted) {
+          if (localProducts.length > 0) setProducts(localProducts)
+          if (localSales.length > 0) setSales(localSales)
+          if (localReturns.length > 0) setReturns(localReturns)
+          setCash({
+            operations: localCashOps.length > 0 ? localCashOps : initialData.cash?.operations || [],
+            presets: localPresets.length > 0 ? localPresets : initialData.cash?.presets || [],
+          })
+          if (localClients.length > 0) setClients(localClients)
+          if (localRates.length > 0) setRates(localRates)
+          setIsReady(true)
+        }
+
+        // Start background Sync Engine
+        syncEngine.init(shopId)
+      } catch (err) {
+        console.error('Error initializing local CRM database:', err)
+        if (mounted) setIsReady(true)
+      }
+    }
+
+    initData()
+
+    // Listen to phase 1 ready event
+    const onPhase1Ready = async () => {
+      const refreshedProducts = await getShopRecords<Product>('products', shopId)
+      if (mounted && refreshedProducts.length > 0) {
+        setProducts(refreshedProducts)
+      }
+    }
+
+    window.addEventListener('aura:phase1_ready', onPhase1Ready)
+    return () => {
+      mounted = false
+      window.removeEventListener('aura:phase1_ready', onPhase1Ready)
+    }
+  }, [shopId])
+
+  // 2. Offline-first Checkout (Sales POS)
+  const localCheckout = useCallback(
+    async (input: {
+      items: any[]
+      discount: number
+      payment_method: string
+      amount_cash?: number
+      amount_electronic?: number
+      customer_name: string
+      customer_phone: string
+      bonus_used: number
+    }) => {
+      const clientOpId = typeof crypto !== 'undefined' ? crypto.randomUUID() : Math.random().toString(36).substring(2)
+      const saleId = typeof crypto !== 'undefined' ? crypto.randomUUID() : Math.random().toString(36).substring(2)
+      const nowIso = new Date().toISOString()
+      const todayStr = nowIso.slice(0, 10)
+
+      // Calculate total price
+      const totalCost = input.items.reduce((acc, it) => acc + Number(it.price || 0), 0)
+      const finalPrice = Math.max(0, totalCost - (input.discount || 0) - (input.bonus_used || 0))
+
+      const newSale: Sale = {
+        id: saleId,
+        shop_id: shopId,
+        seller_id: initialData.profile.id,
+        seller_name: initialData.profile.full_name || null,
+        customer_id: null,
+        customer_name: input.customer_name || null,
+        customer_phone: input.customer_phone || null,
+        payment_method: input.payment_method,
+        subtotal: totalCost,
+        discount: input.discount || 0,
+        total: finalPrice,
+        cost_total: 0,
+        profit: finalPrice,
+        bonus_earned: 0,
+        bonus_used: input.bonus_used || 0,
+        items: input.items,
+        total_price: totalCost,
+        final_price: finalPrice,
+        created_at: nowIso,
+        client_op_id: clientOpId,
+      }
+
+      // 1. Mark products as sold in local DB
+      const updatedProducts = products.map((p) => {
+        const soldItem = input.items.find((it) => it.id === p.id || it.sku === p.sku)
+        if (soldItem) {
+          return { ...p, status: 'sold' as const, updated_at: nowIso }
+        }
+        return p
+      })
+
+      // 2. Add cash operation if cash involved
+      const cashAmount = input.payment_method === 'cash' ? finalPrice : (input.amount_cash || 0)
+      let newCashOp: CashOperation | null = null
+      if (cashAmount > 0) {
+        newCashOp = {
+          id: typeof crypto !== 'undefined' ? crypto.randomUUID() : Math.random().toString(36).substring(2),
+          shop_id: shopId,
+          type: 'income',
+          amount: cashAmount,
+          reason: `Продажа чека #${saleId.slice(0, 8)}`,
+          created_at: nowIso,
+          client_op_id: clientOpId,
+        } as CashOperation
+      }
+
+      // Write changes to local DB
+      await bulkPut('sales', [newSale])
+      await bulkPut('products', updatedProducts.filter((p) => input.items.some((it) => it.id === p.id || it.sku === p.sku)))
+      if (newCashOp) {
+        await bulkPut('cash_operations', [newCashOp])
+      }
+
+      // Update daily precomputed aggregates
+      await updateDailyAggregateForDate(shopId, todayStr, {
+        salesSom: finalPrice,
+        salesCount: 1,
+        cashIncomeSom: cashAmount,
+      })
+
+      // Enqueue to Outbox with client_op_id for cloud sync
+      await enqueueOutbox({
+        client_op_id: clientOpId,
+        shop_id: shopId,
+        entity: 'sales',
+        op_type: 'atomic_sale',
+        payload: {
+          ...newSale,
+          amount_cash: input.amount_cash,
+          amount_electronic: input.amount_electronic,
+        },
+      })
+
+      // Update memory state immediately
+      setProducts(updatedProducts)
+      setSales((prev) => [newSale, ...prev])
+      if (newCashOp) {
+        setCash((prev) => ({ ...prev, operations: [newCashOp!, ...prev.operations] }))
+      }
+
+      return { success: true, sale: newSale }
+    },
+    [shopId, initialData.profile.id, products]
+  )
+
+  // 3. Offline-first Return
+  const localReturn = useCallback(
+    async (input: { saleId: string; itemIndex: number; reason?: string }) => {
+      const clientOpId = typeof crypto !== 'undefined' ? crypto.randomUUID() : Math.random().toString(36).substring(2)
+      const returnId = typeof crypto !== 'undefined' ? crypto.randomUUID() : Math.random().toString(36).substring(2)
+      const nowIso = new Date().toISOString()
+      const todayStr = nowIso.slice(0, 10)
+
+      const targetSale = sales.find((s) => s.id === input.saleId)
+      if (!targetSale || !targetSale.items || !targetSale.items[input.itemIndex]) {
+        throw new Error('Чек или позиция не найдены')
+      }
+
+      const item = targetSale.items[input.itemIndex]
+      const returnAmount = Number(item.price || targetSale.final_price || 0)
+
+      const newReturn: SaleReturn = {
+        id: returnId,
+        shop_id: shopId,
+        sale_id: targetSale.id,
+        item_index: input.itemIndex,
+        sku: item.sku,
+        product_name: item.name || 'Товар',
+        return_amount: returnAmount,
+        reason: input.reason || 'Возврат клиентом',
+        created_at: nowIso,
+        client_op_id: clientOpId,
+      } as SaleReturn
+
+      // Restore product status
+      const updatedProducts = products.map((p) => {
+        if (p.id === item.id || p.sku === item.sku) {
+          return { ...p, status: 'in_stock' as const, updated_at: nowIso }
+        }
+        return p
+      })
+
+      // Add cash outcome
+      const cashOutOp: CashOperation = {
+        id: typeof crypto !== 'undefined' ? crypto.randomUUID() : Math.random().toString(36).substring(2),
+        shop_id: shopId,
+        type: 'outcome',
+        amount: returnAmount,
+        reason: `Возврат по чеку #${targetSale.id.slice(0, 8)} (${item.name || item.sku})`,
+        created_at: nowIso,
+        client_op_id: clientOpId,
+      } as CashOperation
+
+      // Write to local DB
+      await bulkPut('sale_returns', [newReturn])
+      await bulkPut('products', updatedProducts.filter((p) => p.id === item.id || p.sku === item.sku))
+      await bulkPut('cash_operations', [cashOutOp])
+
+      // Update daily aggregates
+      await updateDailyAggregateForDate(shopId, todayStr, {
+        returnsSom: returnAmount,
+        returnsCount: 1,
+        cashOutcomeSom: returnAmount,
+      })
+
+      // Enqueue to Outbox
+      await enqueueOutbox({
+        client_op_id: clientOpId,
+        shop_id: shopId,
+        entity: 'sale_returns',
+        op_type: 'atomic_return',
+        payload: {
+          ...newReturn,
+          product_id: item.id,
+        },
+      })
+
+      setReturns((prev) => [newReturn, ...prev])
+      setProducts(updatedProducts)
+      setCash((prev) => ({ ...prev, operations: [cashOutOp, ...prev.operations] }))
+
+      return { success: true, returnRecord: newReturn }
+    },
+    [sales, products, shopId]
+  )
+
+  // 4. Offline-first Product Management
+  const localSaveProduct = useCallback(
+    async (productData: Partial<Product>) => {
+      const nowIso = new Date().toISOString()
+      const clientOpId = typeof crypto !== 'undefined' ? crypto.randomUUID() : Math.random().toString(36).substring(2)
+      const productId = productData.id || (typeof crypto !== 'undefined' ? crypto.randomUUID() : Math.random().toString(36).substring(2))
+
+      const fullProduct: Product = {
+        ...productData,
+        id: productId,
+        shop_id: shopId,
+        status: productData.status || 'in_stock',
+        created_at: productData.created_at || nowIso,
+        updated_at: nowIso,
+      } as Product
+
+      await bulkPut('products', [fullProduct])
+
+      await enqueueOutbox({
+        client_op_id: clientOpId,
+        shop_id: shopId,
+        entity: 'products',
+        op_type: productData.id ? 'product_update' : 'product_add',
+        payload: {
+          ...fullProduct,
+          original_updated_at: productData.updated_at || null,
+        },
+      })
+
+      setProducts((prev) => {
+        const exists = prev.some((p) => p.id === productId)
+        if (exists) {
+          return prev.map((p) => (p.id === productId ? fullProduct : p))
+        }
+        return [fullProduct, ...prev]
+      })
+
+      return fullProduct
+    },
+    [shopId]
+  )
+
+  const localDeleteProduct = useCallback(
+    async (productId: string) => {
+      const nowIso = new Date().toISOString()
+      const clientOpId = typeof crypto !== 'undefined' ? crypto.randomUUID() : Math.random().toString(36).substring(2)
+
+      const target = products.find((p) => p.id === productId)
+      if (!target) return
+
+      const softDeleted = { ...target, deleted_at: nowIso, updated_at: nowIso }
+      await bulkPut('products', [softDeleted])
+
+      await enqueueOutbox({
+        client_op_id: clientOpId,
+        shop_id: shopId,
+        entity: 'products',
+        op_type: 'product_delete',
+        payload: { id: productId },
+      })
+
+      setProducts((prev) => prev.filter((p) => p.id !== productId))
+    },
+    [products, shopId]
+  )
+
+  // 5. Offline-first Customer Management
+  const localAddCustomer = useCallback(
+    async (customerData: Partial<Customer>) => {
+      const nowIso = new Date().toISOString()
+      const clientOpId = typeof crypto !== 'undefined' ? crypto.randomUUID() : Math.random().toString(36).substring(2)
+      const customerId = customerData.id || (typeof crypto !== 'undefined' ? crypto.randomUUID() : Math.random().toString(36).substring(2))
+
+      const fullCustomer: Customer = {
+        ...customerData,
+        id: customerId,
+        shop_id: shopId,
+        created_at: customerData.created_at || nowIso,
+        updated_at: nowIso,
+      } as Customer
+
+      await bulkPut('customers', [fullCustomer])
+
+      await enqueueOutbox({
+        client_op_id: clientOpId,
+        shop_id: shopId,
+        entity: 'customers',
+        op_type: customerData.id ? 'update' : 'create',
+        payload: fullCustomer,
+      })
+
+      setClients((prev) => {
+        const exists = prev.some((c) => c.id === customerId)
+        if (exists) {
+          return prev.map((c) => (c.id === customerId ? fullCustomer : c))
+        }
+        return [fullCustomer, ...prev]
+      })
+
+      return fullCustomer
+    },
+    [shopId]
+  )
+
+  // 6. Offline-first Cash Operation
+  const localAddCashOperation = useCallback(
+    async (input: { type: 'income' | 'outcome' | 'collection'; amount: number; reason: string }) => {
+      const clientOpId = typeof crypto !== 'undefined' ? crypto.randomUUID() : Math.random().toString(36).substring(2)
+      const opId = typeof crypto !== 'undefined' ? crypto.randomUUID() : Math.random().toString(36).substring(2)
+      const nowIso = new Date().toISOString()
+      const todayStr = nowIso.slice(0, 10)
+
+      const newOp: CashOperation = {
+        id: opId,
+        shop_id: shopId,
+        type: input.type,
+        amount: input.amount,
+        reason: input.reason,
+        created_at: nowIso,
+        client_op_id: clientOpId,
+      } as CashOperation
+
+      await bulkPut('cash_operations', [newOp])
+
+      await updateDailyAggregateForDate(shopId, todayStr, {
+        cashIncomeSom: input.type === 'income' ? input.amount : 0,
+        cashOutcomeSom: input.type === 'outcome' ? input.amount : 0,
+        cashCollectionSom: input.type === 'collection' ? input.amount : 0,
+      })
+
+      await enqueueOutbox({
+        client_op_id: clientOpId,
+        shop_id: shopId,
+        entity: 'cash_operations',
+        op_type: 'atomic_cash',
+        payload: newOp,
+      })
+
+      setCash((prev) => ({ ...prev, operations: [newOp, ...prev.operations] }))
+      return newOp
+    },
+    [shopId]
+  )
+
+  return {
+    isReady,
+    products,
+    sales,
+    returns,
+    cash,
+    rates,
+    clients,
+    localCheckout,
+    localReturn,
+    localSaveProduct,
+    localDeleteProduct,
+    localAddCustomer,
+    localAddCashOperation,
+  }
+}

@@ -40,6 +40,7 @@ export type Customer = {
   /** Дата последней покупки. */
   last_purchase_at: string | null
   created_at: string
+  updated_at?: string | null
 }
 
 /** Статус подписки магазина. */
@@ -116,6 +117,7 @@ export type Product = {
   consignment_by?: string | null
   status: ProductStatus
   created_at: string
+  updated_at?: string | null
 }
 
 export type SaleItemKind = "product" | "scrap"
@@ -123,6 +125,8 @@ export type SaleItemKind = "product" | "scrap"
 export type SaleItem = {
   /** null для лома — товара нет на складе. */
   product_id: string | null
+  id?: string | null
+  sku?: string | null
   kind?: SaleItemKind
   /**
    * Историческое поле чеков. Новые позиции всегда сохраняются ровно с
@@ -158,6 +162,9 @@ export type Sale = {
   bonus_used: number
   items: SaleItem[]
   created_at: string
+  total_price?: number
+  final_price?: number
+  client_op_id?: string
 }
 
 /** Возврат одной позиции чека (таблица sale_returns, миграция v33). */
@@ -166,22 +173,26 @@ export type SaleReturn = {
   shop_id: string
   sale_id: string
   /** null для лома — товара на складе не было. */
-  product_id: string | null
+  product_id?: string | null
   /** Индекс позиции внутри sales.items исходного чека. */
   item_index: number
-  item_name: string
-  item_metal: string | null
-  item_weight: number
+  item_name?: string
+  item_metal?: string | null
+  item_weight?: number
   /** Сумма, фактически выплаченная покупателю (по оплаченной цене). */
-  amount: number
+  amount?: number
   /** Себестоимость возвращённого товара — снова учитывается на складе. */
-  cost: number
+  cost?: number
   /** Расходная операция кассы, созданная атомарно вместе с возвратом. */
-  cash_operation_id: string | null
+  cash_operation_id?: string | null
   reason: string
-  created_by: string
-  author_name: string | null
+  created_by?: string
+  author_name?: string | null
   created_at: string
+  sku?: string
+  product_name?: string
+  return_amount?: number
+  client_op_id?: string
 }
 
 export type MetalRate = {
@@ -248,18 +259,19 @@ export const CASH_SOURCES: { value: CashSource; label: string }[] = [
 export type CashOperation = {
   id: string
   shop_id: string
-  created_by: string
-  author_name: string | null
+  created_by?: string
+  author_name?: string | null
   type: CashOpType
   amount: number
-  source: CashSource
-  amount_cash: number
-  amount_electronic: number
+  source?: CashSource
+  amount_cash?: number
+  amount_electronic?: number
   reason: string
   created_at: string
   supplier_name?: string | null
   supplier_phone?: string | null
   supplier_debt_operation_id?: string | null
+  client_op_id?: string
 }
 
 export type CashReasonPreset = {

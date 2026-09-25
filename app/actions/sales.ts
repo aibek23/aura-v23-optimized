@@ -158,7 +158,7 @@ export async function checkout(input: CheckoutInput) {
 
   const discount = 0 // скидки уже учтены в цене позиции
   const bonusUsed = Math.max(0, Math.min(Number(input.bonus_used) || 0, subtotal))
-  if (bonusUsed > Number(profile.bonus_points ?? 0) && profile.role === "seller") {
+  if (bonusUsed > Number(profile.bonus_points ?? 0)) {
     throw new Error("Недостаточно бонусов для списания")
   }
   const total = Math.max(0, subtotal - bonusUsed)
@@ -223,18 +223,26 @@ export async function checkout(input: CheckoutInput) {
       }
     }
   }
-  // ------------------------------------------------ обновление статистики клиента
-  // Атомарно инкрементируем денормализованные счётчики через RPC-функцию,
-  // чтобы избежать гонки при параллельных продажах одному клиенту.
-  if (customerId) {
-    const { error: statsErr } = await supabase.rpc("increment_customer_stats", {
-      _customer_id: customerId,
-      _amount:      total,
-    })
-    if (statsErr) {
-      // Не прерываем транзакцию — счётчик можно пересчитать позже.
-      console.error("[sales] increment_customer_stats error:", statsErr.message)
+  // ------------------------------------------------ списание товара ДО записи чека
+  // Сначала атомарно переводим изделия в sold: если одно из них уже продано
+  // (параллельная продажа), чек не создаётся, а уже списанные откатываются.
+  const soldIds: string[] = []
+  const rollbackSold = async () => {
+    if (soldIds.length === 0) return
+    const { error: rbErr } = await supabase
+      .from("products")
+      .update({ status: "in_stock" })
+      .in("id", soldIds)
+    if (rbErr) console.error("[sales] rollback error:", rbErr.message)
+  }
+  for (const item of validated) {
+    if (item.kind !== "product" || !item.product_id) continue
+    const { error: updErr } = await supabase.rpc("sell_product", { _product_id: item.product_id })
+    if (updErr) {
+      await rollbackSold()
+      throw new Error(`Не удалось списать «${item.name}»: ${updErr.message}`)
     }
+    soldIds.push(item.product_id)
   }
 
   // ------------------------------------------------ запись продажи
@@ -257,14 +265,25 @@ export async function checkout(input: CheckoutInput) {
     bonus_used: bonusUsed,
     items: validated,
   })
-  if (saleErr) throw new Error(`Не удалось провести продажу: ${saleErr.message}`)
-
-  // Атомарно переводим каждую физическую единицу в sold.
-  for (const item of validated) {
-    if (item.kind !== "product" || !item.product_id) continue
-    const { error: updErr } = await supabase.rpc("sell_product", { _product_id: item.product_id })
-    if (updErr) throw new Error(`Не удалось списать товар: ${updErr.message}`)
+  if (saleErr) {
+    await rollbackSold()
+    throw new Error(`Не удалось провести продажу: ${saleErr.message}`)
   }
+
+  // ------------------------------------------------ обновление статистики клиента
+  // Атомарно инкрементируем денормализованные счётчики через RPC-функцию,
+  // чтобы избежать гонки при параллельных продажах одному клиенту.
+  if (customerId) {
+    const { error: statsErr } = await supabase.rpc("increment_customer_stats", {
+      _customer_id: customerId,
+      _amount:      total,
+    })
+    if (statsErr) {
+      // Не прерываем транзакцию — счётчик можно пересчитать позже.
+      console.error("[sales] increment_customer_stats error:", statsErr.message)
+    }
+  }
+
 
   if (bonusEarned > 0) {
     const { error: bonusErr } = await supabase.rpc("add_bonus_points", { _amount: bonusEarned })

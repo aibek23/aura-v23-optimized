@@ -139,11 +139,70 @@ export function ClientsScreen({ clients }: { clients: Customer[] }) {
         email: form.email || null,
       }
       if (editing) {
-        await updateClient(editing.id, input)
-        toast.success("Данные клиента обновлены")
+        try {
+          if (!navigator.onLine) throw new Error("Offline")
+          await updateClient(editing.id, input)
+          toast.success("Данные клиента обновлены")
+        } catch {
+          const { bulkPut } = await import("@/lib/local-db/db")
+          const { enqueueOutbox } = await import("@/lib/local-db/outbox")
+          const clientOpId = typeof crypto !== "undefined" ? crypto.randomUUID() : Math.random().toString(36).substring(2)
+          const nowIso = new Date().toISOString()
+          const updatedCustomer: Customer = {
+            ...editing,
+            ...input,
+            updated_at: nowIso,
+          } as Customer
+          await bulkPut("customers", [updatedCustomer])
+          await enqueueOutbox({
+            client_op_id: clientOpId,
+            shop_id: updatedCustomer.shop_id || "",
+            entity: "customers",
+            op_type: "update",
+            payload: {
+              ...updatedCustomer,
+              original_updated_at: editing.updated_at || null,
+            },
+          })
+          toast.success("Данные клиента обновлены (локально)", {
+            description: "Синхронизируются при появлении сети",
+          })
+        }
       } else {
-        await createClient_(input)
-        toast.success("Клиент добавлен")
+        try {
+          if (!navigator.onLine) throw new Error("Offline")
+          await createClient_(input)
+          toast.success("Клиент добавлен")
+        } catch {
+          const { bulkPut } = await import("@/lib/local-db/db")
+          const { enqueueOutbox } = await import("@/lib/local-db/outbox")
+          const clientOpId = typeof crypto !== "undefined" ? crypto.randomUUID() : Math.random().toString(36).substring(2)
+          const newId = typeof crypto !== "undefined" ? crypto.randomUUID() : Math.random().toString(36).substring(2)
+          const nowIso = new Date().toISOString()
+          const newCustomer = {
+            id: newId,
+            shop_id: "",
+            bonus_points: 0,
+            is_blacklisted: false,
+            purchase_count: 0,
+            total_spent: 0,
+            last_purchase_at: null,
+            ...input,
+            created_at: nowIso,
+            updated_at: nowIso,
+          } as Customer
+          await bulkPut("customers", [newCustomer])
+          await enqueueOutbox({
+            client_op_id: clientOpId,
+            shop_id: "",
+            entity: "customers",
+            op_type: "create",
+            payload: newCustomer,
+          })
+          toast.success("Клиент добавлен (локально)", {
+            description: "Синхронизируется при появлении сети",
+          })
+        }
       }
       setDialogOpen(false)
       startTransition(() => router.refresh())

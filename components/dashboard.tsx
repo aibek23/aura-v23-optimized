@@ -23,6 +23,15 @@ import { impersonateShop } from "@/app/actions/superadmin"
 import { useRouter } from "next/navigation"
 import { createClient as createSupabaseBrowserClient } from "@/lib/supabase/client"
 import { toast } from "sonner"
+import { useLocalCrm } from "@/lib/local-db/use-local-crm"
+import {
+  saveUserSessionSqlite,
+  saveProductsSqlite,
+  saveCustomersSqlite,
+  saveMetalRatesSqlite,
+  saveSuppliersSqlite,
+  saveShopSettingsSqlite,
+} from "@/lib/local-db/sqlite-opfs"
 
 // ---------------------------------------------------------------------------
 // Двухэтапная защита от случайного выхода из CRM через кнопку «Назад»
@@ -134,6 +143,52 @@ export function Dashboard({
   const isSuperAdmin = profile.role === "super_admin"
 
   const [, startTransition] = useTransition()
+
+  // Local-First data layer (SQLite WASM / IndexedDB + Background Sync)
+  const localCrm = useLocalCrm({
+    profile,
+    products,
+    sales,
+    returns,
+    cash,
+    rates,
+    clients,
+    supplierDebts,
+  })
+
+  // Persist session and reference catalogs into SQLite WASM with OPFS whenever available
+  useEffect(() => {
+    if (profile?.id) {
+      saveUserSessionSqlite({
+        userId: profile.id,
+        email: email || profile.email || undefined,
+        profile,
+        shopId: profile.shop_id || undefined,
+      })
+    }
+    const targetShopId = profile?.shop_id
+    if (targetShopId) {
+      if (products && products.length > 0) {
+        saveProductsSqlite(targetShopId, products)
+      }
+      if (clients && clients.length > 0) {
+        saveCustomersSqlite(targetShopId, clients)
+      }
+      if (rates && rates.length > 0) {
+        saveMetalRatesSqlite(targetShopId, rates)
+      }
+      if (supplierDebts?.suppliers?.length) {
+        saveSuppliersSqlite(targetShopId, supplierDebts.suppliers)
+      }
+    }
+  }, [profile, email, products, clients, rates, supplierDebts, cabinet])
+
+  const currentProducts = localCrm.products.length > 0 ? localCrm.products : products
+  const currentSales = localCrm.sales.length > 0 ? localCrm.sales : sales
+  const currentReturns = localCrm.returns.length > 0 ? localCrm.returns : returns
+  const currentCash = localCrm.cash || cash
+  const currentRates = localCrm.rates.length > 0 ? localCrm.rates : rates
+  const currentClients = localCrm.clients.length > 0 ? localCrm.clients : clients
 
   /** Переключение экрана: переход по отдельному URL. */
   const handleScreenChange = useCallback(
@@ -264,8 +319,8 @@ export function Dashboard({
           }
         }}
         onNavigate={handleScreenChange}
-        products={products}
-        clients={clients}
+        products={currentProducts}
+        clients={currentClients}
       />
       <div className="flex min-h-0 flex-1">
 <AppNav
@@ -287,34 +342,35 @@ export function Dashboard({
         {activeScreen === "kassa" && (
           <KassaScreen
             profile={profile}
-            products={products}
+            products={currentProducts}
             viewRole={viewRole}
-            sales={sales}
-            returns={returns}
-            cash={cash}
-            rates={rates}
-            clients={clients}
+            sales={currentSales}
+            returns={currentReturns}
+            cash={currentCash}
+            rates={currentRates}
+            clients={currentClients}
+            onLocalCheckout={localCrm.localCheckout}
           />
         )}
         {activeScreen === "vitrina" && (
-          <VitrinaScreen products={products} canSeePurchasePrice={canSeePurchasePrice} isAdmin={isAdmin} />
+          <VitrinaScreen products={currentProducts} canSeePurchasePrice={canSeePurchasePrice} isAdmin={isAdmin} />
         )}
         {activeScreen === "sklad" && (
           <SkladScreen
-            products={products}
-            sales={sales}
+            products={currentProducts}
+            sales={currentSales}
             canSeePurchasePrice={canSeePurchasePrice}
             isAdmin={isAdmin}
           />
         )}
         {activeScreen === "clients" && (
-          <ClientsScreen clients={clients} />
+          <ClientsScreen clients={currentClients} />
         )}
         {activeScreen === "suppliers" && isAdmin && (
           <SuppliersScreen
             supplierDebts={supplierDebts}
-            products={products}
-            sales={sales}
+            products={currentProducts}
+            sales={currentSales}
             isAdmin={isAdmin}
           />
         )}

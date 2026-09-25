@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next"
 import { Geist, Geist_Mono, Playfair_Display } from "next/font/google"
 import { Analytics } from "@vercel/analytics/next"
 import { Suspense } from "react"
+import { PwaProvider } from "@/components/pwa-provider"
 import "./globals.css"
 
 const geistSans = Geist({ subsets: ["latin"], variable: "--font-geist-sans" })
@@ -9,8 +10,8 @@ const geistMono = Geist_Mono({ subsets: ["latin"], variable: "--font-geist-mono"
 const playfair = Playfair_Display({ subsets: ["latin"], variable: "--font-playfair" })
 
 export const metadata: Metadata = {
-  title: "Aura — Управление ювелирным магазином",
-  description: "Aura.gold.kg — касса, витрина, склад и отчёты для ювелирного бизнеса",
+  title: "Aura — Управление ювелирным магазином (Local-First)",
+  description: "Aura.gold.kg — касса, витрина, склад и отчёты для ювелирного бизнеса. Полная работа без интернета.",
   generator: "v0.app",
 }
 
@@ -34,6 +35,7 @@ export default function RootLayout({
         />
       </head>
       <body className="font-sans antialiased bg-background text-foreground">
+        <PwaProvider />
         <Suspense fallback={null}>{children}</Suspense>
         {process.env.NODE_ENV === "production" && <Analytics />}
       </body>

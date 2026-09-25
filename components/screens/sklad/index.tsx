@@ -22,7 +22,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { Pencil, Trash2, Sparkles, PackageX, Printer, Plus, ChevronLeft, ChevronRight, CheckCircle2 } from "lucide-react"
+import { Pencil, Trash2, Sparkles, PackageX, Printer, Plus, ChevronLeft, ChevronRight, CheckCircle2, Layers } from "lucide-react"
 import { toast } from "sonner"
 import { useRouter } from "next/navigation"
 import { ProductDialog } from "@/components/screens/sklad/add-edit-Product/product-dialog"
@@ -30,6 +30,7 @@ import { SkladStats } from "./sklad-stats"
 import { cn } from "@/lib/utils"
 import { filterProducts } from "@/lib/product-search"
 import { ProductSearch } from "@/components/product-search"
+import { VirtualizedSkladTable } from "./virtualized-sklad-table"
 
 // Загружаем LabelEditor строго на клиенте для корректного связывания пакетов Bluetooth
 const LabelEditor = dynamic(
@@ -65,6 +66,7 @@ export function SkladScreen({
   const [labelDialogOpen, setLabelDialogOpen] = useState(false)
   const [labelAutoPrint, setLabelAutoPrint] = useState(false)
   const [labelSizeKey, setLabelSizeKey] = useState<JewelryLabelSizeKey>(DEFAULT_SIZE_KEY)
+  const [virtualMode, setVirtualMode] = useState(true)
 
   const [productDialogOpen, setProductDialogOpen] = useState(false)
   const [editing, setEditing] = useState<Product | null>(null)
@@ -171,16 +173,41 @@ export function SkladScreen({
         />
       )}
 
-      {/* Поиск */}
-      <div className="mb-4 w-full sm:max-w-xl">
-        <ProductSearch
-          value={query}
-          onChange={handleQueryChange}
-          placeholder="Название, артикул, металл, 1,25 г, 12300 с, 11.09.2026..."
-        />
+      {/* Поиск и переключение вида */}
+      <div className="mb-4 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+        <div className="w-full sm:max-w-xl">
+          <ProductSearch
+            value={query}
+            onChange={handleQueryChange}
+            placeholder="Название, артикул, металл, 1,25 г, 12300 с, 11.09.2026..."
+          />
+        </div>
+        <Button
+          variant={virtualMode ? "default" : "outline"}
+          size="sm"
+          className="h-9 gap-1.5 text-xs shrink-0 self-start sm:self-auto"
+          onClick={() => setVirtualMode((v) => !v)}
+          title="Режим виртуализации для 100 000+ товаров"
+        >
+          <Layers className="h-3.5 w-3.5" />
+          {virtualMode ? "Виртуализация вкл (~20 строк)" : "Обычная таблица"}
+        </Button>
       </div>
 
-      {/* ===== DESKTOP: полноценная таблица (md+) ===== */}
+      {virtualMode ? (
+        <VirtualizedSkladTable
+          products={filtered}
+          canSeePurchasePrice={canSeePurchasePrice}
+          isAdmin={isAdmin}
+          onEdit={onEdit}
+          onDelete={(id) => {
+            const p = products.find((item) => item.id === id)
+            if (p) onDelete(p)
+          }}
+        />
+      ) : (
+        <>
+          {/* ===== DESKTOP: полноценная таблица (md+) ===== */}
       <div className="hidden md:block overflow-hidden rounded-xl border border-border">
         <Table>
           <TableHeader>
@@ -402,6 +429,8 @@ export function SkladScreen({
             </Button>
           </div>
         </div>
+      )}
+        </>
       )}
 
       {/* Диалог этикетки — корректные размеры на десктопе и full-screen на мобильных */}

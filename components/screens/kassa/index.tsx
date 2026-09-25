@@ -41,6 +41,7 @@ export function KassaScreen({
   rates = [],
   clients = [],
   returns = [],
+  onLocalCheckout,
 }: {
   products: Product[]
   profile: Profile
@@ -50,6 +51,7 @@ export function KassaScreen({
   rates?: MetalRate[]
   clients?: Customer[]
   returns?: SaleReturn[]
+  onLocalCheckout?: (input: any) => Promise<any>
 }) {
   const router = useRouter()
   const [, startTransition] = useTransition()
@@ -341,7 +343,7 @@ export function KassaScreen({
     setConfirmLoss(false)
     setSubmitting(true)
     try {
-      const res = await checkout({
+      const checkoutPayload = {
         items: cart.map((item) => {
           const disc = item.discountSom ?? ((item.price * (item.discountPercent || 0)) / 100)
           const { lineId: _lineId, discountPercent: _dp, discountSom: _ds, ...rest } = item
@@ -354,10 +356,19 @@ export function KassaScreen({
         amount_electronic: payment === "mixed" ? Number(payElectronic) || 0 : undefined,
         customer_name: customerName,
         customer_phone: customerPhone,
-      })
-      toast.success(`Продажа оформлена: ${formatSom(res.total)}`, {
-        description: showBonus ? `Начислено ${res.bonusEarned} бонусов` : undefined,
-      })
+      }
+
+      if (onLocalCheckout) {
+        const res = await onLocalCheckout(checkoutPayload)
+        toast.success(`Продажа оформлена (офлайн/локально): ${formatSom(res.sale?.final_price || total)}`, {
+          description: "Запись сохранена в локальной базе и синхронизируется в фоне",
+        })
+      } else {
+        const res = await checkout(checkoutPayload)
+        toast.success(`Продажа оформлена: ${formatSom(res.total)}`, {
+          description: showBonus ? `Начислено ${res.bonusEarned} бонусов` : undefined,
+        })
+      }
       handleReset()
       startTransition(() => router.refresh())
     } catch (e) {

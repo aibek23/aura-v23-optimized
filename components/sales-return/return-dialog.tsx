@@ -39,12 +39,50 @@ export function ReturnDialog({
   const submit = async () => {
     setSaving(true)
     try {
-      const created = await returnSaleItem({
-        saleId: unit.sale.id,
-        itemIndex: unit.itemIndex,
-        reason,
-      })
-      toast.success(`Возврат оформлен: ${formatSom(Number(created.amount))}`, {
+      let created: SaleReturn
+      try {
+        if (!navigator.onLine) throw new Error("Offline")
+        created = await returnSaleItem({
+          saleId: unit.sale.id,
+          itemIndex: unit.itemIndex,
+          reason,
+        })
+      } catch (actionErr) {
+        // Offline return fallback: record locally and enqueue outbox
+        const { bulkPut } = await import("@/lib/local-db/db")
+        const { enqueueOutbox } = await import("@/lib/local-db/outbox")
+        const clientOpId = typeof crypto !== "undefined" ? crypto.randomUUID() : Math.random().toString(36).substring(2)
+        const returnId = typeof crypto !== "undefined" ? crypto.randomUUID() : Math.random().toString(36).substring(2)
+        const nowIso = new Date().toISOString()
+        const refundAmt = Number(breakdown.amount || 0)
+
+        created = {
+          id: returnId,
+          shop_id: unit.sale.shop_id,
+          sale_id: unit.sale.id,
+          item_index: unit.itemIndex,
+          product_id: unit.item.product_id,
+          product_name: unit.item.name || "Товар",
+          amount: refundAmt,
+          reason: reason || "Возврат клиентом (офлайн)",
+          created_at: nowIso,
+          client_op_id: clientOpId,
+        } as unknown as SaleReturn
+
+        await bulkPut("sale_returns", [created])
+        await enqueueOutbox({
+          client_op_id: clientOpId,
+          shop_id: unit.sale.shop_id,
+          entity: "sale_returns",
+          op_type: "atomic_return",
+          payload: {
+            ...created,
+            product_id: unit.item.product_id,
+          },
+        })
+      }
+
+      toast.success(`Возврат оформлен: ${formatSom(Number(created.amount || breakdown.amount))}`, {
         description: isScrap
           ? "Деньги изъяты из кассы"
           : "Деньги изъяты из кассы, товар снова на складе",

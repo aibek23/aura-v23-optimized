@@ -7,7 +7,8 @@
  */
 
 export const MAX_BYTES = 250 * 1024 // 250 Кб
-const MAX_SIDE = 1600
+export const MAX_SIDE = 1000 // Compressed to ~1000px WebP for cloud
+export const THUMB_SIDE = 200 // Local preview ~200px
 
 async function loadBitmap(file: Blob): Promise<{ width: number; height: number; draw: (ctx: CanvasRenderingContext2D, w: number, h: number) => void }> {
   if (typeof createImageBitmap === "function") {

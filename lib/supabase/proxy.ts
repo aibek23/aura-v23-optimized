@@ -6,9 +6,14 @@ export async function updateSession(request: NextRequest) {
     request,
   })
 
+  // Gracefully handle missing Supabase environment variables
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+    return supabaseResponse
+  }
+
   const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    process.env.NEXT_PUBLIC_SUPABASE_URL,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
     {
       cookieOptions: {
         sameSite: "none",
@@ -37,7 +42,16 @@ export async function updateSession(request: NextRequest) {
 
   const path = request.nextUrl.pathname
   const isAuthRoute = path.startsWith("/auth")
-  const isPublicAsset = path.startsWith("/api")
+  const isPublicAsset =
+    path.startsWith("/api") ||
+    path.startsWith("/sqlite3") ||
+    path === "/sw.js" ||
+    path === "/sync-worker.js" ||
+    path === "/manifest.json" ||
+    path === "/manifest.webmanifest" ||
+    path === "/site.webmanifest" ||
+    path === "/robots.txt" ||
+    path === "/favicon.ico"
   // Публичная часть (app): главная страница и витрины магазинов.
   const isPublicStore = path === "/" || path === "/store" || path.startsWith("/store/")
 

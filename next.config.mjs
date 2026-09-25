@@ -12,6 +12,7 @@ const nextConfig = {
 
   async rewrites() {
     return [
+      { source: '/manifest.json', destination: '/manifest.webmanifest' },
       { source: '/crm/pos', destination: '/pos' },
       { source: '/crm/showcase', destination: '/showcase' },
       { source: '/crm/inventory', destination: '/inventory' },
@@ -21,6 +22,19 @@ const nextConfig = {
       { source: '/crm/notifications', destination: '/notifications' },
       { source: '/crm/suppliers', destination: '/suppliers' },
       { source: '/crm/cabinet', destination: '/cabinet' },
+    ]
+  },
+
+  async headers() {
+    return [
+      {
+        source: '/sqlite3/:path*',
+        headers: [
+          { key: 'Cross-Origin-Opener-Policy', value: 'same-origin' },
+          { key: 'Cross-Origin-Embedder-Policy', value: 'require-corp' },
+          { key: 'Cache-Control', value: 'public, max-age=31536000, immutable' },
+        ],
+      },
     ]
   },
 

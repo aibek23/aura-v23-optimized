@@ -35,6 +35,8 @@ import {
 } from "lucide-react"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { NotificationBell } from "@/components/notifications"
+import { SyncIndicator } from "@/components/sync/sync-indicator"
+import { wipeLocalDatabase } from "@/lib/local-db/db"
 
 
 export function AppHeader({
@@ -65,6 +67,11 @@ export function AppHeader({
   const searchInputRef = useRef<HTMLInputElement>(null)
 
   const signOut = async () => {
+    try {
+      await wipeLocalDatabase()
+    } catch (err) {
+      console.error("Error wiping local database on sign out:", err)
+    }
     const supabase = createClient()
     await supabase.auth.signOut()
     router.push("/auth/login")
@@ -163,6 +170,7 @@ export function AppHeader({
         </button>
 
         <div className="flex shrink-0 items-center gap-1 sm:gap-2">
+          <SyncIndicator />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="sm" className="gap-1.5 bg-transparent" aria-label="Быстрое создание">
