@@ -99,6 +99,7 @@ export async function getProducts(): Promise<Product[]> {
     .from("products")
     .select(PRODUCT_COLUMNS)
     .order("created_at", { ascending: false })
+    .range(0, 99)
   if (error) throw error
   return withShopSeqId(supabase, (data as unknown as Product[]) ?? [])
 }

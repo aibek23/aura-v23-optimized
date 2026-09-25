@@ -23,7 +23,11 @@ async function requireProfile() {
 
 export async function getSales(): Promise<Sale[]> {
   const { supabase } = await requireProfile()
-  const { data, error } = await supabase.from("sales").select("*").order("created_at", { ascending: false })
+  const { data, error } = await supabase
+    .from("sales")
+    .select("*")
+    .order("created_at", { ascending: false })
+    .range(0, 199)
   if (error) throw error
   return (data as Sale[]) ?? []
 }

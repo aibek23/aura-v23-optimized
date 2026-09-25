@@ -22,8 +22,9 @@ export async function getClients(): Promise<Customer[]> {
   const { data: clients, error: clientsError } = await supabase
     .from("customers")
     .select("*")
-    .eq("shop_id", profile.shop_id)
-    .order("created_at", { ascending: false })
+  .eq("shop_id", profile.shop_id)
+  .order("created_at", { ascending: false })
+  .range(0, 99)
 
   if (clientsError) throw clientsError
   if (!clients || clients.length === 0) return []

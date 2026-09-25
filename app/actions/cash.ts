@@ -37,7 +37,8 @@ export async function getCashData(): Promise<CashData> {
       .from("cash_operations")
       .select("*")
       .eq("shop_id", profile.shop_id)
-      .order("created_at", { ascending: false }),
+      .order("created_at", { ascending: false })
+      .range(0, 199),
     supabase
       .from("cash_reason_presets")
       .select("*")

@@ -29,6 +29,7 @@ export async function getSaleReturns(): Promise<SaleReturn[]> {
     .select("*")
     .eq("shop_id", profile.shop_id)
     .order("created_at", { ascending: false })
+    .range(0, 99)
   if (error) {
     console.error("[returns] getSaleReturns error:", error.message)
     return []
