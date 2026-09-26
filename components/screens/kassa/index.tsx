@@ -388,6 +388,7 @@ export function KassaScreen({
             operations={cash.operations}
             presets={cash.presets}
             isAdmin={isAdmin}
+            balanceOnly
           />
           <KassaSearch
             query={query}

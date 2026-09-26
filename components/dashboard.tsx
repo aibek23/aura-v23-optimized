@@ -6,6 +6,7 @@ import { Toaster } from "@/components/ui/sonner"
 import { AppHeader } from "@/components/app-header"
 import { AppNav, SCREEN_PATHS, type ScreenId } from "@/components/app-nav"
 import { KassaScreen } from "@/components/screens/kassa/index"
+import { CashPanel } from "@/components/screens/kassa/cash-panel"
 import { VitrinaScreen } from "@/components/screens/vitrina"
 import { SkladScreen } from "@/components/screens/sklad"
 import { OtchetyScreen } from "@/components/screens/otchety"
@@ -303,8 +304,6 @@ export function Dashboard({
           }
         }}
         onNavigate={handleScreenChange}
-        products={currentProducts}
-        clients={currentClients}
       />
       <div className="flex min-h-0 flex-1">
 <AppNav
@@ -334,6 +333,14 @@ export function Dashboard({
             rates={currentRates}
             clients={currentClients}
             onLocalCheckout={localCrm.localCheckout}
+          />
+        )}
+        {activeScreen === "money" && (
+          <CashPanel
+            sales={currentSales}
+            operations={currentCash.operations}
+            presets={currentCash.presets}
+            isAdmin={isAdmin}
           />
         )}
         {activeScreen === "vitrina" && (

@@ -28,6 +28,7 @@ import {
   ChevronUp,
   Eye,
   LayoutGrid,
+  Wallet,
   LogOut,
   ShoppingCart,
   Store,
@@ -41,6 +42,7 @@ import {
 
 export type ScreenId =
   | "kassa"
+  | "money"
   | "vitrina"
   | "sklad"
   | "otchety"
@@ -52,6 +54,7 @@ export type ScreenId =
 
 export const SCREEN_PATHS: Record<ScreenId, string> = {
   kassa: "/crm/pos",
+  money: "/crm/money",
   vitrina: "/crm/showcase",
   sklad: "/crm/inventory",
   clients: "/crm/customers",
@@ -75,6 +78,7 @@ type NavItem = {
 
 const ITEMS: NavItem[] = [
   { id: "kassa", label: "Касса", icon: ShoppingCart, group: "work" },
+  { id: "money", label: "Деньги", icon: Wallet, group: "work" },
   { id: "vitrina", label: "Витрина", icon: LayoutGrid, group: "work" },
   { id: "sklad", label: "Склад", icon: Warehouse, group: "work" },
   { id: "clients", label: "Клиенты", icon: Users, group: "work" },

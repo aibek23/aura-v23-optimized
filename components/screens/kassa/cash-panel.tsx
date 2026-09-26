@@ -21,11 +21,13 @@ export function CashPanel({
   operations,
   presets,
   isAdmin,
+  balanceOnly = false,
 }: {
   sales: Sale[]
   operations: CashOperation[]
   presets: CashReasonPreset[]
   isAdmin: boolean
+  balanceOnly?: boolean
 }) {
   const [period, setPeriod] = useState<PeriodId>("today")
   const [dialog, setDialog] = useState<{ type: CashOpType; amount?: string; reason?: string } | null>(null)
@@ -107,7 +109,7 @@ export function CashPanel({
             )}
           </div>
         </div>
-        {isAdmin && (
+        {isAdmin && !balanceOnly && (
           <div className="flex flex-wrap gap-2">
             <Button
               variant="outline"
@@ -130,7 +132,7 @@ export function CashPanel({
         )}
       </div>
 
-      {isAdmin && (
+      {isAdmin && !balanceOnly && (
         <>
           <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
             {PERIOD_PRESETS.map((p) => (
@@ -160,13 +162,11 @@ export function CashPanel({
             />
           </div>
 
-          {confirmedOperations.length > 0 && (
-            <CashHistory operations={confirmedOperations} period={period} authors={authors} />
-          )}
+          <CashHistory operations={confirmedOperations} period={period} authors={authors} />
         </>
       )}
 
-      {dialog && (
+      {!balanceOnly && dialog && (
         <CashOperationDialog
           type={dialog.type}
           balances={balances}
