@@ -117,7 +117,7 @@ export function ProductDialog({
           toast.success("Товар добавлен")
         }
       } catch (saveErr) {
-        // Offline fallback: save locally to SQLite / IndexedDB and queue in Outbox
+        // Offline fallback: save locally to IndexedDB and queue in Outbox.
         const { bulkPut } = await import("@/lib/local-db/db")
         const { enqueueOutbox } = await import("@/lib/local-db/outbox")
         const clientOpId = typeof crypto !== "undefined" ? crypto.randomUUID() : Math.random().toString(36).substring(2)

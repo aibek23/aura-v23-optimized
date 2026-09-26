@@ -36,7 +36,7 @@ import {
 import { ThemeToggle } from "@/components/theme-toggle"
 import { NotificationBell } from "@/components/notifications"
 import { SyncIndicator } from "@/components/sync/sync-indicator"
-import { wipeLocalDatabase } from "@/lib/local-db/db"
+import { runLogoutCleanup } from "@/lib/local-db/logout-cleanup"
 
 
 export function AppHeader({
@@ -67,13 +67,14 @@ export function AppHeader({
   const searchInputRef = useRef<HTMLInputElement>(null)
 
   const signOut = async () => {
+    // Полная очистка локальных данных и кэшей перед выходом
+    await runLogoutCleanup()
     try {
-      await wipeLocalDatabase()
-    } catch (err) {
-      console.error("Error wiping local database on sign out:", err)
+      const supabase = createClient()
+      await supabase.auth.signOut()
+    } catch {
+      // даже при ошибке сети уводим пользователя на экран входа
     }
-    const supabase = createClient()
-    await supabase.auth.signOut()
     router.push("/auth/login")
   }
 

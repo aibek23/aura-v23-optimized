@@ -1,7 +1,7 @@
 "use client"
 
-import { useState, useEffect, useCallback, useTransition } from 'react'
-import type { Customer, Product, Profile, Role, Sale, SaleReturn, MetalRate, CashOperation } from '@/lib/types'
+import { useState, useEffect, useCallback } from 'react'
+import type { Customer, Product, Profile, Role, Sale, SaleItem, SaleReturn, MetalRate, CashOperation } from '@/lib/types'
 import type { CashData } from '@/app/actions/cash'
 import type { SupplierDebtData } from '@/app/actions/suppliers'
 import {
@@ -9,10 +9,12 @@ import {
   getShopRecords,
   bulkPut,
   searchLocalProducts,
+  ensureShopScope,
 } from './db'
 import { enqueueOutbox } from './outbox'
 import { syncEngine } from '../sync/sync-engine'
-import { updateDailyAggregateForDate } from './aggregates'
+import { createLocalId } from './id'
+import { persistOfflineSale } from './sale-record'
 import { toast } from 'sonner'
 
 export function useLocalCrm(initialData: {
@@ -42,29 +44,45 @@ export function useLocalCrm(initialData: {
 
     async function initData() {
       try {
-        const db = await getLocalDB()
+        await getLocalDB()
+
+        // Привязываем локальную базу к текущему магазину. Если магазин сменился,
+        // все локальные данные прошлого магазина удаляются до чтения и записи —
+        // так товары и чеки разных магазинов не могут смешаться.
+        const shopSwitched = await ensureShopScope(shopId)
+        if (shopSwitched && mounted) {
+          setProducts([])
+          setSales([])
+          setReturns([])
+          setCash({ operations: [], presets: [] })
+          setClients([])
+          setRates([])
+        }
 
         // Seed initial server props into local DB if available
+        const ofShop = <T extends { shop_id?: string }>(rows?: T[]) =>
+          (rows || []).filter((row) => !row.shop_id || row.shop_id === shopId)
+
         if (initialData.products && initialData.products.length > 0) {
-          await bulkPut('products', initialData.products)
+          await bulkPut('products', ofShop(initialData.products))
         }
         if (initialData.sales && initialData.sales.length > 0) {
-          await bulkPut('sales', initialData.sales)
+          await bulkPut('sales', ofShop(initialData.sales))
         }
         if (initialData.returns && initialData.returns.length > 0) {
-          await bulkPut('sale_returns', initialData.returns)
+          await bulkPut('sale_returns', ofShop(initialData.returns))
         }
         if (initialData.cash?.operations && initialData.cash.operations.length > 0) {
-          await bulkPut('cash_operations', initialData.cash.operations)
+          await bulkPut('cash_operations', ofShop(initialData.cash.operations))
         }
         if (initialData.cash?.presets && initialData.cash.presets.length > 0) {
-          await bulkPut('cash_reason_presets', initialData.cash.presets)
+          await bulkPut('cash_reason_presets', ofShop(initialData.cash.presets))
         }
         if (initialData.clients && initialData.clients.length > 0) {
-          await bulkPut('customers', initialData.clients)
+          await bulkPut('customers', ofShop(initialData.clients))
         }
         if (initialData.rates && initialData.rates.length > 0) {
-          await bulkPut('metal_rates', initialData.rates)
+          await bulkPut('metal_rates', ofShop(initialData.rates))
         }
 
         // Read all active records from local DB
@@ -110,17 +128,35 @@ export function useLocalCrm(initialData: {
       }
     }
 
+    const refreshAfterSaleSync = async () => {
+      const [refreshedProducts, refreshedSales, refreshedClients] = await Promise.all([
+        getShopRecords<Product>('products', shopId),
+        getShopRecords<Sale>('sales', shopId),
+        getShopRecords<Customer>('customers', shopId),
+      ])
+      if (!mounted) return
+      if (refreshedProducts.length > 0) setProducts(refreshedProducts)
+      setSales(refreshedSales)
+      setClients(refreshedClients)
+    }
+
+    const onSaleSyncStateChanged = () => {
+      void refreshAfterSaleSync()
+    }
+
     window.addEventListener('aura:phase1_ready', onPhase1Ready)
+    window.addEventListener('aura:sale_sync_state_changed', onSaleSyncStateChanged)
     return () => {
       mounted = false
       window.removeEventListener('aura:phase1_ready', onPhase1Ready)
+      window.removeEventListener('aura:sale_sync_state_changed', onSaleSyncStateChanged)
     }
   }, [shopId])
 
   // 2. Offline-first Checkout (Sales POS)
   const localCheckout = useCallback(
     async (input: {
-      items: any[]
+      items: SaleItem[]
       discount: number
       payment_method: string
       amount_cash?: number
@@ -129,14 +165,72 @@ export function useLocalCrm(initialData: {
       customer_phone: string
       bonus_used: number
     }) => {
-      const clientOpId = typeof crypto !== 'undefined' ? crypto.randomUUID() : Math.random().toString(36).substring(2)
-      const saleId = typeof crypto !== 'undefined' ? crypto.randomUUID() : Math.random().toString(36).substring(2)
-      const nowIso = new Date().toISOString()
-      const todayStr = nowIso.slice(0, 10)
+      if (!input.items.length) throw new Error('Чек пуст — добавьте хотя бы одну позицию')
+      if (input.items.some((item) => Number(item.quantity) !== 1)) {
+        throw new Error('Количество каждой позиции должно быть равно 1')
+      }
 
-      // Calculate total price
-      const totalCost = input.items.reduce((acc, it) => acc + Number(it.price || 0), 0)
-      const finalPrice = Math.max(0, totalCost - (input.discount || 0) - (input.bonus_used || 0))
+      const clientOpId = createLocalId()
+      const saleId = createLocalId()
+      const nowIso = new Date().toISOString()
+      const items = input.items.map((item) => {
+        const price = Number(item.price)
+        if (!Number.isFinite(price) || price < 0) throw new Error('В чеке указана некорректная цена')
+
+        if (item.kind === 'scrap') {
+          const weight = Number(item.weight)
+          if (!Number.isFinite(weight) || weight <= 0) throw new Error('Укажите корректный вес лома')
+          return { ...item, kind: 'scrap' as const, product_id: null, quantity: 1, price }
+        }
+
+        const candidateId = item.product_id || item.id
+        const product = products.find(
+          (row) => row.id === candidateId || (item.sku && row.sku === item.sku)
+        )
+        if (!product) throw new Error('Товар не найден в локальном каталоге')
+
+        return {
+          ...item,
+          id: product.id,
+          product_id: product.id,
+          kind: 'product' as const,
+          quantity: 1,
+          sku: product.sku,
+          name: item.name || product.name,
+          cost: Number(product.purchase_price) || 0,
+          price,
+        }
+      })
+
+      const productIds = items
+        .filter((item) => item.kind !== 'scrap' && item.product_id)
+        .map((item) => item.product_id as string)
+      if (new Set(productIds).size !== productIds.length) {
+        throw new Error('Одно изделие нельзя добавить в чек дважды')
+      }
+
+      const subtotal = items.reduce((sum, item) => sum + Number(item.price || 0), 0)
+      const bonusUsed = Math.max(0, Math.min(Number(input.bonus_used) || 0, subtotal))
+      // Prices already include line-level discounts from the POS screen.
+      const discount = 0
+      const finalPrice = Math.max(0, subtotal - bonusUsed)
+      const costTotal = items.reduce((sum, item) => sum + Number(item.cost || 0), 0)
+
+      let cashAmount = 0
+      let electronicAmount = 0
+      if (input.payment_method === 'cash') {
+        cashAmount = finalPrice
+      } else if (input.payment_method === 'mixed') {
+        cashAmount = Math.round(Number(input.amount_cash) || 0)
+        electronicAmount = Math.round(Number(input.amount_electronic) || 0)
+        if (cashAmount < 0 || electronicAmount < 0 || Math.abs(cashAmount + electronicAmount - finalPrice) > 1) {
+          throw new Error('Сумма оплаты не совпадает с итогом чека')
+        }
+      } else if (input.payment_method === 'card' || input.payment_method === 'transfer') {
+        electronicAmount = finalPrice
+      } else {
+        throw new Error('Выберите корректный способ оплаты')
+      }
 
       const newSale: Sale = {
         id: saleId,
@@ -147,70 +241,56 @@ export function useLocalCrm(initialData: {
         customer_name: input.customer_name || null,
         customer_phone: input.customer_phone || null,
         payment_method: input.payment_method,
-        subtotal: totalCost,
-        discount: input.discount || 0,
+        amount_cash: cashAmount,
+        amount_electronic: electronicAmount,
+        subtotal,
+        discount,
         total: finalPrice,
-        cost_total: 0,
-        profit: finalPrice,
+        cost_total: costTotal,
+        profit: finalPrice - costTotal,
         bonus_earned: 0,
-        bonus_used: input.bonus_used || 0,
-        items: input.items,
-        total_price: totalCost,
+        bonus_used: bonusUsed,
+        items,
+        total_price: subtotal,
         final_price: finalPrice,
         created_at: nowIso,
         client_op_id: clientOpId,
+        sync_status: 'pending',
       }
 
-      // 1. Mark products as sold in local DB
-      const updatedProducts = products.map((p) => {
-        const soldItem = input.items.find((it) => it.id === p.id || it.sku === p.sku)
-        if (soldItem) {
-          return { ...p, status: 'sold' as const, updated_at: nowIso }
-        }
-        return p
-      })
-
-      // 2. Add cash operation if cash involved
-      const cashAmount = input.payment_method === 'cash' ? finalPrice : (input.amount_cash || 0)
       let newCashOp: CashOperation | null = null
-      if (cashAmount > 0) {
+      if (finalPrice > 0) {
+        const source =
+          cashAmount > 0 && electronicAmount > 0
+            ? 'mixed'
+            : electronicAmount > 0
+              ? 'electronic'
+              : 'cash'
         newCashOp = {
-          id: typeof crypto !== 'undefined' ? crypto.randomUUID() : Math.random().toString(36).substring(2),
+          id: createLocalId(),
           shop_id: shopId,
+          created_by: initialData.profile.id,
+          author_name: initialData.profile.full_name || null,
           type: 'income',
-          amount: cashAmount,
+          amount: finalPrice,
+          source,
+          amount_cash: cashAmount,
+          amount_electronic: electronicAmount,
           reason: `Продажа чека #${saleId.slice(0, 8)}`,
           created_at: nowIso,
-          client_op_id: clientOpId,
+          client_op_id: `${clientOpId}:cash`,
         } as CashOperation
+        newSale.cash_operation_id = newCashOp.id
       }
 
-      // Write changes to local DB
-      await bulkPut('sales', [newSale])
-      await bulkPut('products', updatedProducts.filter((p) => input.items.some((it) => it.id === p.id || it.sku === p.sku)))
-      if (newCashOp) {
-        await bulkPut('cash_operations', [newCashOp])
-      }
-
-      // Update daily precomputed aggregates
-      await updateDailyAggregateForDate(shopId, todayStr, {
-        salesSom: finalPrice,
-        salesCount: 1,
-        cashIncomeSom: cashAmount,
+      const changedProducts = await persistOfflineSale({
+        sale: newSale,
+        productIds,
+        cachedProducts: products,
+        cashOperation: newCashOp,
       })
-
-      // Enqueue to Outbox with client_op_id for cloud sync
-      await enqueueOutbox({
-        client_op_id: clientOpId,
-        shop_id: shopId,
-        entity: 'sales',
-        op_type: 'atomic_sale',
-        payload: {
-          ...newSale,
-          amount_cash: input.amount_cash,
-          amount_electronic: input.amount_electronic,
-        },
-      })
+      const changedById = new Map(changedProducts.map((product) => [product.id, product]))
+      const updatedProducts = products.map((product) => changedById.get(product.id) || product)
 
       // Update memory state immediately
       setProducts(updatedProducts)
@@ -221,16 +301,15 @@ export function useLocalCrm(initialData: {
 
       return { success: true, sale: newSale }
     },
-    [shopId, initialData.profile.id, products]
+    [shopId, initialData.profile.id, initialData.profile.full_name, products]
   )
 
   // 3. Offline-first Return
   const localReturn = useCallback(
     async (input: { saleId: string; itemIndex: number; reason?: string }) => {
-      const clientOpId = typeof crypto !== 'undefined' ? crypto.randomUUID() : Math.random().toString(36).substring(2)
-      const returnId = typeof crypto !== 'undefined' ? crypto.randomUUID() : Math.random().toString(36).substring(2)
+      const clientOpId = createLocalId()
+      const returnId = createLocalId()
       const nowIso = new Date().toISOString()
-      const todayStr = nowIso.slice(0, 10)
 
       const targetSale = sales.find((s) => s.id === input.saleId)
       if (!targetSale || !targetSale.items || !targetSale.items[input.itemIndex]) {
@@ -263,26 +342,19 @@ export function useLocalCrm(initialData: {
 
       // Add cash outcome
       const cashOutOp: CashOperation = {
-        id: typeof crypto !== 'undefined' ? crypto.randomUUID() : Math.random().toString(36).substring(2),
+        id: createLocalId(),
         shop_id: shopId,
         type: 'outcome',
         amount: returnAmount,
         reason: `Возврат по чеку #${targetSale.id.slice(0, 8)} (${item.name || item.sku})`,
         created_at: nowIso,
-        client_op_id: clientOpId,
+        client_op_id: `${clientOpId}:cash`,
       } as CashOperation
 
       // Write to local DB
       await bulkPut('sale_returns', [newReturn])
       await bulkPut('products', updatedProducts.filter((p) => p.id === item.id || p.sku === item.sku))
       await bulkPut('cash_operations', [cashOutOp])
-
-      // Update daily aggregates
-      await updateDailyAggregateForDate(shopId, todayStr, {
-        returnsSom: returnAmount,
-        returnsCount: 1,
-        cashOutcomeSom: returnAmount,
-      })
 
       // Enqueue to Outbox
       await enqueueOutbox({
@@ -309,8 +381,8 @@ export function useLocalCrm(initialData: {
   const localSaveProduct = useCallback(
     async (productData: Partial<Product>) => {
       const nowIso = new Date().toISOString()
-      const clientOpId = typeof crypto !== 'undefined' ? crypto.randomUUID() : Math.random().toString(36).substring(2)
-      const productId = productData.id || (typeof crypto !== 'undefined' ? crypto.randomUUID() : Math.random().toString(36).substring(2))
+      const clientOpId = createLocalId()
+      const productId = productData.id || createLocalId()
 
       const fullProduct: Product = {
         ...productData,
@@ -350,7 +422,7 @@ export function useLocalCrm(initialData: {
   const localDeleteProduct = useCallback(
     async (productId: string) => {
       const nowIso = new Date().toISOString()
-      const clientOpId = typeof crypto !== 'undefined' ? crypto.randomUUID() : Math.random().toString(36).substring(2)
+      const clientOpId = createLocalId()
 
       const target = products.find((p) => p.id === productId)
       if (!target) return
@@ -375,8 +447,8 @@ export function useLocalCrm(initialData: {
   const localAddCustomer = useCallback(
     async (customerData: Partial<Customer>) => {
       const nowIso = new Date().toISOString()
-      const clientOpId = typeof crypto !== 'undefined' ? crypto.randomUUID() : Math.random().toString(36).substring(2)
-      const customerId = customerData.id || (typeof crypto !== 'undefined' ? crypto.randomUUID() : Math.random().toString(36).substring(2))
+      const clientOpId = createLocalId()
+      const customerId = customerData.id || createLocalId()
 
       const fullCustomer: Customer = {
         ...customerData,
@@ -412,10 +484,9 @@ export function useLocalCrm(initialData: {
   // 6. Offline-first Cash Operation
   const localAddCashOperation = useCallback(
     async (input: { type: 'income' | 'outcome' | 'collection'; amount: number; reason: string }) => {
-      const clientOpId = typeof crypto !== 'undefined' ? crypto.randomUUID() : Math.random().toString(36).substring(2)
-      const opId = typeof crypto !== 'undefined' ? crypto.randomUUID() : Math.random().toString(36).substring(2)
+      const clientOpId = createLocalId()
+      const opId = createLocalId()
       const nowIso = new Date().toISOString()
-      const todayStr = nowIso.slice(0, 10)
 
       const newOp: CashOperation = {
         id: opId,
@@ -428,12 +499,6 @@ export function useLocalCrm(initialData: {
       } as CashOperation
 
       await bulkPut('cash_operations', [newOp])
-
-      await updateDailyAggregateForDate(shopId, todayStr, {
-        cashIncomeSom: input.type === 'income' ? input.amount : 0,
-        cashOutcomeSom: input.type === 'outcome' ? input.amount : 0,
-        cashCollectionSom: input.type === 'collection' ? input.amount : 0,
-      })
 
       await enqueueOutbox({
         client_op_id: clientOpId,

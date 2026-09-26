@@ -4,6 +4,7 @@ import type { Profile } from "@/lib/types"
 import { Button } from "@/components/ui/button"
 import { AuraMark } from "@/components/brand/aura-mark"
 import { createClient } from "@/lib/supabase/client"
+import { runLogoutCleanup } from "@/lib/local-db/logout-cleanup"
 import { useRouter } from "next/navigation"
 import { Clock, XCircle, Loader2 } from "lucide-react"
 import { useState, useEffect, useTransition } from "react"
@@ -25,8 +26,14 @@ export function PendingScreen({ profile, email }: { profile: Profile | null; ema
   }, [rejected, router])
 
   const signOut = async () => {
-    const supabase = createClient()
-    await supabase.auth.signOut()
+    // Полная очистка локальных данных и кэшей перед выходом
+    await runLogoutCleanup()
+    try {
+      const supabase = createClient()
+      await supabase.auth.signOut()
+    } catch {
+      // даже при ошибке сети уводим пользователя на экран входа
+    }
     router.push("/auth/login")
   }
 

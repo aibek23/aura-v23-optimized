@@ -24,14 +24,8 @@ import { useRouter } from "next/navigation"
 import { createClient as createSupabaseBrowserClient } from "@/lib/supabase/client"
 import { toast } from "sonner"
 import { useLocalCrm } from "@/lib/local-db/use-local-crm"
-import {
-  saveUserSessionSqlite,
-  saveProductsSqlite,
-  saveCustomersSqlite,
-  saveMetalRatesSqlite,
-  saveSuppliersSqlite,
-  saveShopSettingsSqlite,
-} from "@/lib/local-db/sqlite-opfs"
+import { runLogoutCleanup } from "@/lib/local-db/logout-cleanup"
+import { saveUserSession } from "@/lib/local-db/db"
 
 // ---------------------------------------------------------------------------
 // Двухэтапная защита от случайного выхода из CRM через кнопку «Назад»
@@ -144,7 +138,7 @@ export function Dashboard({
 
   const [, startTransition] = useTransition()
 
-  // Local-First data layer (SQLite WASM / IndexedDB + Background Sync)
+  // Local-first data layer (IndexedDB + Background Sync)
   const localCrm = useLocalCrm({
     profile,
     products,
@@ -156,35 +150,23 @@ export function Dashboard({
     supplierDebts,
   })
 
-  // Persist session and reference catalogs into SQLite WASM with OPFS whenever available
+  // Persist the offline session in the single local IndexedDB database.
   useEffect(() => {
     if (profile?.id) {
-      saveUserSessionSqlite({
+      saveUserSession({
         userId: profile.id,
         email: email || profile.email || undefined,
         profile,
         shopId: profile.shop_id || undefined,
-      })
+      }).catch((err) => console.warn("Failed to persist offline session:", err))
     }
-    const targetShopId = profile?.shop_id
-    if (targetShopId) {
-      if (products && products.length > 0) {
-        saveProductsSqlite(targetShopId, products)
-      }
-      if (clients && clients.length > 0) {
-        saveCustomersSqlite(targetShopId, clients)
-      }
-      if (rates && rates.length > 0) {
-        saveMetalRatesSqlite(targetShopId, rates)
-      }
-      if (supplierDebts?.suppliers?.length) {
-        saveSuppliersSqlite(targetShopId, supplierDebts.suppliers)
-      }
-    }
-  }, [profile, email, products, clients, rates, supplierDebts, cabinet])
+  }, [profile, email])
 
   const currentProducts = localCrm.products.length > 0 ? localCrm.products : products
   const currentSales = localCrm.sales.length > 0 ? localCrm.sales : sales
+  const confirmedSales = currentSales.filter(
+    (sale) => sale.sync_status !== "pending" && sale.sync_status !== "rejected",
+  )
   const currentReturns = localCrm.returns.length > 0 ? localCrm.returns : returns
   const currentCash = localCrm.cash || cash
   const currentRates = localCrm.rates.length > 0 ? localCrm.rates : rates
@@ -262,6 +244,8 @@ export function Dashboard({
   const handleExitCrm = async () => {
     exitModalOpenRef.current = false
     setShowExitModal(false)
+    // Полная очистка локальных данных и кэшей перед выходом
+    await runLogoutCleanup()
     try {
       const supabase = createSupabaseBrowserClient()
       await supabase.auth.signOut()
@@ -358,7 +342,7 @@ export function Dashboard({
         {activeScreen === "sklad" && (
           <SkladScreen
             products={currentProducts}
-            sales={currentSales}
+            sales={confirmedSales}
             canSeePurchasePrice={canSeePurchasePrice}
             isAdmin={isAdmin}
           />
@@ -370,7 +354,7 @@ export function Dashboard({
           <SuppliersScreen
             supplierDebts={supplierDebts}
             products={currentProducts}
-            sales={currentSales}
+            sales={confirmedSales}
             isAdmin={isAdmin}
           />
         )}

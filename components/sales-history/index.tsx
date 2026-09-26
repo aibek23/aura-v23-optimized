@@ -43,6 +43,8 @@ function unitToRow(unit: SaleUnit): HistoryRow {
     price,
     cost,
     loss: Math.max(0, cost - price),
+    syncStatus: unit.sale.sync_status,
+    syncError: unit.sale.sync_error,
   }
 }
 
@@ -93,6 +95,10 @@ export function SalesHistory({
   }, [allReturns])
 
   const units = useMemo(() => flattenSaleUnits(sales, products), [sales, products])
+  const returnableUnits = useMemo(
+    () => units.filter((unit) => unit.sale.sync_status !== "pending" && unit.sale.sync_status !== "rejected"),
+    [units],
+  )
   const returnedKeys = useMemo(
     () => new Set(allReturns.map((r) => saleUnitKey(r.sale_id, r.item_index))),
     [allReturns],
@@ -130,8 +136,11 @@ export function SalesHistory({
     return () => io.disconnect()
   }, [rows.length])
 
-  const totalSum = rows.reduce((s, r) => s + Number(r.price), 0)
-  const returnedSum = rows
+  const confirmedRows = rows.filter((row) => row.syncStatus !== "pending" && row.syncStatus !== "rejected")
+  const totalSum = confirmedRows.reduce((s, r) => s + Number(r.price), 0)
+  const pendingCount = rows.filter((row) => row.syncStatus === "pending").length
+  const rejectedCount = rows.filter((row) => row.syncStatus === "rejected").length
+  const returnedSum = confirmedRows
     .filter((r) => refundByUnit.has(`${r.saleId}:${r.itemIndex}`))
     .reduce((s, r) => s + Number(refundByUnit.get(`${r.saleId}:${r.itemIndex}`)?.amount ?? 0), 0)
 
@@ -153,13 +162,15 @@ export function SalesHistory({
           <History className="h-4 w-4 text-primary" />
           История продаж
           <span className="text-xs text-muted-foreground">
-            ({rows.length} шт. · {formatSom(totalSum)})
+            ({confirmedRows.length} подтверждено · {formatSom(totalSum)})
+            {pendingCount > 0 && <span className="ml-1 text-amber-700">· {pendingCount} ожидает</span>}
+            {rejectedCount > 0 && <span className="ml-1 text-destructive">· {rejectedCount} не учтено</span>}
             {returnedSum > 0 && (
               <span className="ml-1 text-destructive">· возвраты −{formatSom(returnedSum)}</span>
             )}
           </span>
         </div>
-        {canReturn && units.length > 0 && (
+        {canReturn && returnableUnits.length > 0 && (
           <Button
             size="sm"
             variant="outline"
@@ -254,7 +265,7 @@ export function SalesHistory({
 
       {searchOpen && (
         <ReturnSearchModal
-          units={units}
+          units={returnableUnits}
           returnedKeys={returnedKeys}
           onClose={() => setSearchOpen(false)}
           onReturned={(created) => finishReturn(created)}

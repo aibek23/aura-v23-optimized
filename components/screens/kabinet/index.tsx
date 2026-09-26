@@ -25,6 +25,7 @@ import { useRouter } from "next/navigation"
 import { cn } from "@/lib/utils"
 import { BadgeCheck, Coins, Gift, LogOut, RotateCcw, Trash2, UserCheck, UserX, Users, Wifi } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
+import { runLogoutCleanup } from "@/lib/local-db/logout-cleanup"
 
 const ONLINE_WINDOW_MS = 3 * 60 * 1000
 
@@ -724,6 +725,8 @@ export function KabinetScreen({
           variant="outline"
           className="w-full gap-2 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
           onClick={async () => {
+            // Полная очистка локальных данных и кэшей перед выходом
+            await runLogoutCleanup()
             try {
               const supabase = createClient()
               await supabase.auth.signOut()

@@ -53,6 +53,7 @@ export function SyncIndicator() {
     lastSuccessAt,
     currentTask,
     lastError,
+    isStale,
   } = state
 
   const handleSyncNow = () => {
@@ -142,6 +143,17 @@ export function SyncIndicator() {
             <span className="text-destructive font-medium">Ошибка связи</span>
           )}
 
+          {/* Данные локальные и давно не проверялись в облаке */}
+          {isStale && status !== "syncing" && (
+            <Badge
+              variant="outline"
+              className="bg-amber-50 text-amber-800 border-amber-300 dark:bg-amber-950/60 dark:text-amber-200 dark:border-amber-800 text-[10px] px-1.5 py-0 h-4"
+              title="Показаны локальные данные, не подтверждённые облаком"
+            >
+              Устаревшие
+            </Badge>
+          )}
+
           {/* Outbox badge if pending operations exist */}
           {outboxPendingCount > 0 && (
             <Badge
@@ -195,7 +207,7 @@ export function SyncIndicator() {
             <div className="space-y-1.5 text-xs text-muted-foreground">
               <div className="flex items-center justify-between">
                 <span>Локальное хранилище:</span>
-                <span className="font-medium text-foreground">OPFS / IndexedDB (активно)</span>
+                <span className="font-medium text-foreground">IndexedDB (активно)</span>
               </div>
               <div className="flex items-center justify-between">
                 <span>Очередь отправки (Outbox):</span>

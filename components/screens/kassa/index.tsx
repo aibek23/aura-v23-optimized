@@ -7,8 +7,7 @@ import { buildRateMap, scrapRateOf } from "@/lib/rates"
 import { round, toNumber } from "@/hooks/useCalculator"
 import { checkout } from "@/app/actions/sales"
 import { SalesHistory } from "@/components/sales-history"
-import { CashPanel, OPEN_CASH_INCOME_EVENT } from "@/components/screens/kassa/cash-panel"
-import { computeBalances } from "@/lib/cash"
+import { CashPanel } from "@/components/screens/kassa/cash-panel"
 import type { CashData } from "@/app/actions/cash"
 import { Button } from "@/components/ui/button"
 import { ArrowUp } from "lucide-react"
@@ -20,7 +19,6 @@ import { filterProducts, isSearchReady } from "@/lib/product-search"
 import { KassaSearch } from "./kassa-search"
 import { KassaCart } from "./kassa-cart"
 import { KassaLossModal } from "./kassa-loss-modal"
-import { KassaScrap, type ScrapDraft } from "./kassa-scrap"
 
 export interface ExtendedSaleItem extends SaleItem {
   lineId: string
@@ -213,30 +211,6 @@ export function KassaScreen({
     })
   }
 
-  /** Лом попадает в чек отдельной строкой: склада он не касается. */
-  const addScrap = ({ name, metal, weight, pricePerGram }: ScrapDraft) => {
-    const price = round(weight * pricePerGram)
-    setCart((prev) => [
-      ...prev,
-      {
-        lineId: `scrap-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        product_id: null,
-        kind: "scrap",
-        name: name || `Лом · ${metal}`,
-        weight,
-        metal,
-        price_per_gram: pricePerGram,
-        quantity: 1,
-        // Лом покупается по курсу — прибыли в нём нет, поэтому cost === price.
-        price,
-        cost: price,
-        discountPercent: 0,
-        discountSom: 0,
-      },
-    ])
-    toast.success(`Лом добавлен: ${formatSom(price)}`)
-  }
-
   /** Пересчёт строки чека по цене за грамм. */
   const changeItemPricePerGram = (lineId: string, value: number) => {
     const perGram = Math.max(0, toNumber(value))
@@ -360,8 +334,8 @@ export function KassaScreen({
 
       if (onLocalCheckout) {
         const res = await onLocalCheckout(checkoutPayload)
-        toast.success(`Продажа оформлена (офлайн/локально): ${formatSom(res.sale?.final_price || total)}`, {
-          description: "Запись сохранена в локальной базе и синхронизируется в фоне",
+        toast.success(`Продажа записана локально: ${formatSom(res.sale?.final_price || total)}`, {
+          description: "Ожидает подтверждения сервера. При конфликте с другой продажей приложение сообщит об этом.",
         })
       } else {
         const res = await checkout(checkoutPayload)
@@ -395,9 +369,6 @@ export function KassaScreen({
     }
     void doCheckout()
   }
-
-  /** Текущие балансы кассы: из них выплачивается лом. */
-  const cashBalances = useMemo(() => computeBalances(sales, cash.operations), [sales, cash.operations])
 
   const scrollToTop = () => {
     window.scrollTo({ top: 0, behavior: "smooth" })
@@ -490,14 +461,6 @@ export function KassaScreen({
         </div>
 
         <div className="order-3 lg:hidden w-full min-w-0 mt-2">
-          <div className="order-3 lg:hidden w-full min-w-0 mb-4">
-            {/* <KassaScrap
-              rates={rateMap}
-              balances={cashBalances}
-              onAdd={addScrap}
-              onRequestDeposit={() => window.dispatchEvent(new Event(OPEN_CASH_INCOME_EVENT))}
-            /> */}
-          </div>
            <SalesHistory
              sales={sales}
              returns={returns}

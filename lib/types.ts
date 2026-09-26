@@ -41,6 +41,8 @@ export type Customer = {
   last_purchase_at: string | null
   created_at: string
   updated_at?: string | null
+  deleted_at?: string | null
+  client_op_id?: string | null
 }
 
 /** Статус подписки магазина. */
@@ -118,6 +120,8 @@ export type Product = {
   status: ProductStatus
   created_at: string
   updated_at?: string | null
+  deleted_at?: string | null
+  client_op_id?: string | null
 }
 
 export type SaleItemKind = "product" | "scrap"
@@ -162,9 +166,15 @@ export type Sale = {
   bonus_used: number
   items: SaleItem[]
   created_at: string
+  updated_at?: string | null
+  deleted_at?: string | null
   total_price?: number
   final_price?: number
-  client_op_id?: string
+  client_op_id?: string | null
+  /** Device-only delivery state; this field is never stored in Supabase. */
+  sync_status?: "pending" | "confirmed" | "rejected"
+  sync_error?: string
+  cash_operation_id?: string | null
 }
 
 /** Возврат одной позиции чека (таблица sale_returns, миграция v33). */
@@ -189,10 +199,12 @@ export type SaleReturn = {
   created_by?: string
   author_name?: string | null
   created_at: string
+  updated_at?: string | null
+  deleted_at?: string | null
   sku?: string
   product_name?: string
   return_amount?: number
-  client_op_id?: string
+  client_op_id?: string | null
 }
 
 export type MetalRate = {
@@ -202,6 +214,7 @@ export type MetalRate = {
   price_per_gram: number
   scrap_price_per_gram: number
   updated_at: string
+  deleted_at?: string | null
 }
 
 export const CATEGORIES = ["Кольца", "Серьги", "Цепи", "Браслеты", "Подвески", "Часы", "Прочее"] as const
@@ -268,10 +281,12 @@ export type CashOperation = {
   amount_electronic?: number
   reason: string
   created_at: string
+  updated_at?: string | null
+  deleted_at?: string | null
   supplier_name?: string | null
   supplier_phone?: string | null
   supplier_debt_operation_id?: string | null
-  client_op_id?: string
+  client_op_id?: string | null
 }
 
 export type CashReasonPreset = {
@@ -280,6 +295,8 @@ export type CashReasonPreset = {
   created_by: string
   text: string
   created_at: string
+  updated_at?: string | null
+  deleted_at?: string | null
 }
 
 export type SupplierDebtOperationType = "consignment" | "adjustment" | "payment"
@@ -303,6 +320,9 @@ export type SupplierDebtOperation = {
   author_name: string | null
   device_info: string | null
   created_at: string
+  updated_at?: string | null
+  deleted_at?: string | null
+  client_op_id?: string | null
 }
 
 export type SupplierDebtSummary = {

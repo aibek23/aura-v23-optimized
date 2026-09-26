@@ -29,6 +29,8 @@ export type HistoryRow = {
   cost: number
   /** Убыток позиции (продана ниже себестоимости). */
   loss: number
+  syncStatus?: "pending" | "confirmed" | "rejected"
+  syncError?: string
 }
 
 /** Карточка одной проданной позиции: цена, прибыль и кнопка возврата. */
@@ -71,6 +73,19 @@ export function SaleUnitCard({
               <span className="inline-flex items-center gap-1 rounded-full bg-destructive/15 px-2 py-0.5 text-[11px] font-semibold text-destructive">
                 <RotateCcw className="h-3 w-3" />
                 Возвращено
+              </span>
+            )}
+            {row.syncStatus === "pending" && (
+              <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
+                Ожидает подтверждения
+              </span>
+            )}
+            {row.syncStatus === "rejected" && (
+              <span
+                className="rounded-full bg-destructive/15 px-2 py-0.5 text-[11px] font-semibold text-destructive"
+                title={row.syncError || "Товар был продан на другом устройстве"}
+              >
+                Не учтено · конфликт
               </span>
             )}
             {!isReturned && isLoss && (
@@ -119,7 +134,7 @@ export function SaleUnitCard({
             )}
           </div>
 
-          {canReturn && !isReturned && (
+          {canReturn && !isReturned && row.syncStatus !== "pending" && row.syncStatus !== "rejected" && (
             <Button
               size="sm"
               variant="outline"

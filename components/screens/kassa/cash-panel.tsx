@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useMemo, useState } from "react"
 import type { CashOperation, CashOpType, CashReasonPreset, Sale } from "@/lib/types"
 import { formatSom } from "@/lib/format"
 import { PERIOD_PRESETS, periodRange, inPeriod, type PeriodId } from "@/lib/period"
@@ -11,9 +11,6 @@ import { toast } from "sonner"
 import { ArrowDownLeft, ArrowUpRight, Banknote, CreditCard, ShieldCheck, Wallet } from "lucide-react"
 import { CashHistory } from "./cash-history"
 import { CashOperationDialog } from "./cash-operation-dialog"
-
-/** Событие, которым другие блоки кассы просят открыть окно внесения. */
-export const OPEN_CASH_INCOME_EVENT = "aura:open-cash-income"
 
 /**
  * Сводные показатели кассы, инкассация и операции внесения/изъятия.
@@ -35,27 +32,42 @@ export function CashPanel({
 
   const range = useMemo(() => periodRange(period), [period])
 
+  const confirmedSales = useMemo(
+    () => sales.filter((sale) => sale.sync_status !== "pending" && sale.sync_status !== "rejected"),
+    [sales],
+  )
+  const provisionalCashOperationIds = useMemo(
+    () =>
+      new Set(
+        sales
+          .filter((sale) => sale.sync_status === "pending" || sale.sync_status === "rejected")
+          .map((sale) => sale.cash_operation_id)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    [sales],
+  )
+  const confirmedOperations = useMemo(
+    () => operations.filter((operation) => !provisionalCashOperationIds.has(operation.id)),
+    [operations, provisionalCashOperationIds],
+  )
+
   const stats = useMemo(() => {
-    const rows = sales.filter((s) => inPeriod(s.created_at, range))
-    const b = computeBalances(sales, operations, (d) => inPeriod(d, range))
+    const rows = confirmedSales.filter((s) => inPeriod(s.created_at, range))
+    const b = computeBalances(confirmedSales, confirmedOperations, (d) => inPeriod(d, range))
     return { ...b, count: rows.length }
-  }, [sales, operations, range])
+  }, [confirmedSales, confirmedOperations, range])
 
   // Балансы за всё время — именно из них ведутся списания.
-  const balances = useMemo(() => computeBalances(sales, operations), [sales, operations])
+  const balances = useMemo(
+    () => computeBalances(confirmedSales, confirmedOperations),
+    [confirmedSales, confirmedOperations],
+  )
 
   const authors = useMemo(() => {
     const map = new Map<string, string>()
     for (const o of operations) if (o.created_by) map.set(o.created_by, o.author_name ?? "—")
     return [...map].map(([id, name]) => ({ id, name }))
   }, [operations])
-
-  // Приём лома может потребовать пополнения кассы — открываем «Внесение».
-  useEffect(() => {
-    const handler = () => setDialog({ type: "income", reason: "Пополнение кассы" })
-    window.addEventListener(OPEN_CASH_INCOME_EVENT, handler)
-    return () => window.removeEventListener(OPEN_CASH_INCOME_EVENT, handler)
-  }, [])
 
   const handleCollection = () => {
     if (balances.cash <= 0) {
@@ -148,8 +160,8 @@ export function CashPanel({
             />
           </div>
 
-          {operations.length > 0 && (
-            <CashHistory operations={operations} period={period} authors={authors} />
+          {confirmedOperations.length > 0 && (
+            <CashHistory operations={confirmedOperations} period={period} authors={authors} />
           )}
         </>
       )}

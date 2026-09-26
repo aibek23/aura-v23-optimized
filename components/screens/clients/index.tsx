@@ -179,9 +179,10 @@ export function ClientsScreen({ clients }: { clients: Customer[] }) {
           const clientOpId = typeof crypto !== "undefined" ? crypto.randomUUID() : Math.random().toString(36).substring(2)
           const newId = typeof crypto !== "undefined" ? crypto.randomUUID() : Math.random().toString(36).substring(2)
           const nowIso = new Date().toISOString()
+          const targetShopId = clients.length > 0 ? (clients[0] as Customer)?.shop_id || "" : ""
           const newCustomer = {
             id: newId,
-            shop_id: "",
+            shop_id: targetShopId,
             bonus_points: 0,
             is_blacklisted: false,
             purchase_count: 0,
@@ -194,7 +195,7 @@ export function ClientsScreen({ clients }: { clients: Customer[] }) {
           await bulkPut("customers", [newCustomer])
           await enqueueOutbox({
             client_op_id: clientOpId,
-            shop_id: "",
+            shop_id: targetShopId,
             entity: "customers",
             op_type: "create",
             payload: newCustomer,

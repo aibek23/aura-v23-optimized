@@ -1,23 +1,28 @@
-import { openDB, type IDBPDatabase } from 'idb'
-import type { BaseEntity, DailyAggregate, OutboxItem, SyncMeta, TableName } from './schema'
-import {
-  saveProductsSqlite,
-  getProductsSqlite,
-  saveCustomersSqlite,
-  getCustomersSqlite,
-  saveSuppliersSqlite,
-  getSuppliersSqlite,
-  saveShopSettingsSqlite,
-  getShopSettingsSqlite,
-  saveMetalRatesSqlite,
-  getMetalRatesSqlite,
-  clearUserSessionSqlite,
-} from './sqlite-opfs'
+import { openDB, deleteDB, type IDBPDatabase } from 'idb'
+import type { TableName } from './schema'
+import { SHOP_SCOPED_TABLES } from './schema'
 
 const DB_NAME = 'aura_crm_local_v1'
-const DB_VERSION = 2
+const DB_VERSION = 5
+const CURRENT_USER_SESSION_ID = 'current_user'
+
+const ACTIVE_SHOP_KEY = 'active_shop_id'
+const SCHEMA_STAMP_KEY = 'schema_stamp'
 
 let dbInstance: IDBPDatabase | null = null
+let openPromise: Promise<IDBPDatabase> | null = null
+let rebuildAttempted = false
+let localDbWasRebuilt = false
+
+/** True when the local database had to be recreated, so a full re-sync is required. */
+export function localDatabaseWasRebuilt(): boolean {
+  return localDbWasRebuilt
+}
+
+async function setRebuildFlag(): Promise<void> {
+  localDbWasRebuilt = true
+}
+
 
 export function normalizeSearchString(text: string): string {
   if (!text) return ''
@@ -28,86 +33,126 @@ export function normalizeSearchString(text: string): string {
     .replace(/\s+/g, ' ')
 }
 
+export interface SavedUserSession {
+  id: string
+  userId: string
+  email?: string
+  profile: any
+  session?: any
+  shopId?: string
+  updatedAt: string
+}
+
+function readLegacyOfflineSession(): SavedUserSession | null {
+  if (typeof localStorage === 'undefined') return null
+  try {
+    const raw = localStorage.getItem('aura_offline_session')
+    if (!raw) return null
+    const value = JSON.parse(raw)
+    if (!value?.profile) return null
+    return {
+      id: CURRENT_USER_SESSION_ID,
+      userId: String(value.userId || value.user_id || value.profile.id || ''),
+      email: value.email || value.profile.email || '',
+      profile: value.profile,
+      session: value.session || undefined,
+      shopId: value.shopId || value.shop_id || value.profile.shop_id || undefined,
+      updatedAt: value.updatedAt || value.timestamp || new Date().toISOString(),
+    }
+  } catch {
+    return null
+  }
+}
+
+/** Keep the offline profile in the same IndexedDB used by the local CRM. */
+export async function saveUserSession(data: Omit<SavedUserSession, 'id' | 'updatedAt'>): Promise<void> {
+  const db = await getLocalDB()
+  await db.put('user_session', {
+    ...data,
+    id: CURRENT_USER_SESSION_ID,
+    updatedAt: new Date().toISOString(),
+  })
+  try {
+    localStorage.removeItem('aura_offline_session')
+  } catch {}
+}
+
+/** Load the offline profile, migrating the previous localStorage copy once. */
+export async function getSavedUserSession(): Promise<SavedUserSession | null> {
+  try {
+    const db = await getLocalDB()
+    const saved = await db.get('user_session', CURRENT_USER_SESSION_ID)
+    if (saved?.profile) return saved as SavedUserSession
+
+    const legacy = readLegacyOfflineSession()
+    if (!legacy) return null
+    await db.put('user_session', legacy)
+    try {
+      localStorage.removeItem('aura_offline_session')
+    } catch {}
+    return legacy
+  } catch {
+    // Preserve offline entry if IndexedDB is temporarily unavailable.
+    return readLegacyOfflineSession()
+  }
+}
+
 export async function getLocalDB(): Promise<IDBPDatabase> {
   if (typeof window === 'undefined') {
     throw new Error('LocalDB cannot be initialized on server side')
   }
 
   if (dbInstance) return dbInstance
+  if (openPromise) return openPromise
 
-  dbInstance = await openDB(DB_NAME, DB_VERSION, {
-    upgrade(db, oldVersion) {
+  openPromise = openDB(DB_NAME, DB_VERSION, {
+    upgrade(db, oldVersion, _newVersion, transaction) {
       // Products
       if (!db.objectStoreNames.contains('products')) {
         const store = db.createObjectStore('products', { keyPath: 'id' })
         store.createIndex('shop_id', 'shop_id')
-        store.createIndex('status', 'status')
-        store.createIndex('sku', 'sku')
-        store.createIndex('updated_at', 'updated_at')
-        store.createIndex('deleted_at', 'deleted_at')
-        store.createIndex('search_normalized', 'search_normalized')
       }
 
       // Sales
       if (!db.objectStoreNames.contains('sales')) {
         const store = db.createObjectStore('sales', { keyPath: 'id' })
         store.createIndex('shop_id', 'shop_id')
-        store.createIndex('created_at', 'created_at')
-        store.createIndex('updated_at', 'updated_at')
-        store.createIndex('deleted_at', 'deleted_at')
-        store.createIndex('client_op_id', 'client_op_id')
       }
 
       // Sale Returns
       if (!db.objectStoreNames.contains('sale_returns')) {
         const store = db.createObjectStore('sale_returns', { keyPath: 'id' })
         store.createIndex('shop_id', 'shop_id')
-        store.createIndex('sale_id', 'sale_id')
-        store.createIndex('created_at', 'created_at')
-        store.createIndex('updated_at', 'updated_at')
-        store.createIndex('client_op_id', 'client_op_id')
       }
 
       // Customers
       if (!db.objectStoreNames.contains('customers')) {
         const store = db.createObjectStore('customers', { keyPath: 'id' })
         store.createIndex('shop_id', 'shop_id')
-        store.createIndex('phone', 'phone')
-        store.createIndex('updated_at', 'updated_at')
-        store.createIndex('deleted_at', 'deleted_at')
-        store.createIndex('search_normalized', 'search_normalized')
       }
 
       // Cash operations
       if (!db.objectStoreNames.contains('cash_operations')) {
         const store = db.createObjectStore('cash_operations', { keyPath: 'id' })
         store.createIndex('shop_id', 'shop_id')
-        store.createIndex('created_at', 'created_at')
-        store.createIndex('updated_at', 'updated_at')
-        store.createIndex('deleted_at', 'deleted_at')
-        store.createIndex('client_op_id', 'client_op_id')
       }
 
       // Cash reason presets
       if (!db.objectStoreNames.contains('cash_reason_presets')) {
         const store = db.createObjectStore('cash_reason_presets', { keyPath: 'id' })
         store.createIndex('shop_id', 'shop_id')
-        store.createIndex('updated_at', 'updated_at')
       }
 
       // Metal rates
       if (!db.objectStoreNames.contains('metal_rates')) {
         const store = db.createObjectStore('metal_rates', { keyPath: 'id' })
         store.createIndex('shop_id', 'shop_id')
-        store.createIndex('metal', 'metal')
       }
 
       // Supplier debt operations
       if (!db.objectStoreNames.contains('supplier_debt_operations')) {
         const store = db.createObjectStore('supplier_debt_operations', { keyPath: 'id' })
         store.createIndex('shop_id', 'shop_id')
-        store.createIndex('supplier_name', 'supplier_name')
-        store.createIndex('created_at', 'created_at')
       }
 
       // Label templates
@@ -127,19 +172,66 @@ export async function getLocalDB(): Promise<IDBPDatabase> {
         store.createIndex('shop_id', 'shop_id')
       }
 
-      // Daily aggregates
-      if (!db.objectStoreNames.contains('daily_aggregates')) {
-        const store = db.createObjectStore('daily_aggregates', { keyPath: 'date' })
-        store.createIndex('shop_id', 'shop_id')
-      }
-
       // Outbox queue
       if (!db.objectStoreNames.contains('outbox')) {
         const store = db.createObjectStore('outbox', { keyPath: 'id' })
-        store.createIndex('status', 'status')
-        store.createIndex('client_op_id', 'client_op_id')
-        store.createIndex('created_at', 'created_at')
-        store.createIndex('shop_id', 'shop_id')
+        // Unique: guarantees an operation can never be queued twice (idempotency).
+        store.createIndex('client_op_id', 'client_op_id', { unique: true })
+      } else if (oldVersion < 3) {
+        const store = transaction.objectStore('outbox')
+        if (store.indexNames.contains('client_op_id')) {
+          store.deleteIndex('client_op_id')
+        }
+        store.createIndex('client_op_id', 'client_op_id', { unique: true })
+      }
+
+      // v4 keeps only indexes with live query call sites. Besides reducing the
+      // local database footprint, dropping this derived cache removes data that
+      // was written but never read by the app.
+      if (oldVersion < 4) {
+        const retainedIndexes: Record<string, string[]> = {
+          products: ['shop_id'],
+          sales: ['shop_id'],
+          sale_returns: ['shop_id'],
+          customers: ['shop_id'],
+          cash_operations: ['shop_id'],
+          cash_reason_presets: ['shop_id'],
+          metal_rates: ['shop_id'],
+          supplier_debt_operations: ['shop_id'],
+          label_templates: ['shop_id'],
+          profiles: ['shop_id'],
+          outbox: ['client_op_id'],
+        }
+
+        for (const [storeName, retained] of Object.entries(retainedIndexes)) {
+          if (!db.objectStoreNames.contains(storeName)) continue
+          const store = transaction.objectStore(storeName)
+          for (const indexName of Array.from(store.indexNames) as string[]) {
+            if (!retained.includes(indexName)) store.deleteIndex(indexName)
+          }
+        }
+
+        if (db.objectStoreNames.contains('daily_aggregates')) {
+          db.deleteObjectStore('daily_aggregates')
+        }
+
+        for (const storeName of ['products', 'customers']) {
+          if (!db.objectStoreNames.contains(storeName)) continue
+          const store = transaction.objectStore(storeName)
+          void (async () => {
+            let cursor = await store.openCursor()
+            while (cursor) {
+              const value = cursor.value as any
+              if (value && Object.prototype.hasOwnProperty.call(value, 'search_normalized')) {
+                delete value.search_normalized
+                await cursor.update(value)
+              }
+              cursor = await cursor.continue()
+            }
+          })().catch((err) => {
+            console.warn(`[LocalDB] Failed to clear derived search data from ${storeName}:`, err)
+          })
+        }
       }
 
       // Sync metadata (cursors, timestamps, sync stats)
@@ -152,96 +244,142 @@ export async function getLocalDB(): Promise<IDBPDatabase> {
         db.createObjectStore('user_session', { keyPath: 'id' })
       }
     },
+    blocked() {
+      console.warn('[LocalDB] Upgrade blocked by another open tab')
+    },
   })
+    .then((db) => {
+      dbInstance = db
+      db.addEventListener('close', () => {
+        dbInstance = null
+        openPromise = null
+      })
+      return db
+    })
+    .catch(async (err) => {
+      openPromise = null
+      dbInstance = null
+      // Corrupted or incompatible database: drop it once and rebuild from scratch.
+      console.error('[LocalDB] Failed to open local database:', err)
+      if (rebuildAttempted) throw err
+      rebuildAttempted = true
+      try {
+        await deleteDB(DB_NAME)
+      } catch {}
+      await setRebuildFlag()
+      return getLocalDB()
+    })
 
-  return dbInstance
+  return openPromise
 }
 
-// Bulk put with transaction (persisting to IndexedDB and SQLite WASM with OPFS)
+// ---------------------------------------------------------------------------
+// Sync metadata
+// ---------------------------------------------------------------------------
+
+export async function getMeta<T>(key: string, fallback: T): Promise<T> {
+  try {
+    const db = await getLocalDB()
+    const row = await db.get('sync_meta', key)
+    return row ? (row.value as T) : fallback
+  } catch {
+    return fallback
+  }
+}
+
+export async function setMeta(key: string, value: any): Promise<void> {
+  try {
+    const db = await getLocalDB()
+    await db.put('sync_meta', { key, value, updated_at: new Date().toISOString() })
+  } catch (err) {
+    console.warn('[LocalDB] Failed to write meta', key, err)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Writes
+// ---------------------------------------------------------------------------
+
+/**
+ * Atomic bulk write.
+ *
+ * IndexedDB is the local source of truth and is written in a single transaction —
+ * either the whole batch lands or none of it does.
+ */
 export async function bulkPut<T extends { id?: string; shop_id?: string }>(
   tableName: TableName,
   items: T[]
 ): Promise<void> {
   if (!items || items.length === 0) return
 
-  // 1. Persist to SQLite WASM with OPFS
-  try {
-    const shopId = items[0]?.shop_id || ''
-    if (shopId) {
-      if (tableName === 'products') {
-        await saveProductsSqlite(shopId, items)
-      } else if (tableName === 'customers') {
-        await saveCustomersSqlite(shopId, items)
-      } else if (tableName === 'supplier_debt_operations') {
-        await saveSuppliersSqlite(shopId, items)
-      } else if (tableName === 'shop_settings') {
-        await saveShopSettingsSqlite(shopId, items[0])
-      } else if (tableName === 'metal_rates') {
-        await saveMetalRatesSqlite(shopId, items)
-      }
-    }
-  } catch (err) {
-    console.warn(`[LocalDB] SQLite save error for ${tableName}:`, err)
-  }
-
-  // 2. Persist to IndexedDB
+  // 1. IndexedDB, single transaction (atomic)
   const db = await getLocalDB()
   const tx = db.transaction(tableName, 'readwrite')
   const store = tx.objectStore(tableName)
-
-  for (const item of items) {
-    // Inject normalized search if applicable
-    const enriched = enrichItemWithSearch(tableName, item)
-    await store.put(enriched)
+  try {
+    for (const item of items) {
+      await store.put(enrichItemWithSearch(item))
+    }
+    await tx.done
+  } catch (err) {
+    try {
+      tx.abort()
+    } catch {}
+    throw err
   }
 
-  await tx.done
 }
 
-function enrichItemWithSearch(tableName: TableName, item: any): any {
-  if (tableName === 'products') {
-    const raw = `${item.name || ''} ${item.sku || ''} ${item.category || ''} ${item.metal || ''} ${item.supplier_name || ''} ${item.description || ''}`
-    return { ...item, search_normalized: normalizeSearchString(raw) }
+/** Hard-delete records locally (cloud reported them as removed). */
+export async function bulkDelete(tableName: TableName, ids: string[]): Promise<void> {
+  if (!ids || ids.length === 0) return
+
+  const db = await getLocalDB()
+  const tx = db.transaction(tableName, 'readwrite')
+  const store = tx.objectStore(tableName)
+  try {
+    for (const id of ids) {
+      await store.delete(id)
+    }
+    await tx.done
+  } catch (err) {
+    try {
+      tx.abort()
+    } catch {}
+    throw err
   }
-  if (tableName === 'customers') {
-    const raw = `${item.name || ''} ${item.phone || ''} ${item.notes || ''}`
-    return { ...item, search_normalized: normalizeSearchString(raw) }
-  }
+
+}
+
+function enrichItemWithSearch(item: any): any {
+  // Search terms are derived at query time; storing a second copy on every row
+  // needlessly duplicates product/customer text in IndexedDB.
   return item
 }
 
-// Get all non-deleted records for a shop (with SQLite WASM + OPFS and IndexedDB dual strategy)
-export async function getShopRecords<T>(tableName: TableName, shopId: string): Promise<T[]> {
-  // First try SQLite WASM with OPFS
-  try {
-    if (tableName === 'products') {
-      const records = await getProductsSqlite(shopId)
-      if (records && records.length > 0) return records as T[]
-    } else if (tableName === 'customers') {
-      const records = await getCustomersSqlite(shopId)
-      if (records && records.length > 0) return records as T[]
-    } else if (tableName === 'supplier_debt_operations') {
-      const records = await getSuppliersSqlite(shopId)
-      if (records && records.length > 0) return records as T[]
-    } else if (tableName === 'shop_settings') {
-      const record = await getShopSettingsSqlite(shopId)
-      if (record) return [record] as T[]
-    } else if (tableName === 'metal_rates') {
-      const records = await getMetalRatesSqlite(shopId)
-      if (records && records.length > 0) return records as T[]
-    }
-  } catch (err) {
-    console.warn(`[LocalDB] SQLite read fallback for ${tableName}:`, err)
-  }
+// ---------------------------------------------------------------------------
+// Reads
+// ---------------------------------------------------------------------------
 
-  // Fallback to IndexedDB
+/**
+ * Get all non-deleted records for a shop.
+ *
+ * IndexedDB is the single local source of truth.
+ */
+export async function getShopRecords<T>(tableName: TableName, shopId: string): Promise<T[]> {
+  if (!shopId) return []
+
+  const idbRecords = await readShopRecordsFromIdb<T>(tableName, shopId)
+  return idbRecords
+}
+
+async function readShopRecordsFromIdb<T>(tableName: TableName, shopId: string): Promise<T[]> {
   const db = await getLocalDB()
   const tx = db.transaction(tableName, 'readonly')
   const store = tx.objectStore(tableName)
 
   if (store.indexNames.contains('shop_id')) {
-    const index = store.index('shop_id')
-    const records = await index.getAll(shopId)
+    const records = await store.index('shop_id').getAll(shopId)
     return records.filter((r: any) => !r.deleted_at) as T[]
   }
 
@@ -250,11 +388,7 @@ export async function getShopRecords<T>(tableName: TableName, shopId: string): P
 }
 
 // Fast search over local index
-export async function searchLocalProducts(
-  shopId: string,
-  query: string,
-  limit = 100
-): Promise<any[]> {
+export async function searchLocalProducts(shopId: string, query: string, limit = 100): Promise<any[]> {
   const db = await getLocalDB()
   const norm = normalizeSearchString(query)
   const tx = db.transaction('products', 'readonly')
@@ -271,7 +405,9 @@ export async function searchLocalProducts(
 
   for (const p of products) {
     if (p.deleted_at) continue
-    const target = p.search_normalized || normalizeSearchString(`${p.name} ${p.sku}`)
+    const target = normalizeSearchString(
+      `${p.name || ''} ${p.sku || ''} ${p.category || ''} ${p.metal || ''} ${p.supplier_name || ''} ${p.description || ''}`
+    )
     const matches = tokens.every((token) => target.includes(token))
     if (matches) {
       results.push(p)
@@ -282,26 +418,134 @@ export async function searchLocalProducts(
   return results
 }
 
-// Wipe all local database stores on user logout
-export async function wipeLocalDatabase(): Promise<void> {
-  try {
-    await clearUserSessionSqlite()
-    const db = await getLocalDB()
-    const storeNames = Array.from(db.objectStoreNames) as TableName[]
-    const tx = db.transaction(storeNames, 'readwrite')
-    for (const name of storeNames) {
-      await tx.objectStore(name).clear()
+// ---------------------------------------------------------------------------
+// Shop isolation
+// ---------------------------------------------------------------------------
+
+export async function getActiveLocalShopId(): Promise<string | null> {
+  return getMeta<string | null>(ACTIVE_SHOP_KEY, null)
+}
+
+/**
+ * Bind the local database to one shop.
+ *
+ * When the active shop changes, every shop-scoped store is purged before the new
+ * shop's data is loaded, so stock, receipts and customers cannot be mixed.
+ */
+export async function ensureShopScope(shopId: string): Promise<boolean> {
+  if (!shopId) return false
+
+  const previous = await getActiveLocalShopId()
+  if (previous === shopId) return false
+
+  if (previous) {
+    await purgeOtherShops(shopId)
+  }
+
+  await setMeta(ACTIVE_SHOP_KEY, shopId)
+  await setMeta(SCHEMA_STAMP_KEY, DB_VERSION)
+
+  if (typeof localStorage !== 'undefined') {
+    try {
+      localStorage.setItem('aura_active_shop', shopId)
+    } catch {}
+  }
+
+  return Boolean(previous)
+}
+
+/** Drop every locally cached row that does not belong to the given shop. */
+export async function purgeOtherShops(shopId: string): Promise<void> {
+  const db = await getLocalDB()
+
+  for (const table of SHOP_SCOPED_TABLES) {
+    if (!db.objectStoreNames.contains(table)) continue
+    const tx = db.transaction(table, 'readwrite')
+    const store = tx.objectStore(table)
+    const all = await store.getAll()
+    for (const row of all as any[]) {
+      if (!row?.shop_id || row.shop_id !== shopId) {
+        const key = table === 'shop_settings' ? row.shop_id : row.id
+        if (key !== undefined) await store.delete(key)
+      }
     }
     await tx.done
-    if (typeof localStorage !== 'undefined') {
-      localStorage.removeItem('aura_session')
-      localStorage.removeItem('aura_active_shop')
-      localStorage.removeItem('aura_sync_meta')
-      localStorage.removeItem('kassa_cart_state_v2')
-      localStorage.removeItem('aura_offline_session')
-      localStorage.removeItem('aura_offline_outbox')
+  }
+
+  // Queued operations of another shop must not be flushed under the new shop.
+  if (db.objectStoreNames.contains('outbox')) {
+    const tx = db.transaction('outbox', 'readwrite')
+    const store = tx.objectStore('outbox')
+    const all = await store.getAll()
+    for (const row of all as any[]) {
+      if (row?.shop_id && row.shop_id !== shopId) await store.delete(row.id)
     }
+    await tx.done
+  }
+
+  // Sync cursors are per-shop; drop them so the new shop starts with a clean sync.
+  if (db.objectStoreNames.contains('sync_meta')) {
+    const tx = db.transaction('sync_meta', 'readwrite')
+    const store = tx.objectStore('sync_meta')
+    const all = await store.getAll()
+    for (const row of all as any[]) {
+      if (typeof row?.key === 'string' && row.key.startsWith('cursor:')) await store.delete(row.key)
+    }
+    await tx.done
+  }
+
+}
+
+// ---------------------------------------------------------------------------
+// Logout cleanup
+// ---------------------------------------------------------------------------
+
+/**
+ * Wipe local data on logout: IndexedDB is deleted outright (so no store can survive
+ * a partially failed clear), and namespaced localStorage keys are dropped.
+ */
+export async function wipeLocalDatabase(): Promise<void> {
+  // Close and delete the whole IndexedDB database — atomic by construction.
+  try {
+    if (dbInstance) {
+      dbInstance.close()
+      dbInstance = null
+    }
+    openPromise = null
+    await deleteDB(DB_NAME, {
+      blocked() {
+        console.warn('[LocalDB] Delete blocked by another open tab')
+      },
+    })
   } catch (err) {
-    console.error('Failed to wipe local database:', err)
+    console.error('[LocalDB] Failed to delete local database, clearing stores instead:', err)
+    try {
+      const db = await getLocalDB()
+      const storeNames = Array.from(db.objectStoreNames) as TableName[]
+      const tx = db.transaction(storeNames, 'readwrite')
+      for (const name of storeNames) {
+        await tx.objectStore(name).clear()
+      }
+      await tx.done
+    } catch (innerErr) {
+      console.error('[LocalDB] Fallback clear failed:', innerErr)
+    }
+  }
+
+  if (typeof localStorage !== 'undefined') {
+    try {
+      const keys: string[] = []
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i)
+        if (key && (key.startsWith('aura_') || key.startsWith('kassa_'))) keys.push(key)
+      }
+      for (const key of keys) localStorage.removeItem(key)
+    } catch {}
+  }
+
+  if (typeof sessionStorage !== 'undefined') {
+    try {
+      sessionStorage.clear()
+    } catch {}
   }
 }

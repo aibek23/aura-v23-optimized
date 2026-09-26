@@ -44,9 +44,7 @@ export async function updateSession(request: NextRequest) {
   const isAuthRoute = path.startsWith("/auth")
   const isPublicAsset =
     path.startsWith("/api") ||
-    path.startsWith("/sqlite3") ||
     path === "/sw.js" ||
-    path === "/sync-worker.js" ||
     path === "/manifest.json" ||
     path === "/manifest.webmanifest" ||
     path === "/site.webmanifest" ||

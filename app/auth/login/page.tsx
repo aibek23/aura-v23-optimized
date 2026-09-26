@@ -9,7 +9,7 @@ import { useRouter } from "next/navigation"
 import { useEffect, useState } from "react"
 import { AuthShell } from "@/components/auth/auth-shell"
 import { InlineLoader } from "@/components/ui/page-loader"
-import { getUserSessionSqlite, saveUserSessionSqlite, type SavedUserSession } from "@/lib/local-db/sqlite-opfs"
+import { getSavedUserSession, saveUserSession, type SavedUserSession } from "@/lib/local-db/db"
 import { WifiOff, UserCheck } from "lucide-react"
 
 function loginErrorMessage(error: unknown): string {
@@ -36,8 +36,8 @@ export default function LoginPage() {
     window.addEventListener("online", handleOnline)
     window.addEventListener("offline", handleOffline)
 
-    // Check if offline profile exists in SQLite WASM / OPFS
-    getUserSessionSqlite().then((session) => {
+    // Check if an offline profile exists in IndexedDB.
+    getSavedUserSession().then((session) => {
       if (session && session.profile) {
         setSavedSession(session)
       }
@@ -58,12 +58,12 @@ export default function LoginPage() {
       const { data, error } = await supabase.auth.signInWithPassword({ email, password })
       if (error) throw error
 
-      // Persist auth session & profile in SQLite WASM / OPFS for offline access
+      // Persist auth session & profile in IndexedDB for offline access.
       if (data?.user) {
         try {
           const { data: profile } = await supabase.from("profiles").select("*").eq("id", data.user.id).single()
           if (profile) {
-            await saveUserSessionSqlite({
+            await saveUserSession({
               userId: data.user.id,
               email: data.user.email,
               profile,
