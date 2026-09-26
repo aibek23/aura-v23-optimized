@@ -32,6 +32,7 @@ const nextConfig = {
 
   async redirects() {
     return [
+      { source: '/', destination: '/prepress', permanent: false },
       { source: '/pos', destination: '/crm/pos', permanent: false },
       { source: '/showcase', destination: '/crm/showcase', permanent: false },
       { source: '/inventory', destination: '/crm/inventory', permanent: false },

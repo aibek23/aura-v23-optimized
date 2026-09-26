@@ -7,17 +7,21 @@ import type { Product } from "@/lib/types"
 
 export function buildQrUrl(data: Product): string {
   const skuValue = (data.sku || "").trim().toUpperCase()
-  const shopKey  = String(data.shop_seq_id ?? data.shop_id ?? "").trim()
+  const shopSeqId = data.shop_seq_id
 
-  if (!shopKey || !skuValue) {
-    throw new Error("Недостаточно данных для QR-кода: проверьте наличие артикула (SKU) и магазина.")
+  if (typeof shopSeqId !== "number" || !Number.isSafeInteger(shopSeqId) || shopSeqId <= 0 || !skuValue) {
+    throw new Error("Для QR-кода нужны артикул и короткий номер магазина. Синхронизируйте товар и попробуйте снова.")
   }
-  return `${shopKey}/${encodeURIComponent(skuValue)}`
+  return `${shopSeqId}/${encodeURIComponent(skuValue)}`
 }
 
 export async function safeQrDataUrl(data: Product): Promise<string | null> {
   try {
-    return await QRCode.toDataURL(buildQrUrl(data), { margin: 0 })
+    return await QRCode.toDataURL(buildQrUrl(data), {
+      margin: 2,
+      scale: 12,
+      errorCorrectionLevel: "M",
+    })
   } catch (e) {
     console.error("[label] QR build error:", e)
     toast.error(e instanceof Error ? e.message : "Не удалось сформировать QR-код")

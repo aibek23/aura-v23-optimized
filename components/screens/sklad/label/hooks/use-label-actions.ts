@@ -9,14 +9,14 @@ import type { Canvas as FabricCanvas } from "fabric"
 import { toast } from "sonner"
 import type { LabelSizeDef, JewelryLabelSizeKey } from "@/lib/niimbot"
 import type { Product } from "@/lib/types"
-import { saveLabelTemplate, deleteLabelTemplate, getLabelTemplate } from "@/app/actions/labels"
+import { saveLabelTemplate, getLabelTemplate } from "@/app/actions/labels"
 import type { BorderStyleKey } from "../constants"
 import { createTextbox, refitTextbox, setAutoFit, setFitRatio, clampRatio } from "../canvas/text-fit"
 import { addBorderToCanvas } from "../canvas/borders"
 import { buildDefaultLayout } from "../canvas/layout"
 import { serializeLayout, parseTemplate, applyTemplate, applyBgRect } from "../data/template"
 import { refreshLiveData } from "../canvas/layout"
-import { saveLocalTemplate, getLocalTemplate, deleteLocalTemplate } from "../data/local-template-storage"
+import { saveLocalTemplate, getLocalTemplate, clearLocalTemplateCache } from "../data/local-template-storage"
 
 export function useLabelActions(
   fabricRef:  React.RefObject<FabricCanvas | null>,
@@ -165,19 +165,37 @@ export function useLabelActions(
     }
   }, [fabricRef, sizeKey, category])
 
-  const handleResetTemplate = useCallback(async () => {
+  const handleReloadTemplate = useCallback(async () => {
     const canvas = fabricRef.current
     if (!canvas) return
     try {
-      await deleteLabelTemplate(category, sizeKey)
+      const raw = await getLabelTemplate(category, sizeKey)
+      const saved = parseTemplate(raw)
+      if (raw && !saved) {
+        throw new Error("Шаблон в базе данных имеет неподдерживаемый формат")
+      }
+
+      clearLocalTemplateCache(category, sizeKey)
+      if (raw && saved) saveLocalTemplate(category, raw, sizeKey)
+      if (!canvas.lowerCanvasEl) return
+
+      await buildDefaultLayout(canvas, product, sizeDef)
+      if (saved) {
+        applyTemplate(canvas, saved)
+        await refreshLiveData(canvas, product)
+        applyBgRect(canvas, sizeDef, saved.bg ?? null)
+      }
+      canvas.setViewportTransform([1, 0, 0, 1, offsetX, offsetY])
+      canvas.renderAll()
+      toast.success(
+        saved
+          ? "Шаблон обновлён из базы данных"
+          : "Шаблон в базе не найден — восстановлен стандартный эскиз",
+      )
     } catch (error) {
-      console.warn("[label] Не удалось удалить шаблон из БД:", error)
+      console.error("[label] Не удалось обновить шаблон из БД:", error)
+      toast.error(error instanceof Error ? error.message : "Не удалось загрузить шаблон из базы данных")
     }
-    deleteLocalTemplate(category, sizeKey)
-    await buildDefaultLayout(canvas, product, sizeDef)
-    canvas.setViewportTransform([1, 0, 0, 1, offsetX, offsetY])
-    canvas.renderAll()
-    toast.success("Возвращён стандартный эскиз")
   }, [fabricRef, category, sizeKey, product, sizeDef, offsetX, offsetY])
 
   const loadTemplate = useCallback(async (canvas: FabricCanvas) => {
@@ -274,7 +292,7 @@ export function useLabelActions(
     handleFontChange, handleFontSizeChange,
     handleBoldToggle, handleItalicToggle, handleUnderlineToggle, handleLinethroughToggle,
     handleTextAlignChange, handleCharSpacingChange, handleLineHeightChange,
-    handleSaveTemplate, handleResetTemplate, loadTemplate,
+    handleSaveTemplate, handleReloadTemplate, loadTemplate,
     loadSvgFrame, saveToFile,
   }
 }

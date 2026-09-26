@@ -90,6 +90,10 @@ export function AppHeader({
         >
           <Menu className="h-5 w-5" />
         </Button>
+        <div className="flex min-w-0 shrink-0 items-center gap-2">
+          <AuraMark className="h-8 w-8 shrink-0" />
+        </div>
+
         <div
           className="hidden min-w-0 max-w-56 items-center gap-2 rounded-lg border border-primary/25 bg-primary/5 px-3 py-2 text-left text-sm md:flex"
           title="Текущий магазин"

@@ -45,7 +45,9 @@ type NiimbotSize = {
 type NiimbotApi = {
   isSupported: () => boolean
   connect: (model: NiimbotModel) => Promise<unknown>
+  identify: (model: NiimbotModel) => Promise<NiimbotPrinterInfo>
   disconnect: () => Promise<void> | void
+  readonly printer: NiimbotPrinterInfo | null
   printImage: (
     url: string,
     opts: {
@@ -54,7 +56,7 @@ type NiimbotApi = {
       copies?: number
       density?: number
       offsetY?: number
-      onProgress?: (s: string) => void
+      onProgress?: (s: number | string) => void
     },
   ) => Promise<void>
   /**
@@ -71,6 +73,14 @@ type NiimbotApi = {
   readonly DETECTED_WRITE_MODE: string
   /** Текущий эффективный режим с учётом override (readonly). */
   readonly EFFECTIVE_WRITE_MODE: string
+}
+
+type NiimbotPrinterInfo = {
+  modelId: number
+  protocolVersion: number | null
+  label?: string
+  task?: string
+  dpi?: number
 }
 
 interface Window {

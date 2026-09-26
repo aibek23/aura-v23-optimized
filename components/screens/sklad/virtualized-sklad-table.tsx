@@ -6,13 +6,14 @@ import type { Product } from "@/lib/types"
 import { formatDate, formatSom, formatWeight } from "@/lib/format"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Pencil, Trash2 } from "lucide-react"
+import { Pencil, Trash2, Printer } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 interface VirtualizedSkladTableProps {
   products: Product[]
   canSeePurchasePrice: boolean
   isAdmin: boolean
+  onPrint: (product: Product) => void
   onEdit: (product: Product) => void
   onDelete: (id: string) => void
 }
@@ -26,6 +27,7 @@ export function VirtualizedSkladTable({
   products,
   canSeePurchasePrice,
   isAdmin,
+  onPrint,
   onEdit,
   onDelete,
 }: VirtualizedSkladTableProps) {
@@ -132,6 +134,15 @@ export function VirtualizedSkladTable({
                     canSeePurchasePrice ? "col-span-3 sm:col-span-1" : "col-span-3 sm:col-span-3"
                   )}
                 >
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 text-blue-600 hover:bg-blue-50 hover:text-blue-700"
+                    onClick={() => onPrint(product)}
+                    title="Печать этикетки"
+                  >
+                    <Printer className="h-3.5 w-3.5" />
+                  </Button>
                   <Button
                     variant="ghost"
                     size="icon"

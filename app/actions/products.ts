@@ -93,13 +93,32 @@ async function withShopSeqId(
   return rows.map((p) => ({ ...p, shop_seq_id: seqByShop.get(p.shop_id) ?? null }))
 }
 
+/** Запрашивает короткий номер активного магазина для локально сохранённой этикетки. */
+export async function getShopSeqIdForLabel(productShopId: string): Promise<number> {
+  const { supabase, profile } = await requireProfile()
+  const shopId = await requireShopId(supabase, profile)
+  if (productShopId !== shopId) {
+    throw new Error("Товар принадлежит другому магазину. Обновите каталог перед печатью.")
+  }
+  const { data, error } = await supabase
+    .from("shop_settings")
+    .select("seq_id")
+    .eq("shop_id", shopId)
+    .single()
+  if (error) throw new Error(`Не удалось получить короткий номер магазина: ${error.message}`)
+  const seqId = data?.seq_id
+  if (typeof seqId !== "number" || !Number.isSafeInteger(seqId) || seqId <= 0) {
+    throw new Error("У магазина нет короткого номера для QR-кода. Синхронизируйте магазин перед печатью.")
+  }
+  return seqId
+}
+
 export async function getProducts(): Promise<Product[]> {
   const { supabase } = await requireProfile()
   const { data, error } = await supabase
     .from("products")
     .select(PRODUCT_COLUMNS)
     .order("created_at", { ascending: false })
-    .range(0, 99)
   if (error) throw error
   return withShopSeqId(supabase, (data as unknown as Product[]) ?? [])
 }

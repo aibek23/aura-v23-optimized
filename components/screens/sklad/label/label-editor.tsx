@@ -2,8 +2,8 @@
 import React, {
   useRef, useState, useMemo, useCallback, useEffect,
 } from "react"
-import { X } from "lucide-react"
-import { getLabelSizeDef, DEFAULT_SIZE_KEY, LABEL_SIZES } from "@/lib/niimbot"
+import { Download, X } from "lucide-react"
+import { canvasToLabelDataUrl, getLabelSizeDef, DEFAULT_SIZE_KEY, LABEL_SIZES, NIIMBOT_MODEL } from "@/lib/niimbot"
 import type { JewelryLabelSizeKey } from "@/lib/niimbot"
 import type { LabelEditorProps } from "./types"
 import { RULER_SIZE, ZOOM_DEFAULT } from "./constants"
@@ -21,6 +21,7 @@ import { useCanvasRepaint }   from "./hooks/use-canvas-repaint"
 import { useSelectionSync }   from "./hooks/use-selection-sync"
 import { useLabelActions }    from "./hooks/use-label-actions"
 import { useLabelPrint }      from "./hooks/use-label-print"
+import { cropPrintArea }      from "./canvas/print"
 
 import { CanvasArea }         from "./components/canvas-area"
 import { LabelEditorToolbar } from "./components/toolbar"
@@ -28,19 +29,21 @@ import { LabelEditorToolbar } from "./components/toolbar"
 const STAGE_PAD    = 240
 const SIZE_STORAGE = "sklad:label-size"
 
-function getStoredSizeKey(fallback: JewelryLabelSizeKey): JewelryLabelSizeKey {
+function getStoredSizeKey(fallback: JewelryLabelSizeKey, storageKey: string): JewelryLabelSizeKey {
   try {
-    const v = localStorage.getItem(SIZE_STORAGE)
+    const v = localStorage.getItem(storageKey)
     if (v && v in LABEL_SIZES) return v as JewelryLabelSizeKey
   } catch { /* ignore */ }
   return fallback
 }
 
 export function LabelEditor({
-  product, autoPrint, initialSizeKey, onClose,
+  product, autoPrint, initialSizeKey, printerProfile = NIIMBOT_MODEL,
+  copies = 1, density, onSizeChange, onClose,
 }: LabelEditorProps) {
+  const sizeStorageKey = `${SIZE_STORAGE}:${printerProfile.key}`
   const [sizeKey, setSizeKey] = useState<JewelryLabelSizeKey>(
-    () => getStoredSizeKey(initialSizeKey ?? DEFAULT_SIZE_KEY),
+    () => getStoredSizeKey(initialSizeKey ?? printerProfile.defaultLabelKey ?? DEFAULT_SIZE_KEY, sizeStorageKey),
   )
   
   // rotation хранит накопленный поворот в градусах (0 | 90 | 180 | 270)
@@ -48,10 +51,14 @@ export function LabelEditor({
   const category = product.category ?? "Прочее"
 
   useEffect(() => {
-    try { localStorage.setItem(SIZE_STORAGE, sizeKey) } catch { /* ignore */ }
-  }, [sizeKey])
+    try { localStorage.setItem(sizeStorageKey, sizeKey) } catch { /* ignore */ }
+    onSizeChange?.(sizeKey)
+  }, [sizeKey, sizeStorageKey, onSizeChange])
 
   const sizeDef = useMemo(() => getLabelSizeDef(sizeKey), [sizeKey])
+  const nativeWidth = Math.round(sizeDef.w_px * printerProfile.dpi / 203)
+  const fitsPrinthead = nativeWidth <= printerProfile.printheadPx
+  const canPrint = fitsPrinthead && printerProfile.supportsDirectBluetooth !== false
 
   const { stageW, stageH, offsetX, offsetY } = useMemo(() => {
     // Единый расчёт размеров сцены независимо от поворота
@@ -270,9 +277,27 @@ export function LabelEditor({
 
   // ── Печать ────────────────────────────────────────────────────────────────
   const { handlePrint } = useLabelPrint(
-    fabricRef, sizeDef, loaded, autoPrint ?? false,
+    fabricRef, sizeDef, loaded, Boolean(autoPrint && canPrint),
+    printerProfile, copies, density ?? printerProfile.density,
     setIsPrinting, setPrintStatus,
   )
+
+  const handleExportPng = useCallback(() => {
+    const canvas = fabricRef.current
+    if (!canvas || !loaded || !fitsPrinthead) return
+    const nativeSize = {
+      w_px: Math.round(sizeDef.w_px * printerProfile.dpi / 203),
+      h_px: Math.round(sizeDef.h_px * printerProfile.dpi / 203),
+      dpi: printerProfile.dpi,
+    }
+    const cropped = cropPrintArea(canvas, sizeDef, printerProfile.dpi)
+    const dataUrl = canvasToLabelDataUrl(cropped, nativeSize)
+    const anchor = document.createElement("a")
+    const safeName = (product.sku || product.name || "label").replace(/[^a-zA-Z0-9_-]+/g, "-")
+    anchor.href = dataUrl
+    anchor.download = `${safeName}-${sizeDef.key}-${printerProfile.key}-${printerProfile.dpi}dpi.png`
+    anchor.click()
+  }, [fabricRef, loaded, fitsPrinthead, sizeDef, printerProfile, product.sku, product.name])
 
   const hasPrintedRef = useRef(false)
   useEffect(() => {
@@ -351,7 +376,7 @@ export function LabelEditor({
 
   // ── Пропсы тулбара ────────────────────────────────────────────────────────
   const toolbarCommon = {
-    sizeKey, sizeDef, font, fontSize, isPrinting, status: printStatus,
+    sizeKey, sizeDef, font, fontSize, isPrinting, canPrint, status: printStatus,
     autoFit, fitRatio, zoom, isPanMode,
     isBold, isItalic, isUnderline, isLinethrough, textAlign, charSpacing, lineHeight,
     onSizeChange:     handleSizeChange,
@@ -359,7 +384,7 @@ export function LabelEditor({
     onAddBorder:      (k: BorderStyleKey) => { deactivatePanMode(); actions.addBorder(k) },
     onRemoveSelected: () => { deactivatePanMode(); actions.removeSelected() },
     onSaveTemplate:   actions.handleSaveTemplate,
-    onResetTemplate:  actions.handleResetTemplate,
+    onReloadTemplate: actions.handleReloadTemplate,
     onFontChange:     (f: string) => { setFont(f); actions.handleFontChange(f) },
     onFontSizeChange: (s: number) => { setFontSize(s); actions.handleFontSizeChange(s) },
     onAutoFitChange:  (v: boolean) => { setAutoFit(v); actions.handleAutoFitChange(v) },
@@ -433,6 +458,17 @@ export function LabelEditor({
             <span className="text-sm font-semibold truncate max-w-[70vw] leading-tight">
               Этикетка · <span className="text-primary">{sizeDef.label}</span>
             </span>
+            <div className="flex shrink-0 items-center gap-1">
+              <button
+                type="button"
+                onClick={handleExportPng}
+                disabled={!loaded || !fitsPrinthead}
+                className="inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs hover:bg-muted disabled:opacity-50"
+                title={fitsPrinthead ? `Скачать PNG · ${printerProfile.dpi} dpi` : "Ширина макета превышает ширину печатающей головки"}
+              >
+                <Download className="h-3.5 w-3.5" aria-hidden="true" />
+                PNG
+              </button>
             {onClose && (
               <button
                 type="button"
@@ -443,6 +479,7 @@ export function LabelEditor({
                 <X className="h-5 w-5" />
               </button>
             )}
+            </div>
           </div>
           <LabelEditorToolbar zone="header" {...toolbarCommon} />
         </div>

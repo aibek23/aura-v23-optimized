@@ -14,6 +14,8 @@ const META: Record<string, ShapeMeta> = {
   T30x25_45:   { vbW: 30,       vbH: 70,         bodyW: 30,       bodyH: 25   },
   T30x25_50:   { vbW: 30,       vbH: 75,         bodyW: 30,       bodyH: 25   },
   T50x30_rect: { vbW: 50,       vbH: 30,         bodyW: 50,       bodyH: 30   },
+  T12x30_d11:  { vbW: 12,       vbH: 30,         bodyW: 12,       bodyH: 30   },
+  T12x50_d110: { vbW: 12,       vbH: 50,         bodyW: 12,       bodyH: 50   },
 }
 
 function getMeta(key: string): ShapeMeta {
@@ -97,7 +99,7 @@ export const LabelBackground = memo(function LabelBackground({
   const baseSvgW = Math.round(m.vbW * pxPerMm + SVG_PAD * 2)
   const baseSvgH = Math.round(m.vbH * pxPerMm + SVG_PAD * 2)
   const padMm = SVG_PAD / pxPerMm
-  const hasShape = key in META
+  const hasShape = key in META && key !== "T12x30_d11" && key !== "T12x50_d110"
 
   return (
     <div

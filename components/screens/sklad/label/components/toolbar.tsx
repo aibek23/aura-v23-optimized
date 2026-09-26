@@ -37,6 +37,7 @@ export interface LabelEditorToolbarProps {
   font:         string
   fontSize:     number
   isPrinting:   boolean
+  canPrint?:    boolean
   status:       string
   autoFit:      boolean
   fitRatio:     number
@@ -48,7 +49,7 @@ export interface LabelEditorToolbarProps {
   onAddBorder:        (style: BorderStyleKey) => void
   onRemoveSelected:   () => void
   onSaveTemplate:     () => void
-  onResetTemplate:    () => void
+  onReloadTemplate:   () => void
   onFontChange:       (font: string) => void
   onFontSizeChange:   (size: number) => void
   onAutoFitChange:    (on: boolean) => void
@@ -96,7 +97,7 @@ export const LabelEditorToolbar = memo(function LabelEditorToolbar(
 // Остались: выбор формата, Сохранить, Сброс, Экспорт в файл.
 function HeaderZone({
   sizeKey,
-  onSizeChange, onSaveTemplate, onResetTemplate, onSaveToFile,
+  onSizeChange, onSaveTemplate, onReloadTemplate, onSaveToFile,
 }: LabelEditorToolbarProps) {
   const [expanded, setExpanded] = useState(false)
   const allKeys = Object.keys(LABEL_SIZES) as (keyof typeof LABEL_SIZES)[]
@@ -127,15 +128,15 @@ function HeaderZone({
           <span className="hidden sm:inline">Сохранить</span>
         </button>
 
-        {/* Сброс */}
+        {/* Загрузить сохранённый шаблон из БД */}
         <button
           type="button"
-          onClick={onResetTemplate}
+          onClick={onReloadTemplate}
           className="shrink-0 flex items-center gap-1 rounded-md border border-border bg-background px-2.5 py-1 text-[11px] text-muted-foreground hover:bg-muted transition-colors"
-          title="Сбросить шаблон"
+          title="Загрузить шаблон из базы данных"
         >
           <RefreshCw className="h-3.5 w-3.5" />
-          <span className="hidden sm:inline">Сброс</span>
+          <span className="hidden sm:inline">Обновить</span>
         </button>
 
         {/* Экспорт в файл */}
@@ -183,7 +184,7 @@ function HeaderZone({
 
 // ── Bottom Zone ───────────────────────────────────────────────────────────────
 function BottomZone({
-  sizeDef, font, fontSize, isPrinting, status,
+  sizeDef, font, fontSize, isPrinting, canPrint = true, status,
   autoFit, fitRatio,
   isBold = false, isItalic = false, isUnderline = false, isLinethrough = false,
   textAlign = "left", charSpacing = 0, lineHeight = 1.16,
@@ -270,11 +271,11 @@ function BottomZone({
           <Button
             size="sm"
             onClick={(e) => { e.stopPropagation(); onPrint() }}
-            disabled={isPrinting}
+            disabled={isPrinting || !canPrint}
             className="h-8 gap-1.5 rounded-xl px-3 text-[12px] font-semibold"
           >
             <Printer className="h-4 w-4" />
-            {isPrinting ? "Печать…" : "Распечатать"}
+            {!canPrint ? "Печать недоступна" : isPrinting ? "Печать…" : "Распечатать"}
           </Button>
         </div>
       </div>
@@ -591,11 +592,11 @@ function BottomZone({
         )}
         <Button
           onClick={onPrint}
-          disabled={isPrinting}
+          disabled={isPrinting || !canPrint}
           className="w-full gap-2 h-10 text-sm font-semibold"
         >
           <Printer className="h-4 w-4" />
-          {isPrinting ? "Печать…" : `Печать · ${sizeDef.label}`}
+          {!canPrint ? "Печать недоступна" : isPrinting ? "Печать…" : `Печать · ${sizeDef.label}`}
         </Button>
       </div>
 

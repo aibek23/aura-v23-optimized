@@ -10,6 +10,10 @@ export interface LabelEditorProps {
   product:        Product
   autoPrint?:     boolean
   initialSizeKey?: JewelryLabelSizeKey
+  printerProfile?: import("@/lib/niimbot").PrinterProfile
+  copies?:         number
+  density?:        number
+  onSizeChange?:   (key: JewelryLabelSizeKey) => void
   onClose?:       () => void
 }
 

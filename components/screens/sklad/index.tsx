@@ -1,11 +1,11 @@
 "use client"
 
-import { useMemo, useState, useTransition } from "react"
+import { useEffect, useMemo, useState, useTransition } from "react"
 import dynamic from "next/dynamic"
 import type { Product, Sale } from "@/lib/types"
-import { DEFAULT_SIZE_KEY, type JewelryLabelSizeKey } from "@/lib/niimbot"
+import { DEFAULT_SIZE_KEY, getLabelSizeDef, getPrinterProfile, PRINTER_PROFILES, type JewelryLabelSizeKey } from "@/lib/niimbot"
 import { formatDate, formatSom, formatWeight } from "@/lib/format"
-import { deleteProduct } from "@/app/actions/products"
+import { deleteProduct, getShopSeqIdForLabel } from "@/app/actions/products"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import {
@@ -39,6 +39,10 @@ const LabelEditor = dynamic(
 )
 
 const PAGE_SIZE = 20
+const MODEL_STORAGE_KEY = "sklad:printer-model"
+
+const isValidShopSeqId = (value: number | null | undefined): value is number =>
+  typeof value === "number" && Number.isSafeInteger(value) && value > 0
 
 export function SkladScreen({
   products,
@@ -66,12 +70,25 @@ export function SkladScreen({
   const [labelDialogOpen, setLabelDialogOpen] = useState(false)
   const [labelAutoPrint, setLabelAutoPrint] = useState(false)
   const [labelSizeKey, setLabelSizeKey] = useState<JewelryLabelSizeKey>(DEFAULT_SIZE_KEY)
-  const [virtualMode, setVirtualMode] = useState(true)
+  const [printerKey, setPrinterKey] = useState("b1")
+  const [virtualMode, setVirtualMode] = useState(false)
 
   const [productDialogOpen, setProductDialogOpen] = useState(false)
   const [editing, setEditing] = useState<Product | null>(null)
   const [query, setQuery] = useState("")
   const [page, setPage] = useState(1)
+  const printerProfile = getPrinterProfile(printerKey)
+  const nativeWidth = Math.round(getLabelSizeDef(labelSizeKey).w_px * printerProfile.dpi / 203)
+  const fitsPrinthead = nativeWidth <= printerProfile.printheadPx
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(MODEL_STORAGE_KEY)
+      if (saved && PRINTER_PROFILES.some((profile) => profile.key === saved)) setPrinterKey(saved)
+    } catch {
+      // Если хранение недоступно, используем B1.
+    }
+  }, [])
 
   const filtered = useMemo(() => {
     return filterProducts(products, query)
@@ -111,19 +128,30 @@ export function SkladScreen({
     return map
   }, [sales])
 
+  const openLabel = async (p: Product, autoPrint: boolean) => {
+    try {
+      const cachedSeqId = isValidShopSeqId(p.shop_seq_id)
+        ? p.shop_seq_id
+        : products.find((row) => row.shop_id === p.shop_id && isValidShopSeqId(row.shop_seq_id))?.shop_seq_id
+      const shopSeqId = isValidShopSeqId(cachedSeqId)
+        ? cachedSeqId
+        : await getShopSeqIdForLabel(p.shop_id)
+      setLabelProduct({ ...p, shop_seq_id: shopSeqId })
+      setLabelAutoPrint(autoPrint)
+      setLabelSizeKey(printerProfile.defaultLabelKey)
+      setLabelDialogOpen(true)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Не удалось подготовить QR-код для этикетки")
+    }
+  }
+
   const onPrintLabel = (p: Product) => {
-    setLabelProduct(p)
-    setLabelAutoPrint(false)
-    setLabelSizeKey(DEFAULT_SIZE_KEY)
-    setLabelDialogOpen(true)
+    void openLabel(p, false)
   }
 
   /** Автопечать при сохранении товара из модального окна. */
   const onAutoPrintLabel = (p: Product) => {
-    setLabelProduct(p)
-    setLabelAutoPrint(true)
-    setLabelSizeKey(DEFAULT_SIZE_KEY)
-    setLabelDialogOpen(true)
+    void openLabel(p, true)
   }
 
   const onAdd = () => {
@@ -199,6 +227,7 @@ export function SkladScreen({
           products={filtered}
           canSeePurchasePrice={canSeePurchasePrice}
           isAdmin={isAdmin}
+          onPrint={onPrintLabel}
           onEdit={onEdit}
           onDelete={(id) => {
             const p = products.find((item) => item.id === id)
@@ -438,7 +467,7 @@ export function SkladScreen({
         <DialogContent
           showCloseButton={false}
           className={[
-            "p-0 gap-0",
+            "flex flex-col p-0 gap-0",
             // Мобильные: во весь экран
             "max-sm:inset-0 max-sm:top-0 max-sm:left-0 max-sm:translate-x-0 max-sm:translate-y-0",
             "max-sm:w-screen max-sm:max-w-none max-sm:h-[100dvh] max-sm:max-h-none max-sm:rounded-none",
@@ -449,13 +478,45 @@ export function SkladScreen({
           <DialogHeader className="sr-only">
             <DialogTitle>Этикетка: {labelProduct?.name}</DialogTitle>
           </DialogHeader>
+          <div className="flex shrink-0 items-center gap-2 border-b px-3 py-2">
+            <label htmlFor="inventory-printer-model" className="shrink-0 text-xs font-medium">Принтер</label>
+            <select
+              id="inventory-printer-model"
+              value={printerKey}
+              onChange={(event) => {
+                const profile = getPrinterProfile(event.target.value)
+                setPrinterKey(profile.key)
+                setLabelSizeKey(profile.defaultLabelKey)
+                setLabelAutoPrint(false)
+                try { localStorage.setItem(MODEL_STORAGE_KEY, profile.key) } catch { /* ignore */ }
+              }}
+              className="min-w-0 flex-1 rounded-md border border-input bg-background px-2 py-1.5 text-xs"
+            >
+              {PRINTER_PROFILES.map((profile) => (
+                <option key={profile.key} value={profile.key}>{profile.displayName}</option>
+              ))}
+            </select>
+            <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">{printerProfile.dpi} dpi</span>
+          </div>
+          {labelProduct && (printerProfile.supportsDirectBluetooth === false || !fitsPrinthead) && (
+            <p role="status" className="shrink-0 border-b bg-amber-500/10 px-3 py-1.5 text-[11px] leading-4 text-amber-700 dark:text-amber-300">
+              {!fitsPrinthead
+                ? `Ширина ${nativeWidth} px превышает ${printerProfile.printheadPx} px. Выберите другой формат этикетки.`
+                : `B3S: прямой Bluetooth недоступен. Скачайте PNG и напечатайте через приложение Niimbot без масштабирования.`}
+            </p>
+          )}
           {labelProduct && (
-            <LabelEditor
-              product={labelProduct}
-              autoPrint={labelAutoPrint}
-              initialSizeKey={labelSizeKey}
-              onClose={() => setLabelDialogOpen(false)}
-            />
+            <div className="min-h-0 flex-1">
+              <LabelEditor
+                key={`${labelProduct.id}:${printerProfile.key}`}
+                product={labelProduct}
+                autoPrint={labelAutoPrint}
+                initialSizeKey={labelSizeKey}
+                printerProfile={printerProfile}
+                onSizeChange={setLabelSizeKey}
+                onClose={() => setLabelDialogOpen(false)}
+              />
+            </div>
           )}
         </DialogContent>
       </Dialog>

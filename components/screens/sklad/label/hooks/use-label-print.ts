@@ -5,7 +5,7 @@
 import { useRef, useCallback, useEffect } from "react"
 import { toast } from "sonner"
 import type { Canvas as FabricCanvas } from "fabric"
-import type { LabelSizeDef } from "@/lib/niimbot"
+import type { LabelSizeDef, PrinterProfile } from "@/lib/niimbot"
 import { printCanvas } from "@/lib/niimbot"
 import { cropPrintArea } from "../canvas/print"
 
@@ -14,6 +14,9 @@ export function useLabelPrint(
   sizeDef:       LabelSizeDef,
   loaded:        boolean,
   autoPrint:     boolean,
+  printerProfile: PrinterProfile,
+  copies:        number,
+  density:       number,
   setIsPrinting: (v: boolean) => void,
   setStatus:     (v: string) => void,
 ) {
@@ -25,8 +28,13 @@ export function useLabelPrint(
     setIsPrinting(true)
     setStatus("Подготовка печати...")
     try {
-      const cropped = cropPrintArea(canvas, sizeDef)
-      await printCanvas(cropped, sizeDef, { onProgress: (msg) => setStatus(msg) })
+      const cropped = cropPrintArea(canvas, sizeDef, printerProfile.dpi)
+      await printCanvas(cropped, sizeDef, {
+        model: printerProfile,
+        copies,
+        density,
+        onProgress: (msg) => setStatus(String(msg)),
+      })
       toast.success("Печать успешно завершена")
     } catch (err) {
       console.error("[Print Error]:", err)
@@ -35,7 +43,7 @@ export function useLabelPrint(
       setIsPrinting(false)
       setStatus("")
     }
-  }, [fabricRef, sizeDef, loaded, setIsPrinting, setStatus])
+  }, [fabricRef, sizeDef, loaded, printerProfile, copies, density, setIsPrinting, setStatus])
 
   useEffect(() => {
     if (!autoPrint || !loaded || autoPrintedRef.current) return
