@@ -88,7 +88,13 @@ function formatDate(iso: string) {
 
 
 // Главный компонент экрана клиентов
-export function ClientsScreen({ clients }: { clients: Customer[] }) {
+export function ClientsScreen({
+  clients,
+  allowOffline = true,
+}: {
+  clients: Customer[]
+  allowOffline?: boolean
+}) {
   const router = useRouter()
   const [query, setQuery] = useState("")
   const [genderFilter, setGenderFilter] = useState<string>("all")
@@ -143,7 +149,8 @@ export function ClientsScreen({ clients }: { clients: Customer[] }) {
           if (!navigator.onLine) throw new Error("Offline")
           await updateClient(editing.id, input)
           toast.success("Данные клиента обновлены")
-        } catch {
+        } catch (actionErr) {
+          if (!allowOffline) throw actionErr
           const { bulkPut } = await import("@/lib/local-db/db")
           const { enqueueOutbox } = await import("@/lib/local-db/outbox")
           const clientOpId = typeof crypto !== "undefined" ? crypto.randomUUID() : Math.random().toString(36).substring(2)
@@ -173,7 +180,8 @@ export function ClientsScreen({ clients }: { clients: Customer[] }) {
           if (!navigator.onLine) throw new Error("Offline")
           await createClient_(input)
           toast.success("Клиент добавлен")
-        } catch {
+        } catch (actionErr) {
+          if (!allowOffline) throw actionErr
           const { bulkPut } = await import("@/lib/local-db/db")
           const { enqueueOutbox } = await import("@/lib/local-db/outbox")
           const clientOpId = typeof crypto !== "undefined" ? crypto.randomUUID() : Math.random().toString(36).substring(2)

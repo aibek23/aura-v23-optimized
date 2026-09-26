@@ -3,6 +3,7 @@
 import { headers } from "next/headers"
 import { revalidatePath } from "next/cache"
 import { createClient } from "@/lib/supabase/server"
+import { getActiveShopId } from "@/lib/supabase/current-shop"
 import type {
   SupplierDebtOperation,
   SupplierDebtSummary,
@@ -17,8 +18,11 @@ async function requireProfile() {
   if (!user) throw new Error("Unauthorized")
   const { data: profile } = await supabase.from("profiles").select("*").eq("id", user.id).single()
   if (!profile || profile.status !== "approved") throw new Error("Not approved")
-  if (!profile.shop_id) throw new Error("Ваш аккаунт не привязан ни к одному магазину")
-  return { supabase, user, profile }
+  const fallbackShopId =
+    profile.role === "super_admin" ? profile.impersonated_shop_id ?? profile.shop_id : profile.shop_id
+  const shopId = await getActiveShopId(supabase, fallbackShopId ?? null)
+  if (!shopId) throw new Error("Ваш аккаунт не привязан ни к одному магазину")
+  return { supabase, user, profile, shopId }
 }
 
 async function requireAdmin() {
@@ -63,11 +67,11 @@ const SUPPLIER_DEBT_COLUMNS = [
 
 /** Журнал долга поставщиков и текущие остатки. Остаток считается только из журнала. */
 export async function getSupplierDebtData(): Promise<SupplierDebtData> {
-  const { supabase, profile } = await requireProfile()
+  const { supabase, profile, shopId } = await requireProfile()
   const { data, error } = await supabase
     .from("supplier_debt_operations")
     .select(SUPPLIER_DEBT_COLUMNS)
-    .eq("shop_id", profile.shop_id)
+    .eq("shop_id", shopId)
     .order("created_at", { ascending: false })
 
   if (error) throw new Error(`Не удалось загрузить журнал поставщиков: ${error.message}`)

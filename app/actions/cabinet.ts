@@ -1,6 +1,7 @@
 "use server"
 
 import { createClient } from "@/lib/supabase/server"
+import { getActiveShopId } from "@/lib/supabase/current-shop"
 import { revalidatePath } from "next/cache"
 import type { Profile } from "@/lib/types"
 
@@ -12,7 +13,10 @@ async function requireProfile() {
   if (!user) throw new Error("Unauthorized")
   const { data: profile } = await supabase.from("profiles").select("*").eq("id", user.id).single()
   if (!profile || profile.status !== "approved") throw new Error("Not approved")
-  return { supabase, user, profile: profile as Profile }
+  const fallbackShopId =
+    profile.role === "super_admin" ? profile.impersonated_shop_id ?? profile.shop_id : profile.shop_id
+  const shopId = await getActiveShopId(supabase, fallbackShopId ?? null)
+  return { supabase, user, profile: profile as Profile, shopId }
 }
 
 async function requireAdmin() {
@@ -35,7 +39,7 @@ export type CabinetData = {
 
 /** Данные кабинета с учётом роли: супер-админ видит всех, админ — своих продавцов. */
 export async function getCabinetData(): Promise<CabinetData> {
-  const { supabase, profile } = await requireProfile()
+  const { supabase, profile, shopId } = await requireProfile()
 
   if (profile.role === "seller") {
     return { team: [], requests: [], defaultBonusRate: profile.bonus_rate ?? 2 }
@@ -44,19 +48,23 @@ export async function getCabinetData(): Promise<CabinetData> {
   const isSuper = profile.role === "super_admin"
 
   // Супер-админ читает сотрудников своего (или impersonated) магазина.
-  const { data: all, error } = await supabase
-    .from("profiles")
-    .select("*")
-    .eq("shop_id", profile.shop_id)
-    .order("created_at", { ascending: false })
+  const { data: all, error } = shopId
+    ? await supabase
+        .from("profiles")
+        .select("*")
+        .eq("shop_id", shopId)
+        .order("created_at", { ascending: false })
+    : { data: [], error: null }
   if (error) throw error
 
   const rows = (all as Profile[]) ?? []
-  const { data: settings } = await supabase
-    .from("shop_settings")
-    .select("default_bonus_rate")
-    .eq("shop_id", profile.shop_id)
-    .maybeSingle()
+  const { data: settings } = shopId
+    ? await supabase
+        .from("shop_settings")
+        .select("default_bonus_rate")
+        .eq("shop_id", shopId)
+        .maybeSingle()
+    : { data: null }
 
   const team = rows.filter((p) => {
     if (p.id === profile.id) return false
@@ -116,12 +124,12 @@ export async function rejectRequest(id: string) {
 
 /** Удаление сотрудника: админ — только своих продавцов, супер-админ — любого. */
 export async function removeMember(id: string) {
-  const { supabase, profile } = await requireAdmin()
+  const { supabase, profile, shopId } = await requireAdmin()
   if (id === profile.id) throw new Error("Нельзя удалить самого себя")
 
   const { data: target } = await supabase.from("profiles").select("*").eq("id", id).single()
   const t = target as Profile | null
-  if (!t || t.shop_id !== profile.shop_id) throw new Error("Сотрудник не найден")
+  if (!t || t.shop_id !== shopId) throw new Error("Сотрудник не найден")
 
   if (profile.role !== "super_admin") {
     if (t.role !== "seller" || (t.manager_id && t.manager_id !== profile.id)) {
@@ -136,12 +144,12 @@ export async function removeMember(id: string) {
 
 /** Персональный процент бонусов сотрудника. */
 export async function setMemberBonusRate(id: string, rate: number) {
-  const { supabase, profile } = await requireAdmin()
+  const { supabase, profile, shopId } = await requireAdmin()
   const value = Math.max(0, Math.min(100, Number(rate) || 0))
 
   const { data: target } = await supabase.from("profiles").select("*").eq("id", id).single()
   const t = target as Profile | null
-  if (!t || t.shop_id !== profile.shop_id) throw new Error("Сотрудник не найден")
+  if (!t || t.shop_id !== shopId) throw new Error("Сотрудник не найден")
   if (profile.role !== "super_admin" && t.role !== "seller" && t.id !== profile.id) {
     throw new Error("Недостаточно прав")
   }
@@ -154,12 +162,13 @@ export async function setMemberBonusRate(id: string, rate: number) {
 
 /** Общий процент бонусов по магазину — только супер-админ. */
 export async function setDefaultBonusRate(rate: number) {
-  const { supabase, profile } = await requireSuperAdmin()
+  const { supabase, shopId } = await requireSuperAdmin()
   const value = Math.max(0, Math.min(100, Number(rate) || 0))
+  if (!shopId) throw new Error("Сначала выберите магазин")
   const { error } = await supabase
     .from("shop_settings")
     .upsert(
-      { shop_id: profile.shop_id, default_bonus_rate: value, updated_at: new Date().toISOString() },
+      { shop_id: shopId, default_bonus_rate: value, updated_at: new Date().toISOString() },
       { onConflict: "shop_id" },
     )
   if (error) throw error
@@ -178,11 +187,11 @@ export async function touchPresence() {
 
 /** Обнулить бонусный баланс сотрудника — только админ / супер-админ. */
 export async function resetBonusPoints(id: string) {
-  const { supabase, profile } = await requireAdmin()
+  const { supabase, profile, shopId } = await requireAdmin()
 
   const { data: target } = await supabase.from("profiles").select("*").eq("id", id).single()
   const t = target as Profile | null
-  if (!t || t.shop_id !== profile.shop_id) throw new Error("Сотрудник не найден")
+  if (!t || t.shop_id !== shopId) throw new Error("Сотрудник не найден")
 
   // Имя параметра функции — _user_id (ранее передавался неверный target_id,
   // из-за чего админы и супер-админы получали ошибку).
@@ -194,12 +203,12 @@ export async function resetBonusPoints(id: string) {
 
 /** Установить точное количество бонусных баллов сотрудника — админ / супер-админ. */
 export async function setBonusPoints(id: string, points: number) {
-  const { supabase, profile } = await requireAdmin()
+  const { supabase, profile, shopId } = await requireAdmin()
   const value = Math.max(0, Number(points) || 0)
 
   const { data: target } = await supabase.from("profiles").select("*").eq("id", id).single()
   const t = target as Profile | null
-  if (!t || t.shop_id !== profile.shop_id) throw new Error("Сотрудник не найден")
+  if (!t || t.shop_id !== shopId) throw new Error("Сотрудник не найден")
 
   const { error } = await supabase.rpc("set_bonus_points", { _user_id: id, _points: value })
   if (error) throw error

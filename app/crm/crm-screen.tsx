@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation"
 import { createClient } from "@/lib/supabase/server"
-import type { Profile } from "@/lib/types"
+import type { Profile, ProfileWithImpersonation } from "@/lib/types"
 import { PendingScreen } from "@/components/screens/sklad/add-edit-Product/pending-screen"
 import { Dashboard } from "@/components/dashboard"
 import type { ScreenId } from "@/components/app-nav"
@@ -14,6 +14,7 @@ import { getClients } from "@/app/actions/clients"
 import { getSuperAdminShops, getImpersonatedShop } from "@/app/actions/superadmin"
 import type { ShopBillingRow } from "@/app/actions/superadmin"
 import { getSupplierDebtData } from "@/app/actions/suppliers"
+import { getActiveShopId } from "@/lib/supabase/current-shop"
 
 /**
  * Общий серверный экран CRM. Каждый раздел имеет собственный URL
@@ -32,7 +33,7 @@ export async function CrmScreen({ screen }: { screen: ScreenId }) {
 
   // Любой пользователь (включая основателя магазина) должен быть подтверждён суперадмином.
   // Авто-подтверждение намеренно отключено в v18.
-  const typed = profile as Profile | null
+  const typed = profile as ProfileWithImpersonation | null
 
   // Если профиль не подтверждён — показываем экран ожидания, не вызывая никаких action-функций.
   if (!typed || typed.status !== "approved" || !typed.role) {
@@ -40,6 +41,32 @@ export async function CrmScreen({ screen }: { screen: ScreenId }) {
   }
 
   const isSuperAdmin = typed.role === "super_admin"
+  const fallbackShopId =
+    typed.role === "super_admin" ? typed.impersonated_shop_id ?? typed.shop_id : typed.shop_id
+  const activeShopId = await getActiveShopId(supabase, fallbackShopId ?? null)
+
+  // A global super admin without a selected store should land on the store
+  // selector instead of trying to initialize store-specific CRM data.
+  if (isSuperAdmin && !activeShopId) {
+    if (screen !== "shops" && screen !== "notifications") redirect("/crm/stores")
+    const superAdminShops = await getSuperAdminShops()
+    return (
+      <Dashboard
+        screen={screen}
+        profile={typed}
+        products={[]}
+        sales={[]}
+        returns={[]}
+        cabinet={{ team: [], requests: [], defaultBonusRate: 2 }}
+        cash={{ operations: [], presets: [] }}
+        supplierDebts={{ operations: [], suppliers: [] }}
+        rates={[]}
+        email={user.email ?? ""}
+        clients={[]}
+        superAdminShops={superAdminShops}
+      />
+    )
+  }
 
   // Параллельная загрузка всех данных сохраняется: Dashboard переключает
   // разделы без полного перехода страницы, поэтому каждый экран должен

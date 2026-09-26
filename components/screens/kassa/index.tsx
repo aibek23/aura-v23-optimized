@@ -40,6 +40,8 @@ export function KassaScreen({
   clients = [],
   returns = [],
   onLocalCheckout,
+  onlineOnly = false,
+  shopId,
 }: {
   products: Product[]
   profile: Profile
@@ -50,6 +52,8 @@ export function KassaScreen({
   clients?: Customer[]
   returns?: SaleReturn[]
   onLocalCheckout?: (input: any) => Promise<any>
+  onlineOnly?: boolean
+  shopId?: string | null
 }) {
   const router = useRouter()
   const [, startTransition] = useTransition()
@@ -68,6 +72,7 @@ export function KassaScreen({
   const [confirmLoss, setConfirmLoss] = useState(false)
   const [isMobile, setIsMobile] = useState(false)
   const [isLoaded, setIsLoaded] = useState(false)
+  const cartStorageKey = `${LOCAL_STORAGE_KEY}:${shopId || profile.shop_id || "default"}`
 
   const [showScrollTop, setShowScrollTop] = useState(false)
   const [isCartOpenMobile, setIsCartOpenMobile] = useState(true)
@@ -85,8 +90,17 @@ export function KassaScreen({
   }, [sales])
 
   useEffect(() => {
+    if (onlineOnly) {
+      setCart([])
+      setBonusUsed("")
+      setCustomerName("")
+      setCustomerPhone("")
+      setPayment("cash")
+      setIsLoaded(true)
+      return
+    }
     try {
-      const saved = localStorage.getItem(LOCAL_STORAGE_KEY)
+      const saved = localStorage.getItem(cartStorageKey)
       if (saved) {
         const parsed = JSON.parse(saved)
             if (Array.isArray(parsed.cart)) {
@@ -104,19 +118,19 @@ export function KassaScreen({
     } finally {
       setIsLoaded(true)
     }
-  }, [])
+  }, [cartStorageKey, onlineOnly])
 
   useEffect(() => {
-    if (!isLoaded) return
+    if (!isLoaded || onlineOnly) return
     try {
       localStorage.setItem(
-        LOCAL_STORAGE_KEY,
+        cartStorageKey,
         JSON.stringify({ cart, bonusUsed, payment, customerName, customerPhone })
       )
     } catch (e) {
       console.error("[kassa] Error saving to localStorage:", e)
     }
-  }, [cart, bonusUsed, payment, customerName, customerPhone, isLoaded])
+  }, [cart, bonusUsed, payment, customerName, customerPhone, isLoaded, onlineOnly, cartStorageKey])
 
   useEffect(() => {
     const mql = window.matchMedia("(max-width: 767px)")
@@ -277,7 +291,7 @@ export function KassaScreen({
     setCustomerPhone("")
     setPayment("cash")
     setQuery("")
-    localStorage.removeItem(LOCAL_STORAGE_KEY)
+    if (!onlineOnly) localStorage.removeItem(cartStorageKey)
     toast.info("Чек полностью сброшен")
   }
 
@@ -412,6 +426,7 @@ export function KassaScreen({
                products={products}
                canSeeProfit={canSeeProfit}
                canReturn
+               allowOffline={!onlineOnly}
                sellers={sellers}
                onReturned={() => startTransition(() => router.refresh())}
              />
@@ -468,6 +483,7 @@ export function KassaScreen({
              products={products}
              canSeeProfit={canSeeProfit}
              canReturn
+             allowOffline={!onlineOnly}
              sellers={sellers}
              onReturned={() => startTransition(() => router.refresh())}
            />

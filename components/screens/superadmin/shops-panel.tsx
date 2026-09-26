@@ -203,9 +203,11 @@ function BillingDialog({
 export function ImpersonationBanner({
   shopName,
   onExit,
+  onSwitch,
 }: {
   shopName: string | null
   onExit: () => void
+  onSwitch?: () => void
 }) {
   return (
     <div className="sticky top-0 z-50 flex items-center gap-3 border-b border-orange-500/40 bg-orange-500/10 px-4 py-2.5 backdrop-blur">
@@ -213,7 +215,18 @@ export function ImpersonationBanner({
       <span className="flex-1 text-sm font-medium text-orange-700 dark:text-orange-400">
         Режим просмотра магазина:{" "}
         <span className="font-semibold">{shopName ?? "—"}</span>
+        <span className="ml-2 hidden text-xs font-normal sm:inline">· локальная база отключена, данные загружаются онлайн</span>
       </span>
+      {onSwitch && (
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-7 border-orange-500/50 text-xs text-orange-700 hover:bg-orange-500/20 dark:text-orange-400"
+          onClick={onSwitch}
+        >
+          Сменить магазин
+        </Button>
+      )}
       <Button
         size="sm"
         variant="outline"
@@ -278,6 +291,7 @@ export function SuperAdminShopsScreen({ initialShops }: { initialShops: ShopBill
       try {
         await impersonateShop(shopId)
         toast.success("Переключились в контекст магазина")
+        router.push("/crm/pos")
         router.refresh()
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Ошибка переключения")

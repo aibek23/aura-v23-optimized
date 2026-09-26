@@ -65,6 +65,7 @@ export function SalesHistory({
   canReturn = false,
   sellers,
   onReturned,
+  allowOffline = true,
 }: {
   sales: Sale[]
   returns?: SaleReturn[]
@@ -73,6 +74,7 @@ export function SalesHistory({
   canReturn?: boolean
   sellers: { id: string; name: string }[]
   onReturned?: () => void
+  allowOffline?: boolean
 }) {
   const [visible, setVisible] = useState(PAGE)
   const [query, setQuery] = useState("")
@@ -267,13 +269,19 @@ export function SalesHistory({
         <ReturnSearchModal
           units={returnableUnits}
           returnedKeys={returnedKeys}
+          allowOffline={allowOffline}
           onClose={() => setSearchOpen(false)}
           onReturned={(created) => finishReturn(created)}
         />
       )}
 
       {dialogUnit && (
-        <ReturnDialog unit={dialogUnit} onClose={() => setDialogUnit(null)} onReturned={finishReturn} />
+        <ReturnDialog
+          unit={dialogUnit}
+          onClose={() => setDialogUnit(null)}
+          onReturned={finishReturn}
+          allowOffline={allowOffline}
+        />
       )}
     </div>
   )

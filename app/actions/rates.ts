@@ -1,6 +1,7 @@
 "use server"
 
 import { createClient } from "@/lib/supabase/server"
+import { getActiveShopId } from "@/lib/supabase/current-shop"
 import { revalidatePath } from "next/cache"
 import type { MetalRate } from "@/lib/types"
 
@@ -12,17 +13,21 @@ async function requireProfile() {
   if (!user) throw new Error("Требуется вход в систему")
   const { data: profile } = await supabase.from("profiles").select("*").eq("id", user.id).single()
   if (!profile || profile.status !== "approved") throw new Error("Аккаунт не подтверждён")
-  return { supabase, user, profile }
+  const fallbackShopId =
+    profile.role === "super_admin" ? profile.impersonated_shop_id ?? profile.shop_id : profile.shop_id
+  const shopId = await getActiveShopId(supabase, fallbackShopId ?? null)
+  return { supabase, user, profile, shopId }
 }
 
 /** Курсы металлов магазина. Пустой список — используются значения по умолчанию. */
 export async function getMetalRates(): Promise<MetalRate[]> {
   try {
-    const { supabase, profile } = await requireProfile()
+    const { supabase, shopId } = await requireProfile()
+    if (!shopId) return []
     const { data } = await supabase
       .from("metal_rates")
       .select("*")
-      .eq("shop_id", profile.shop_id)
+      .eq("shop_id", shopId)
       .order("metal")
     return (data as MetalRate[]) ?? []
   } catch {
@@ -37,10 +42,11 @@ export async function upsertMetalRate(input: {
   price_per_gram: number
   scrap_price_per_gram: number
 }) {
-  const { supabase, profile } = await requireProfile()
+  const { supabase, profile, shopId } = await requireProfile()
   if (profile.role !== "admin" && profile.role !== "super_admin") {
     throw new Error("Изменять курсы может только администратор")
   }
+  if (!shopId) throw new Error("Сначала выберите магазин")
   const metal = (input.metal ?? "").trim()
   if (!metal) throw new Error("Укажите металл")
   const sale = Number(input.price_per_gram)
@@ -50,7 +56,7 @@ export async function upsertMetalRate(input: {
 
   const { error } = await supabase.from("metal_rates").upsert(
     {
-      shop_id: profile.shop_id,
+      shop_id: shopId,
       metal,
       price_per_gram: sale,
       scrap_price_per_gram: scrap,

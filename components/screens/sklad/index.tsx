@@ -53,6 +53,7 @@ export function SkladScreen({
   subtitle = "Учёт товарных остатков",
   showStats = true,
   showAdd = true,
+  allowOffline = true,
 }: {
   products: Product[]
   sales?: Sale[]
@@ -62,6 +63,7 @@ export function SkladScreen({
   subtitle?: string
   showStats?: boolean
   showAdd?: boolean
+  allowOffline?: boolean
 }) {
   const router = useRouter()
   const [, startTransition] = useTransition()
@@ -526,6 +528,7 @@ export function SkladScreen({
         onOpenChange={setProductDialogOpen}
         product={editing}
         canSeePurchasePrice={canSeePurchasePrice}
+        allowOffline={allowOffline}
         onPrintLabel={onAutoPrintLabel}
       />
     </div>

@@ -37,6 +37,8 @@ import { runLogoutCleanup } from "@/lib/local-db/logout-cleanup"
 
 export function AppHeader({
   profile,
+  currentShopName,
+  onlineOnly = false,
   viewRole,
   onChangeViewRole,
   onOpenCabinet,
@@ -45,6 +47,8 @@ export function AppHeader({
   onNavigate,
 }: {
   profile: Profile
+  currentShopName?: string | null
+  onlineOnly?: boolean
   viewRole: Role
   onChangeViewRole: (role: Role) => void
   onOpenCabinet: () => void
@@ -99,14 +103,22 @@ export function AppHeader({
           title="Текущий магазин"
         >
           <span className="h-2 w-2 shrink-0 rounded-full bg-primary" aria-hidden="true" />
-          <span className="truncate font-semibold">{profile.shop_name ?? "Магазин"}</span>
+          <span className="truncate font-semibold">
+            {onlineOnly ? currentShopName ?? "Магазин" : currentShopName ?? profile.shop_name ?? "Магазин"}
+          </span>
           <ChevronDown className="h-3.5 w-3.5 shrink-0 text-primary" />
         </div>
 
         <div className="flex-1" />
 
         <div className="flex shrink-0 items-center gap-1 sm:gap-2">
-          <SyncIndicator />
+          {onlineOnly ? (
+            <Badge variant="outline" className="hidden sm:inline-flex text-[10px] text-primary">
+              Только онлайн
+            </Badge>
+          ) : (
+            <SyncIndicator />
+          )}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="sm" className="gap-1.5 bg-transparent" aria-label="Быстрое создание">

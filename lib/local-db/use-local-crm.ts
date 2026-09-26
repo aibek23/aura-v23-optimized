@@ -57,6 +57,7 @@ async function seedMissingLocalRows<T extends { id?: string; shop_id?: string }>
 
 export function useLocalCrm(initialData: {
   profile: Profile
+  enabled?: boolean
   products?: Product[]
   sales?: Sale[]
   returns?: SaleReturn[]
@@ -66,6 +67,7 @@ export function useLocalCrm(initialData: {
   supplierDebts?: SupplierDebtData
 }) {
   const shopId = initialData.profile.shop_id || 'default_shop'
+  const enabled = initialData.enabled ?? true
   const [products, setProducts] = useState<Product[]>(initialData.products || [])
   const [sales, setSales] = useState<Sale[]>(initialData.sales || [])
   const [returns, setReturns] = useState<SaleReturn[]>(initialData.returns || [])
@@ -74,11 +76,19 @@ export function useLocalCrm(initialData: {
   )
   const [rates, setRates] = useState<MetalRate[]>(initialData.rates || [])
   const [clients, setClients] = useState<Customer[]>(initialData.clients || [])
-  const [isReady, setIsReady] = useState(false)
+  const [isReady, setIsReady] = useState(!enabled)
 
   // 1. Initialize Sync Engine and seed initial server data if local DB is empty
   useEffect(() => {
     let mounted = true
+
+    if (!enabled) {
+      syncEngine.stop()
+      setIsReady(true)
+      return () => {
+        mounted = false
+      }
+    }
 
     async function initData() {
       try {
@@ -189,7 +199,7 @@ export function useLocalCrm(initialData: {
       window.removeEventListener('aura:phase1_ready', onPhase1Ready)
       window.removeEventListener('aura:sale_sync_state_changed', onSaleSyncStateChanged)
     }
-  }, [shopId])
+  }, [shopId, enabled])
 
   // 2. Offline-first Checkout (Sales POS)
   const localCheckout = useCallback(

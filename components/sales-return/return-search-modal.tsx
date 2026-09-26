@@ -22,11 +22,13 @@ export function ReturnSearchModal({
   returnedKeys,
   onClose,
   onReturned,
+  allowOffline = true,
 }: {
   units: SaleUnit[]
   returnedKeys: Set<string>
   onClose: () => void
   onReturned: (created: SaleReturn, unit: SaleUnit) => void
+  allowOffline?: boolean
 }) {
   const [query, setQuery] = useState("")
   const [visible, setVisible] = useState(PAGE)
@@ -144,6 +146,7 @@ export function ReturnSearchModal({
       {selected && (
         <ReturnDialog
           unit={selected}
+          allowOffline={allowOffline}
           onClose={() => setSelected(null)}
           onReturned={(created) => {
             setSelected(null)

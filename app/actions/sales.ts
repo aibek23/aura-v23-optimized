@@ -1,6 +1,7 @@
 "use server"
 
 import { createClient } from "@/lib/supabase/server"
+import { getActiveShopId } from "@/lib/supabase/current-shop"
 import { revalidatePath } from "next/cache"
 import type { Sale, SaleItem } from "@/lib/types"
 import { DEFAULT_RATES } from "@/lib/rates"
@@ -17,8 +18,11 @@ async function requireProfile() {
   const { data: profile } = await supabase.from("profiles").select("*").eq("id", user.id).single()
   if (!profile) throw new Error("Профиль не найден")
   if (profile.status !== "approved") throw new Error("Ваш аккаунт ещё не подтверждён администратором")
-  if (!profile.shop_id) throw new Error("Ваш аккаунт не привязан к магазину")
-  return { supabase, user, profile }
+  const fallbackShopId =
+    profile.role === "super_admin" ? profile.impersonated_shop_id ?? profile.shop_id : profile.shop_id
+  const shopId = await getActiveShopId(supabase, fallbackShopId ?? null)
+  if (!shopId) throw new Error("Ваш аккаунт не привязан к магазину")
+  return { supabase, user, profile, shopId }
 }
 
 export async function getSales(): Promise<Sale[]> {
@@ -47,7 +51,7 @@ export type CheckoutInput = {
 const PAYMENTS = new Set(["cash", "card", "transfer", "mixed"])
 
 export async function checkout(input: CheckoutInput) {
-  const { supabase, user, profile } = await requireProfile()
+  const { supabase, user, profile, shopId } = await requireProfile()
 
   // ------------------------------------------------------------- валидация
   const items = Array.isArray(input.items) ? input.items : []
@@ -102,7 +106,7 @@ export async function checkout(input: CheckoutInput) {
       const { data: rateRow } = await supabase
         .from("metal_rates")
         .select("scrap_price_per_gram")
-        .eq("shop_id", profile.shop_id)
+        .eq("shop_id", shopId)
         .eq("metal", metal)
         .maybeSingle()
 
@@ -183,7 +187,7 @@ export async function checkout(input: CheckoutInput) {
   const { data: settings } = await supabase
     .from("shop_settings")
     .select("default_bonus_rate")
-    .eq("shop_id", profile.shop_id)
+    .eq("shop_id", shopId)
     .maybeSingle()
   const rate = Number(profile.bonus_rate ?? settings?.default_bonus_rate ?? DEFAULT_BONUS_RATE)
   const bonusEarned = Math.round(Math.max(0, profit) * (rate / 100))
@@ -197,7 +201,7 @@ export async function checkout(input: CheckoutInput) {
     const { data: existingCustomer } = await supabase
       .from("customers")
       .select("id")
-      .eq("shop_id", profile.shop_id)
+      .eq("shop_id", shopId)
       .eq("phone", trimmedPhone)
       .maybeSingle()
 
@@ -210,7 +214,7 @@ export async function checkout(input: CheckoutInput) {
       const { data: newCustomer } = await supabase
         .from("customers")
         .insert({
-          shop_id: profile.shop_id,
+          shop_id: shopId,
           name: trimmedName,
           phone: trimmedPhone,
           bonus_points: 0,
@@ -247,7 +251,7 @@ export async function checkout(input: CheckoutInput) {
 
   // ------------------------------------------------ запись продажи
   const { error: saleErr } = await supabase.from("sales").insert({
-    shop_id: profile.shop_id,
+    shop_id: shopId,
     seller_id: user.id,
     seller_name: profile.full_name,
     customer_id: customerId,

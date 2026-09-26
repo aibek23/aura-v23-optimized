@@ -26,11 +26,13 @@ export function ProductDialog({
   product,
   canSeePurchasePrice,
   onPrintLabel,
+  allowOffline = true,
 }: {
   open: boolean
   onOpenChange: (v: boolean) => void
   product: Product | null
   canSeePurchasePrice: boolean
+  allowOffline?: boolean
   /** Переиспользует печать этикеток из списка товаров (см. SkladScreen). */
   onPrintLabel?: (product: Product) => void | Promise<void>
 }) {
@@ -117,6 +119,7 @@ export function ProductDialog({
           toast.success("Товар добавлен")
         }
       } catch (saveErr) {
+        if (!allowOffline) throw saveErr
         // Offline fallback: save locally to IndexedDB and queue in Outbox.
         const { bulkPut } = await import("@/lib/local-db/db")
         const { enqueueOutbox } = await import("@/lib/local-db/outbox")

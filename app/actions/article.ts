@@ -1,6 +1,7 @@
 "use server"
 
 import { createClient } from "@/lib/supabase/server"
+import { getActiveShopId } from "@/lib/supabase/current-shop"
 import type { GeneratedArticle } from "@/lib/article"
 
 type SupabaseClient = Awaited<ReturnType<typeof createClient>>
@@ -23,7 +24,10 @@ async function requireProfile() {
     throw new Error("Аккаунт не подтверждён")
   }
 
-  return { supabase, user, profile }
+  const fallbackShopId =
+    profile.role === "super_admin" ? profile.impersonated_shop_id ?? profile.shop_id : profile.shop_id
+  const shopId = await getActiveShopId(supabase, fallbackShopId ?? null)
+  return { supabase, user, profile, shopId }
 }
 
 /** Нормализует ответ RPC: функция возвращает колонки out_article/out_prefix/... */
@@ -62,7 +66,8 @@ export async function createProduct(formData: {
   purchase_price: number
   photos?: string[]
 }) {
-  const { supabase, user, profile } = await requireProfile()
+  const { supabase, user, shopId } = await requireProfile()
+  if (!shopId) throw new Error("Сначала выберите магазин")
 
   // 1. Свежий артикул непосредственно перед сохранением.
   const generated = await nextArticle(supabase, formData.prefix)
@@ -81,7 +86,7 @@ export async function createProduct(formData: {
       purchase_price: formData.purchase_price,
       images,
       image_url: images[0] ?? null,
-      shop_id: profile.shop_id,
+      shop_id: shopId,
       status: "in_stock",
       created_by: user.id,
     })

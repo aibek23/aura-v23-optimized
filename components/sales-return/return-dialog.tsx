@@ -24,10 +24,12 @@ export function ReturnDialog({
   unit,
   onClose,
   onReturned,
+  allowOffline = true,
 }: {
   unit: SaleUnit
   onClose: () => void
   onReturned: (created: SaleReturn) => void
+  allowOffline?: boolean
 }) {
   const [reason, setReason] = useState("")
   const [saving, setSaving] = useState(false)
@@ -48,6 +50,7 @@ export function ReturnDialog({
           reason,
         })
       } catch (actionErr) {
+        if (!allowOffline) throw actionErr
         // Offline return fallback: record locally and enqueue outbox
         const { bulkPut } = await import("@/lib/local-db/db")
         const { enqueueOutbox } = await import("@/lib/local-db/outbox")

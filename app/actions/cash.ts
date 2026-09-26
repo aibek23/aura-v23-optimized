@@ -1,6 +1,7 @@
 "use server"
 
 import { createClient } from "@/lib/supabase/server"
+import { getActiveShopId } from "@/lib/supabase/current-shop"
 import { revalidatePath } from "next/cache"
 import type { CashOperation, CashReasonPreset, CashSource } from "@/lib/types"
 import { computeBalances } from "@/lib/cash"
@@ -14,7 +15,10 @@ async function requireProfile() {
   if (!user) throw new Error("Unauthorized")
   const { data: profile } = await supabase.from("profiles").select("*").eq("id", user.id).single()
   if (!profile || profile.status !== "approved") throw new Error("Not approved")
-  return { supabase, user, profile }
+  const fallbackShopId =
+    profile.role === "super_admin" ? profile.impersonated_shop_id ?? profile.shop_id : profile.shop_id
+  const shopId = await getActiveShopId(supabase, fallbackShopId ?? null)
+  return { supabase, user, profile, shopId }
 }
 
 async function requireAdmin() {
@@ -30,19 +34,20 @@ export type CashData = {
 
 /** Операции с кассой и шаблоны причин текущего магазина. */
 export async function getCashData(): Promise<CashData> {
-  const { supabase, profile } = await requireProfile()
+  const { supabase, shopId } = await requireProfile()
+  if (!shopId) return { operations: [], presets: [] }
 
   const [ops, presets] = await Promise.all([
     supabase
       .from("cash_operations")
       .select("*")
-      .eq("shop_id", profile.shop_id)
+      .eq("shop_id", shopId)
       .order("created_at", { ascending: false })
       .range(0, 199),
     supabase
       .from("cash_reason_presets")
       .select("*")
-      .eq("shop_id", profile.shop_id)
+      .eq("shop_id", shopId)
       .order("created_at", { ascending: false }),
   ])
 
@@ -66,10 +71,10 @@ export async function createCashOperation(input: {
   /** Списание за лом проводится продавцом, а не только администратором. */
   allowSeller?: boolean
 }) {
-  const { supabase, user, profile } = input.allowSeller ? await requireProfile() : await requireAdmin()
+  const { supabase, user, profile, shopId } = input.allowSeller ? await requireProfile() : await requireAdmin()
 
   // Проверка на привязку магазина
-  if (!profile.shop_id) {
+  if (!shopId) {
     throw new Error("Ваш аккаунт не привязан ни к одному магазину")
   }
 
@@ -106,8 +111,8 @@ export async function createCashOperation(input: {
   // Списания и инкассация не должны уводить кассу в минус.
   if (input.type !== "income") {
     const [{ data: salesRows }, { data: opRows }] = await Promise.all([
-      supabase.from("sales").select("*").eq("shop_id", profile.shop_id),
-      supabase.from("cash_operations").select("*").eq("shop_id", profile.shop_id),
+      supabase.from("sales").select("*").eq("shop_id", shopId),
+      supabase.from("cash_operations").select("*").eq("shop_id", shopId),
     ])
     const balances = computeBalances(
       (salesRows as Sale[]) ?? [],
@@ -122,7 +127,7 @@ export async function createCashOperation(input: {
   }
 
   const { error } = await supabase.from("cash_operations").insert({
-    shop_id: profile.shop_id,
+    shop_id: shopId,
     created_by: user.id,
     author_name: profile.full_name,
     type: input.type,
@@ -138,7 +143,7 @@ export async function createCashOperation(input: {
   if (input.savePreset) {
     await supabase
       .from("cash_reason_presets")
-      .insert({ shop_id: profile.shop_id, created_by: user.id, text: reason })
+      .insert({ shop_id: shopId, created_by: user.id, text: reason })
   }
 
   revalidatePath("/crm")

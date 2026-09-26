@@ -1,6 +1,7 @@
 "use server"
 
 import { createClient } from "@/lib/supabase/server"
+import { getActiveShopId } from "@/lib/supabase/current-shop"
 import { revalidatePath } from "next/cache"
 import type { Customer } from "@/lib/types"
 
@@ -12,17 +13,21 @@ async function requireProfile() {
   if (!user) throw new Error("Требуется вход в систему")
   const { data: profile } = await supabase.from("profiles").select("*").eq("id", user.id).single()
   if (!profile || profile.status !== "approved") throw new Error("Аккаунт не подтверждён")
-  return { supabase, user, profile }
+  const fallbackShopId =
+    profile.role === "super_admin" ? profile.impersonated_shop_id ?? profile.shop_id : profile.shop_id
+  const shopId = await getActiveShopId(supabase, fallbackShopId ?? null)
+  return { supabase, user, profile, shopId }
 }
 
 export async function getClients(): Promise<Customer[]> {
-  const { supabase, profile } = await requireProfile()
+  const { supabase, shopId } = await requireProfile()
+  if (!shopId) return []
 
   // 1. Загружаем клиентов магазина
   const { data: clients, error: clientsError } = await supabase
     .from("customers")
     .select("*")
-  .eq("shop_id", profile.shop_id)
+  .eq("shop_id", shopId)
   .order("created_at", { ascending: false })
   .range(0, 99)
 
@@ -44,11 +49,12 @@ export type ClientPurchase = {
 
 /** История покупок конкретного клиента (по customer_id или совпадению имени+телефона). */
 export async function getClientPurchases(customerId: string): Promise<ClientPurchase[]> {
-  const { supabase, profile } = await requireProfile()
+  const { supabase, shopId } = await requireProfile()
+  if (!shopId) return []
   const { data, error } = await supabase
     .from("sales")
     .select("id, created_at, total, items, payment_method")
-    .eq("shop_id", profile.shop_id)
+    .eq("shop_id", shopId)
     .eq("customer_id", customerId)
     .order("created_at", { ascending: false })
     .limit(100)
@@ -89,10 +95,11 @@ function validateClient(input: Partial<ClientInput>) {
 }
 
 export async function createClient_(input: ClientInput): Promise<void> {
-  const { supabase, profile } = await requireProfile()
+  const { supabase, shopId } = await requireProfile()
+  if (!shopId) throw new Error("Сначала выберите магазин")
   validateClient(input)
   const { error } = await supabase.from("customers").insert({
-    shop_id: profile.shop_id,
+    shop_id: shopId,
     name: input.name.trim(),
     phone: input.phone?.trim() || null,
     gender: input.gender || null,

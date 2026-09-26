@@ -1,6 +1,7 @@
 "use server"
 
 import { createClient } from "@/lib/supabase/server"
+import { getActiveShopId } from "@/lib/supabase/current-shop"
 import { revalidatePath } from "next/cache"
 import type { SaleReturn } from "@/lib/types"
 
@@ -13,8 +14,10 @@ async function requireProfile() {
   const { data: profile } = await supabase.from("profiles").select("*").eq("id", user.id).single()
   if (!profile) throw new Error("Профиль не найден")
   if (profile.status !== "approved") throw new Error("Ваш аккаунт ещё не подтверждён администратором")
-  if (!profile.shop_id) throw new Error("Ваш аккаунт не привязан к магазину")
-  return { supabase, user, profile }
+  const fallbackShopId =
+    profile.role === "super_admin" ? profile.impersonated_shop_id ?? profile.shop_id : profile.shop_id
+  const shopId = await getActiveShopId(supabase, fallbackShopId ?? null)
+  return { supabase, user, profile, shopId }
 }
 
 /**
@@ -23,11 +26,12 @@ async function requireProfile() {
  * чтобы не ломать экраны кассы и отчётов.
  */
 export async function getSaleReturns(): Promise<SaleReturn[]> {
-  const { supabase, profile } = await requireProfile()
+  const { supabase, shopId } = await requireProfile()
+  if (!shopId) return []
   const { data, error } = await supabase
     .from("sale_returns")
     .select("*")
-    .eq("shop_id", profile.shop_id)
+    .eq("shop_id", shopId)
     .order("created_at", { ascending: false })
     .range(0, 99)
   if (error) {

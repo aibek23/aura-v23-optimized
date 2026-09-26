@@ -136,12 +136,35 @@ export function Dashboard({
   const canSeePurchasePrice = viewRole === "admin" || viewRole === "super_admin"
   const isAdmin = viewRole === "admin" || viewRole === "super_admin"
   const isSuperAdmin = profile.role === "super_admin"
+  const isImpersonating = isSuperAdmin && Boolean(impersonatedShop?.shop_id)
+  const activeShopId = impersonatedShop?.shop_id ?? profile.shop_id ?? null
+  const [isOnline, setIsOnline] = useState(true)
 
   const [, startTransition] = useTransition()
 
-  // Local-first data layer (IndexedDB + Background Sync)
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true)
+      if (isImpersonating) router.refresh()
+    }
+    const handleOffline = () => setIsOnline(false)
+    setIsOnline(navigator.onLine)
+    window.addEventListener("online", handleOnline)
+    window.addEventListener("offline", handleOffline)
+    return () => {
+      window.removeEventListener("online", handleOnline)
+      window.removeEventListener("offline", handleOffline)
+    }
+  }, [isImpersonating, router])
+
+  useEffect(() => {
+    setActiveScreen(screen)
+  }, [screen])
+
+  // Local-first data is disabled while the super admin views another store.
   const localCrm = useLocalCrm({
     profile,
+    enabled: !isImpersonating && Boolean(profile.shop_id),
     products,
     sales,
     returns,
@@ -151,9 +174,9 @@ export function Dashboard({
     supplierDebts,
   })
 
-  // Persist the offline session in the single local IndexedDB database.
+  // Never persist the super-admin's impersonation session for offline startup.
   useEffect(() => {
-    if (profile?.id) {
+    if (profile?.id && !isImpersonating) {
       saveUserSession({
         userId: profile.id,
         email: email || profile.email || undefined,
@@ -161,17 +184,17 @@ export function Dashboard({
         shopId: profile.shop_id || undefined,
       }).catch((err) => console.warn("Failed to persist offline session:", err))
     }
-  }, [profile, email])
+  }, [profile, email, isImpersonating])
 
-  const currentProducts = localCrm.isReady ? localCrm.products : products
-  const currentSales = localCrm.isReady ? localCrm.sales : sales
+  const currentProducts = !isImpersonating && localCrm.isReady ? localCrm.products : products
+  const currentSales = !isImpersonating && localCrm.isReady ? localCrm.sales : sales
   const confirmedSales = currentSales.filter(
     (sale) => sale.sync_status !== "pending" && sale.sync_status !== "rejected",
   )
-  const currentReturns = localCrm.isReady ? localCrm.returns : returns
-  const currentCash = localCrm.isReady ? localCrm.cash : cash
-  const currentRates = localCrm.isReady ? localCrm.rates : rates
-  const currentClients = localCrm.isReady ? localCrm.clients : clients
+  const currentReturns = !isImpersonating && localCrm.isReady ? localCrm.returns : returns
+  const currentCash = !isImpersonating && localCrm.isReady ? localCrm.cash : cash
+  const currentRates = !isImpersonating && localCrm.isReady ? localCrm.rates : rates
+  const currentClients = !isImpersonating && localCrm.isReady ? localCrm.clients : clients
 
   /** Переключение экрана: переход по отдельному URL. */
   const handleScreenChange = useCallback(
@@ -267,6 +290,7 @@ export function Dashboard({
     try {
       await impersonateShop(null)
       toast.success("Вернулись в панель суперадмина")
+      router.push(SCREEN_PATHS.shops)
       startTransition(() => router.refresh())
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Ошибка")
@@ -283,15 +307,18 @@ export function Dashboard({
       />
 
       {/* Баннер режима имперсонации — отображается поверх всего */}
-      {isSuperAdmin && impersonatedShop && (
+      {isImpersonating && impersonatedShop && (
         <ImpersonationBanner
           shopName={impersonatedShop.shop_name}
           onExit={handleExitImpersonation}
+          onSwitch={() => handleScreenChange("shops")}
         />
       )}
 
       <AppHeader
         profile={profile}
+        currentShopName={isImpersonating ? impersonatedShop?.shop_name : profile.shop_name}
+        onlineOnly={isImpersonating}
         viewRole={viewRole}
         onChangeViewRole={setViewRole}
         onOpenCabinet={() => handleScreenChange("kabinet")}
@@ -322,8 +349,21 @@ export function Dashboard({
 />
 
         <main className="mx-auto w-full min-w-0 max-w-7xl flex-1 px-4 py-6 md:px-6">
+        {isImpersonating && !isOnline ? (
+          <div
+            role="alert"
+            className="mx-auto mt-10 max-w-xl rounded-2xl border border-amber-500/40 bg-amber-500/10 p-6 text-center"
+          >
+            <p className="font-semibold text-amber-800 dark:text-amber-300">Нет подключения к интернету</p>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Просмотр другого магазина работает только онлайн. Локальные данные не используются; подключитесь к сети, чтобы продолжить.
+            </p>
+          </div>
+        ) : (
+          <>
         {activeScreen === "kassa" && (
           <KassaScreen
+            key={activeShopId ?? "no-shop"}
             profile={profile}
             products={currentProducts}
             viewRole={viewRole}
@@ -332,7 +372,9 @@ export function Dashboard({
             cash={currentCash}
             rates={currentRates}
             clients={currentClients}
-            onLocalCheckout={localCrm.localCheckout}
+            onlineOnly={isImpersonating}
+            shopId={activeShopId}
+            onLocalCheckout={isImpersonating ? undefined : localCrm.localCheckout}
           />
         )}
         {activeScreen === "money" && (
@@ -352,10 +394,11 @@ export function Dashboard({
             sales={confirmedSales}
             canSeePurchasePrice={canSeePurchasePrice}
             isAdmin={isAdmin}
+            allowOffline={!isImpersonating}
           />
         )}
         {activeScreen === "clients" && (
-          <ClientsScreen clients={currentClients} />
+          <ClientsScreen clients={currentClients} allowOffline={!isImpersonating} />
         )}
         {activeScreen === "suppliers" && isAdmin && (
           <SuppliersScreen
@@ -388,6 +431,8 @@ export function Dashboard({
           <SuperAdminShopsScreen initialShops={superAdminShops} />
         )}
         {activeScreen === "notifications" && isSuperAdmin && <NotificationsPage />}
+          </>
+        )}
         </main>
       </div>
       <Toaster position="top-center" richColors />

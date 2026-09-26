@@ -1,6 +1,7 @@
 "use server"
 
 import { createClient } from "@/lib/supabase/server"
+import { getActiveShopId } from "@/lib/supabase/current-shop"
 import { revalidatePath } from "next/cache"
 import type { Product } from "@/lib/types"
 
@@ -60,10 +61,14 @@ async function requireProfile() {
  */
 async function requireShopId(
   supabase: Awaited<ReturnType<typeof createClient>>,
-  profile: { shop_id: string | null },
+  profile: { shop_id: string | null; impersonated_shop_id?: string | null; role?: string | null },
 ): Promise<string> {
-  const { data } = await supabase.rpc("current_shop_id")
-  const shopId = (typeof data === "string" ? data : null) ?? profile.shop_id
+  const fallbackShopId =
+    profile.role === "super_admin" ? profile.impersonated_shop_id ?? profile.shop_id : profile.shop_id
+  const shopId = await getActiveShopId(
+    supabase,
+    fallbackShopId,
+  )
   if (!shopId) {
     throw new Error("Ваш аккаунт не привязан к магазину — обратитесь к администратору")
   }
