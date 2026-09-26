@@ -16,6 +16,44 @@ import { syncEngine } from '../sync/sync-engine'
 import { createLocalId } from './id'
 import { persistOfflineSale } from './sale-record'
 import { toast } from 'sonner'
+import type { TableName } from './schema'
+
+/**
+ * Server props are a useful first seed, but may be an older offline page snapshot.
+ * Insert only rows whose primary key is not present locally: `bulkPut` on every app
+ * start would otherwise overwrite edits, offline stock changes, and soft deletes
+ * after a hard refresh.
+ */
+async function seedMissingLocalRows<T extends { id?: string; shop_id?: string }>(
+  table: TableName,
+  rows: T[],
+  shopId: string,
+) {
+  if (!rows.length) return
+
+  const db = await getLocalDB()
+  const tx = db.transaction(table, 'readonly')
+  const store = tx.objectStore(table)
+  const existing = store.indexNames.contains('shop_id')
+    ? await store.index('shop_id').getAll(shopId)
+    : await store.getAll()
+  await tx.done
+
+  // Include soft-deleted rows in this key set. A stale cached server page must not
+  // bring a locally deleted record back to life.
+  const knownKeys = new Set<string>(
+    existing
+      .filter((row: any) => !row.shop_id || row.shop_id === shopId)
+      .map((row: any) => String(row.id ?? row.shop_id ?? ''))
+      .filter(Boolean),
+  )
+  const missing = rows.filter((row) => {
+    const key = row.id ?? row.shop_id
+    return Boolean(key) && !knownKeys.has(String(key))
+  })
+
+  if (missing.length) await bulkPut(table, missing)
+}
 
 export function useLocalCrm(initialData: {
   profile: Profile
@@ -59,30 +97,30 @@ export function useLocalCrm(initialData: {
           setRates([])
         }
 
-        // Seed initial server props into local DB if available
+        // Seed new server records without replacing the local source of truth.
         const ofShop = <T extends { shop_id?: string }>(rows?: T[]) =>
           (rows || []).filter((row) => !row.shop_id || row.shop_id === shopId)
 
         if (initialData.products && initialData.products.length > 0) {
-          await bulkPut('products', ofShop(initialData.products))
+          await seedMissingLocalRows('products', ofShop(initialData.products), shopId)
         }
         if (initialData.sales && initialData.sales.length > 0) {
-          await bulkPut('sales', ofShop(initialData.sales))
+          await seedMissingLocalRows('sales', ofShop(initialData.sales), shopId)
         }
         if (initialData.returns && initialData.returns.length > 0) {
-          await bulkPut('sale_returns', ofShop(initialData.returns))
+          await seedMissingLocalRows('sale_returns', ofShop(initialData.returns), shopId)
         }
         if (initialData.cash?.operations && initialData.cash.operations.length > 0) {
-          await bulkPut('cash_operations', ofShop(initialData.cash.operations))
+          await seedMissingLocalRows('cash_operations', ofShop(initialData.cash.operations), shopId)
         }
         if (initialData.cash?.presets && initialData.cash.presets.length > 0) {
-          await bulkPut('cash_reason_presets', ofShop(initialData.cash.presets))
+          await seedMissingLocalRows('cash_reason_presets', ofShop(initialData.cash.presets), shopId)
         }
         if (initialData.clients && initialData.clients.length > 0) {
-          await bulkPut('customers', ofShop(initialData.clients))
+          await seedMissingLocalRows('customers', ofShop(initialData.clients), shopId)
         }
         if (initialData.rates && initialData.rates.length > 0) {
-          await bulkPut('metal_rates', ofShop(initialData.rates))
+          await seedMissingLocalRows('metal_rates', ofShop(initialData.rates), shopId)
         }
 
         // Read all active records from local DB
@@ -98,15 +136,15 @@ export function useLocalCrm(initialData: {
           ])
 
         if (mounted) {
-          if (localProducts.length > 0) setProducts(localProducts)
-          if (localSales.length > 0) setSales(localSales)
-          if (localReturns.length > 0) setReturns(localReturns)
+          setProducts(localProducts)
+          setSales(localSales)
+          setReturns(localReturns)
           setCash({
-            operations: localCashOps.length > 0 ? localCashOps : initialData.cash?.operations || [],
-            presets: localPresets.length > 0 ? localPresets : initialData.cash?.presets || [],
+            operations: localCashOps,
+            presets: localPresets,
           })
-          if (localClients.length > 0) setClients(localClients)
-          if (localRates.length > 0) setRates(localRates)
+          setClients(localClients)
+          setRates(localRates)
           setIsReady(true)
         }
 

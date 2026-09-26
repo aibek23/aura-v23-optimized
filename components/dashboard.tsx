@@ -162,15 +162,15 @@ export function Dashboard({
     }
   }, [profile, email])
 
-  const currentProducts = localCrm.products.length > 0 ? localCrm.products : products
-  const currentSales = localCrm.sales.length > 0 ? localCrm.sales : sales
+  const currentProducts = localCrm.isReady ? localCrm.products : products
+  const currentSales = localCrm.isReady ? localCrm.sales : sales
   const confirmedSales = currentSales.filter(
     (sale) => sale.sync_status !== "pending" && sale.sync_status !== "rejected",
   )
-  const currentReturns = localCrm.returns.length > 0 ? localCrm.returns : returns
-  const currentCash = localCrm.cash || cash
-  const currentRates = localCrm.rates.length > 0 ? localCrm.rates : rates
-  const currentClients = localCrm.clients.length > 0 ? localCrm.clients : clients
+  const currentReturns = localCrm.isReady ? localCrm.returns : returns
+  const currentCash = localCrm.isReady ? localCrm.cash : cash
+  const currentRates = localCrm.isReady ? localCrm.rates : rates
+  const currentClients = localCrm.isReady ? localCrm.clients : clients
 
   /** Переключение экрана: переход по отдельному URL. */
   const handleScreenChange = useCallback(
@@ -362,17 +362,17 @@ export function Dashboard({
           <KabinetScreen
             profile={profile}
             viewRole={viewRole}
-            sales={sales}
-            returns={returns}
+            sales={currentSales}
+            returns={currentReturns}
             data={cabinet}
             email={email}
           />
         )}
         {activeScreen === "otchety" && isAdmin && (
           <OtchetyScreen
-            sales={sales}
-            products={products}
-            returns={returns}
+            sales={currentSales}
+            products={currentProducts}
+            returns={currentReturns}
             viewRole={viewRole}
             profile={profile}
           />

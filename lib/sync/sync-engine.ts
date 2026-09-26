@@ -492,6 +492,7 @@ class SyncEngine {
 
       await setMeta('initial_sync_done', true)
       this.pullFailures = 0
+      this.notifyServiceWorker({ type: 'AURA_CLOUD_REACHABLE' })
 
       const pendingOutbox = await getOutboxPendingCount(shopId)
       updateSyncState({
@@ -555,6 +556,7 @@ class SyncEngine {
       if (settings) await bulkPut('shop_settings', [settings])
 
       this.pullFailures = 0
+      this.notifyServiceWorker({ type: 'AURA_CLOUD_REACHABLE' })
       const pendingOutbox = await getOutboxPendingCount(shopId)
 
       updateSyncState({
@@ -578,7 +580,24 @@ class SyncEngine {
   /** Report a pull failure and schedule a retry when the failure looks temporary. */
   private handlePullError(err: any, fallbackMessage: string) {
     const kind = classifyError(err)
-    console.error('[Sync] Pull failed:', err)
+    const message = String(err?.message || '').toLowerCase()
+    const transportFailure =
+      err?.name === 'TypeError' ||
+      err?.name === 'AbortError' ||
+      message.includes('failed to fetch') ||
+      message.includes('fetch failed') ||
+      message.includes('network') ||
+      message.includes('timeout')
+
+    if (transportFailure) {
+      // A browser can report navigator.onLine=true while DNS, Wi-Fi or Supabase is
+      // unreachable. Keep the local-first screens usable and retry in the background
+      // instead of presenting a fatal sync error for an ordinary connection loss.
+      console.warn('[Sync] Cloud is temporarily unreachable; keeping local data active:', err)
+      this.notifyServiceWorker({ type: 'AURA_CLOUD_UNREACHABLE' })
+    } else {
+      console.error('[Sync] Pull failed:', err)
+    }
 
     if (kind === 'auth') {
       updateSyncState({
@@ -590,10 +609,13 @@ class SyncEngine {
       return
     }
 
+    const locallyAvailable = kind === 'transient' && (transportFailure || !this.isOnline)
     updateSyncState({
-      status: 'error',
-      lastError: err?.message || fallbackMessage,
-      phaseLabel: kind === 'transient' ? 'Ошибка сети — повтор' : 'Ошибка — повторить',
+      status: locallyAvailable ? 'offline' : 'error',
+      lastError: locallyAvailable
+        ? 'Нет связи с сервером. Работа продолжается с локальными данными.'
+        : err?.message || fallbackMessage,
+      phaseLabel: locallyAvailable ? 'Локальный режим — повтор при восстановлении связи' : 'Ошибка — повторить',
       isStale: true,
     })
 

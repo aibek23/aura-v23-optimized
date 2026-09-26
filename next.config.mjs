@@ -8,6 +8,11 @@ const nextConfig = {
     unoptimized: true,
   },
 
+  // Keep production builds within the memory limits of small Replit containers.
+  experimental: {
+    cpus: 1,
+  },
+
   transpilePackages: ['niimbot-web-bluetooth'],
 
   async rewrites() {

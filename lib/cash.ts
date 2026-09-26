@@ -48,8 +48,14 @@ export function computeBalances(
 ): CashBalances {
   let cash = 0
   let electronic = 0
+  const saleCashOperationIds = new Set(
+    sales
+      .filter((sale) => !sale.deleted_at && sale.client_op_id)
+      .map((sale) => `${sale.client_op_id}:cash`),
+  )
 
   for (const s of sales) {
+    if (s.deleted_at) continue
     if (filter && !filter(s.created_at)) continue
     const split = saleSplit(s)
     cash += split.cash
@@ -57,6 +63,10 @@ export function computeBalances(
   }
 
   for (const o of operations) {
+    if (o.deleted_at) continue
+    // Atomic offline sales are represented by both a sale row and a linked
+    // cash income. Count the sale once, at its original sale timestamp.
+    if (o.client_op_id && saleCashOperationIds.has(o.client_op_id)) continue
     if (filter && !filter(o.created_at)) continue
     const split = operationSplit(o)
     if (o.type === "collection") {
