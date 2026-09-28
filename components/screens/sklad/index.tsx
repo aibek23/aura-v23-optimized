@@ -54,6 +54,7 @@ export function SkladScreen({
   showStats = true,
   showAdd = true,
   allowOffline = true,
+  onProductSaved,
 }: {
   products: Product[]
   sales?: Sale[]
@@ -64,6 +65,7 @@ export function SkladScreen({
   showStats?: boolean
   showAdd?: boolean
   allowOffline?: boolean
+  onProductSaved?: (product: Product) => void
 }) {
   const router = useRouter()
   const [, startTransition] = useTransition()
@@ -92,9 +94,26 @@ export function SkladScreen({
     }
   }, [])
 
-  const filtered = useMemo(() => {
-    return filterProducts(products, query)
-  }, [products, query])
+  const visibleProducts = useMemo(() => {
+    const byId = new Map(products.map((product) => [product.id, product] as const))
+
+    return [...byId.values()].sort((a, b) => {
+      const aCreated = Date.parse(a.created_at)
+      const bCreated = Date.parse(b.created_at)
+      const dateOrder = (Number.isFinite(bCreated) ? bCreated : 0) - (Number.isFinite(aCreated) ? aCreated : 0)
+      return dateOrder || b.id.localeCompare(a.id)
+    })
+  }, [products])
+
+  const filtered = useMemo(() => filterProducts(visibleProducts, query), [visibleProducts, query])
+
+  const handleProductSaved = (savedProduct: Product, isNew: boolean) => {
+    onProductSaved?.(savedProduct)
+    if (isNew) {
+      setQuery("")
+      setPage(1)
+    }
+  }
 
   // Сбрасываем страницу при смене фильтра
   const handleQueryChange = (v: string) => {
@@ -529,6 +548,7 @@ export function SkladScreen({
         product={editing}
         canSeePurchasePrice={canSeePurchasePrice}
         allowOffline={allowOffline}
+        onProductSaved={handleProductSaved}
         onPrintLabel={onAutoPrintLabel}
       />
     </div>

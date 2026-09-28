@@ -395,6 +395,7 @@ export function Dashboard({
             canSeePurchasePrice={canSeePurchasePrice}
             isAdmin={isAdmin}
             allowOffline={!isImpersonating}
+            onProductSaved={!isImpersonating ? localCrm.cacheSavedProduct : undefined}
           />
         )}
         {activeScreen === "clients" && (

@@ -26,6 +26,7 @@ export function ProductDialog({
   product,
   canSeePurchasePrice,
   onPrintLabel,
+  onProductSaved,
   allowOffline = true,
 }: {
   open: boolean
@@ -33,6 +34,7 @@ export function ProductDialog({
   product: Product | null
   canSeePurchasePrice: boolean
   allowOffline?: boolean
+  onProductSaved?: (savedProduct: Product, isNew: boolean) => void
   /** Переиспользует печать этикеток из списка товаров (см. SkladScreen). */
   onPrintLabel?: (product: Product) => void | Promise<void>
 }) {
@@ -156,6 +158,7 @@ export function ProductDialog({
       }
 
       setNameHistory(pushNameHistory(form.name))
+      onProductSaved?.(saved, !product)
 
       // Отметка «Взято на реализацию» фиксируется только общей кнопкой «Сохранить».
       // Для уже отмеченного товара повторно создавать операцию нельзя.

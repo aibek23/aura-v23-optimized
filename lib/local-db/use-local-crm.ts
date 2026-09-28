@@ -467,6 +467,20 @@ export function useLocalCrm(initialData: {
     [shopId]
   )
 
+  // Cache a product already saved by the server without queuing a duplicate
+  // create operation. This keeps the local-first UI in sync immediately.
+  const cacheSavedProduct = useCallback((product: Product) => {
+    setProducts((prev) => {
+      const exists = prev.some((row) => row.id === product.id)
+      return exists
+        ? prev.map((row) => (row.id === product.id ? product : row))
+        : [product, ...prev]
+    })
+    void bulkPut('products', [product]).catch((error) => {
+      console.error('Could not cache saved product locally:', error)
+    })
+  }, [])
+
   const localDeleteProduct = useCallback(
     async (productId: string) => {
       const nowIso = new Date().toISOString()
@@ -573,6 +587,7 @@ export function useLocalCrm(initialData: {
     localCheckout,
     localReturn,
     localSaveProduct,
+    cacheSavedProduct,
     localDeleteProduct,
     localAddCustomer,
     localAddCashOperation,
