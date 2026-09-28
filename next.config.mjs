@@ -27,6 +27,7 @@ const nextConfig = {
       { source: '/crm/notifications', destination: '/notifications' },
       { source: '/crm/suppliers', destination: '/suppliers' },
       { source: '/crm/cabinet', destination: '/cabinet' },
+      { source: '/crm/money', destination: '/money' },
     ]
   },
 
@@ -42,6 +43,7 @@ const nextConfig = {
       { source: '/notifications', destination: '/crm/notifications', permanent: false },
       { source: '/suppliers', destination: '/crm/suppliers', permanent: false },
       { source: '/cabinet', destination: '/crm/cabinet', permanent: false },
+      { source: '/money', destination: '/crm/money', permanent: false },
     ]
   },
 }

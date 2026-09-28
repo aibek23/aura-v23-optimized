@@ -3,11 +3,11 @@
   "version": "0.18.0",
   "private": true,
   "scripts": {
-    "dev": "next dev -H 0.0.0.0 -p ${PORT:-8080}",
+    "dev": "node scripts/run-next.mjs dev",
     "build": "next build --webpack",
     "build:turbo": "next build",
     "build:dev": "next build --webpack",
-    "start": "next start -H 0.0.0.0 -p ${PORT:-8080}",
+    "start": "node scripts/run-next.mjs start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit"
   },
