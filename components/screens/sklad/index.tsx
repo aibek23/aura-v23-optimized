@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState, useTransition } from "react"
+import { useMemo, useState, useTransition } from "react"
 import dynamic from "next/dynamic"
 import type { Product, Sale } from "@/lib/types"
 import { DEFAULT_SIZE_KEY, getLabelSizeDef, getPrinterProfile, PRINTER_PROFILES, type JewelryLabelSizeKey } from "@/lib/niimbot"
@@ -27,10 +27,11 @@ import { toast } from "sonner"
 import { useRouter } from "next/navigation"
 import { ProductDialog } from "@/components/screens/sklad/add-edit-Product/product-dialog"
 import { SkladStats } from "./sklad-stats"
-import { cn } from "@/lib/utils"
 import { filterProducts } from "@/lib/product-search"
 import { ProductSearch } from "@/components/product-search"
 import { VirtualizedSkladTable } from "./virtualized-sklad-table"
+import { usePrinterConnection } from "./use-printer-connection"
+import { PrinterSettings } from "./printer-settings"
 
 // Загружаем LabelEditor строго на клиенте для корректного связывания пакетов Bluetooth
 const LabelEditor = dynamic(
@@ -39,7 +40,6 @@ const LabelEditor = dynamic(
 )
 
 const PAGE_SIZE = 20
-const MODEL_STORAGE_KEY = "sklad:printer-model"
 
 const isValidShopSeqId = (value: number | null | undefined): value is number =>
   typeof value === "number" && Number.isSafeInteger(value) && value > 0
@@ -69,30 +69,21 @@ export function SkladScreen({
 }) {
   const router = useRouter()
   const [, startTransition] = useTransition()
+  const printerConnection = usePrinterConnection()
 
   const [labelProduct, setLabelProduct] = useState<Product | null>(null)
   const [labelDialogOpen, setLabelDialogOpen] = useState(false)
   const [labelAutoPrint, setLabelAutoPrint] = useState(false)
   const [labelSizeKey, setLabelSizeKey] = useState<JewelryLabelSizeKey>(DEFAULT_SIZE_KEY)
-  const [printerKey, setPrinterKey] = useState("b1")
   const [virtualMode, setVirtualMode] = useState(false)
 
   const [productDialogOpen, setProductDialogOpen] = useState(false)
   const [editing, setEditing] = useState<Product | null>(null)
   const [query, setQuery] = useState("")
   const [page, setPage] = useState(1)
-  const printerProfile = getPrinterProfile(printerKey)
+  const printerProfile = getPrinterProfile(printerConnection.modelKey)
   const nativeWidth = Math.round(getLabelSizeDef(labelSizeKey).w_px * printerProfile.dpi / 203)
   const fitsPrinthead = nativeWidth <= printerProfile.printheadPx
-
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem(MODEL_STORAGE_KEY)
-      if (saved && PRINTER_PROFILES.some((profile) => profile.key === saved)) setPrinterKey(saved)
-    } catch {
-      // Если хранение недоступно, используем B1.
-    }
-  }, [])
 
   const visibleProducts = useMemo(() => {
     const byId = new Map(products.map((product) => [product.id, product] as const))
@@ -201,8 +192,11 @@ export function SkladScreen({
     <div className="min-w-0">
       {/* Заголовок */}
       <div className="mb-5 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="font-serif text-2xl">{title}</h1>
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <h1 className="font-serif text-2xl">{title}</h1>
+            <PrinterSettings connection={printerConnection} />
+          </div>
           <p className="text-sm text-muted-foreground">{subtitle}</p>
         </div>
         {showAdd && (
@@ -503,13 +497,12 @@ export function SkladScreen({
             <label htmlFor="inventory-printer-model" className="shrink-0 text-xs font-medium">Принтер</label>
             <select
               id="inventory-printer-model"
-              value={printerKey}
+              value={printerConnection.modelKey}
               onChange={(event) => {
                 const profile = getPrinterProfile(event.target.value)
-                setPrinterKey(profile.key)
+                printerConnection.setModelKey(profile.key)
                 setLabelSizeKey(profile.defaultLabelKey)
                 setLabelAutoPrint(false)
-                try { localStorage.setItem(MODEL_STORAGE_KEY, profile.key) } catch { /* ignore */ }
               }}
               className="min-w-0 flex-1 rounded-md border border-input bg-background px-2 py-1.5 text-xs"
             >

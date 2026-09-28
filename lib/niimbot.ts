@@ -47,13 +47,335 @@ export const NIIMBOT_MODEL: PrinterProfile = PRINTER_PROFILES[0]
 export const getPrinterProfile = (key: string): PrinterProfile =>
   PRINTER_PROFILES.find((profile) => profile.key === key) ?? PRINTER_PROFILES[0]
 
-export async function identifyPrinter(profileKey: string): Promise<{ profile: PrinterProfile; printer: NiimbotPrinterInfo }> {
+const PRINTER_MODEL_STORAGE_KEY = "sklad:printer-model"
+const PRINTER_DEVICE_STORAGE_KEY = "sklad:printer-device-id"
+const PRINTER_NAME_STORAGE_KEY = "sklad:printer-device-name"
+const PRINTER_CONNECTION_EVENT = "aura:printer-connection-change"
+
+export type PrinterConnectionStatus = "checking" | "connected" | "disconnected" | "unsupported" | "connecting"
+
+export type PrinterConnectionSnapshot = {
+  status: PrinterConnectionStatus
+  modelKey: string
+  deviceName: string | null
+  hasRememberedDevice: boolean
+  error: string | null
+}
+
+type BluetoothDeviceLike = {
+  id: string
+  name?: string | null
+  gatt?: {
+    connected: boolean
+    connect: () => Promise<unknown>
+  } | null
+  addEventListener?: (type: string, listener: () => void) => void
+  removeEventListener?: (type: string, listener: () => void) => void
+}
+
+type BluetoothAccessLike = {
+  requestDevice: (options?: unknown) => Promise<BluetoothDeviceLike>
+  getDevices?: () => Promise<BluetoothDeviceLike[]>
+}
+
+type BluetoothRequestMode = "choose" | "remembered"
+
+const initialPrinterSnapshot: PrinterConnectionSnapshot = {
+  status: "disconnected",
+  modelKey: NIIMBOT_MODEL.key,
+  deviceName: null,
+  hasRememberedDevice: false,
+  error: null,
+}
+
+let printerSnapshot = initialPrinterSnapshot
+let activePrinterDevice: BluetoothDeviceLike | null = null
+let disconnectListener: (() => void) | null = null
+let monitorStarted = false
+let operationQueue: Promise<unknown> = Promise.resolve()
+const printerStateListeners = new Set<(snapshot: PrinterConnectionSnapshot) => void>()
+
+function readStoredPrinterModel(): string {
+  if (typeof window === "undefined") return NIIMBOT_MODEL.key
+  try {
+    const key = window.localStorage.getItem(PRINTER_MODEL_STORAGE_KEY)
+    return key && PRINTER_PROFILES.some((profile) => profile.key === key) ? key : NIIMBOT_MODEL.key
+  } catch {
+    return NIIMBOT_MODEL.key
+  }
+}
+
+function readStoredDeviceId(): string | null {
+  if (typeof window === "undefined") return null
+  try {
+    return window.localStorage.getItem(PRINTER_DEVICE_STORAGE_KEY)
+  } catch {
+    return null
+  }
+}
+
+function readStoredDeviceName(): string | null {
+  if (typeof window === "undefined") return null
+  try {
+    return window.localStorage.getItem(PRINTER_NAME_STORAGE_KEY)
+  } catch {
+    return null
+  }
+}
+
+function publishPrinterSnapshot(update: Partial<PrinterConnectionSnapshot>) {
+  printerSnapshot = {
+    ...printerSnapshot,
+    ...update,
+    modelKey: readStoredPrinterModel(),
+    deviceName: readStoredDeviceName(),
+    hasRememberedDevice: Boolean(readStoredDeviceId()),
+  }
+  for (const listener of printerStateListeners) listener(printerSnapshot)
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent(PRINTER_CONNECTION_EVENT, { detail: printerSnapshot }))
+  }
+}
+
+export function getPrinterConnectionSnapshot(): PrinterConnectionSnapshot {
+  return {
+    ...printerSnapshot,
+    modelKey: readStoredPrinterModel(),
+    deviceName: readStoredDeviceName(),
+    hasRememberedDevice: Boolean(readStoredDeviceId()),
+  }
+}
+
+export function subscribeToPrinterConnection(listener: (snapshot: PrinterConnectionSnapshot) => void) {
+  printerStateListeners.add(listener)
+  return () => {
+    printerStateListeners.delete(listener)
+  }
+}
+
+export function savePrinterModelKey(key: string) {
+  const profile = getPrinterProfile(key)
+  try {
+    window.localStorage.setItem(PRINTER_MODEL_STORAGE_KEY, profile.key)
+  } catch {
+    // The active selection still works for this page if storage is unavailable.
+  }
+  publishPrinterSnapshot({ modelKey: profile.key, error: null })
+}
+
+function savePrinterDevice(device: BluetoothDeviceLike, modelKey: string) {
+  try {
+    window.localStorage.setItem(PRINTER_DEVICE_STORAGE_KEY, device.id)
+    if (device.name) window.localStorage.setItem(PRINTER_NAME_STORAGE_KEY, device.name)
+    window.localStorage.setItem(PRINTER_MODEL_STORAGE_KEY, getPrinterProfile(modelKey).key)
+  } catch {
+    // Keep the live Bluetooth device usable even when local storage is blocked.
+  }
+  watchPrinterDevice(device)
+  publishPrinterSnapshot({ status: "connecting", modelKey, error: null })
+}
+
+function clearSavedPrinterDevice() {
+  try {
+    window.localStorage.removeItem(PRINTER_DEVICE_STORAGE_KEY)
+    window.localStorage.removeItem(PRINTER_NAME_STORAGE_KEY)
+  } catch {
+    // Device selection can still continue for this page.
+  }
+  publishPrinterSnapshot({ status: "disconnected", error: null })
+}
+
+function getBluetoothAccess(): BluetoothAccessLike {
+  if (typeof navigator === "undefined") throw new Error("Bluetooth доступен только в браузере.")
+  const bluetooth = (navigator as Navigator & { bluetooth?: BluetoothAccessLike }).bluetooth
+  if (!bluetooth?.requestDevice) {
+    publishPrinterSnapshot({ status: "unsupported", error: null })
+    throw new Error("Web Bluetooth недоступен. Откройте приложение в Chrome или Edge на устройстве с Bluetooth.")
+  }
+  return bluetooth
+}
+
+function enqueuePrinterOperation<T>(operation: () => Promise<T>): Promise<T> {
+  const current = operationQueue.then(operation, operation)
+  operationQueue = current.then(
+    () => undefined,
+    () => undefined,
+  )
+  return current
+}
+
+function watchPrinterDevice(device: BluetoothDeviceLike) {
+  if (activePrinterDevice?.id === device.id) return
+  if (activePrinterDevice && disconnectListener) {
+    activePrinterDevice.removeEventListener?.("gattserverdisconnected", disconnectListener)
+  }
+
+  activePrinterDevice = device
+  disconnectListener = () => {
+    if (readStoredDeviceId() !== device.id) return
+    publishPrinterSnapshot({ status: "disconnected", error: null })
+    retryPrinterConnection(device, 0)
+  }
+  device.addEventListener?.("gattserverdisconnected", disconnectListener)
+}
+
+function retryPrinterConnection(device: BluetoothDeviceLike, attempt: number) {
+  const delays = [500, 1200, 2500]
+  if (attempt >= delays.length || typeof window === "undefined") return
+  window.setTimeout(() => {
+    void enqueuePrinterOperation(async () => {
+      if (readStoredDeviceId() !== device.id || !device.gatt || device.gatt.connected) return
+      publishPrinterSnapshot({ status: "connecting", error: null })
+      try {
+        await device.gatt.connect()
+        publishPrinterSnapshot({ status: "connected", error: null })
+      } catch {
+        publishPrinterSnapshot({ status: "disconnected", error: null })
+        retryPrinterConnection(device, attempt + 1)
+      }
+    })
+  }, delays[attempt])
+}
+
+async function restoreRememberedPrinter() {
+  const deviceId = readStoredDeviceId()
+  if (!deviceId) {
+    publishPrinterSnapshot({ status: "disconnected", error: null })
+    return
+  }
+
+  const bluetooth = getBluetoothAccess()
+  if (!bluetooth.getDevices) {
+    publishPrinterSnapshot({ status: "unsupported", error: null })
+    return
+  }
+  const devices = await bluetooth.getDevices()
+  const device = devices.find((item) => item.id === deviceId)
+  if (!device) {
+    publishPrinterSnapshot({ status: "disconnected", error: null })
+    return
+  }
+
+  watchPrinterDevice(device)
+  if (device.gatt?.connected) {
+    publishPrinterSnapshot({ status: "connected", error: null })
+    return
+  }
+
+  publishPrinterSnapshot({ status: "connecting", error: null })
+  try {
+    await device.gatt?.connect()
+    publishPrinterSnapshot({ status: device.gatt?.connected ? "connected" : "disconnected", error: null })
+  } catch {
+    publishPrinterSnapshot({ status: "disconnected", error: null })
+  }
+}
+
+export function startPrinterConnectionMonitor() {
+  if (typeof window === "undefined" || monitorStarted) return
+  monitorStarted = true
+  publishPrinterSnapshot({ status: "checking", error: null })
+  void enqueuePrinterOperation(restoreRememberedPrinter).catch(() => {
+    publishPrinterSnapshot({ status: "disconnected", error: null })
+  })
+  window.addEventListener("focus", () => {
+    void enqueuePrinterOperation(restoreRememberedPrinter).catch(() => undefined)
+  })
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+      void enqueuePrinterOperation(restoreRememberedPrinter).catch(() => undefined)
+    }
+  })
+}
+
+async function withPrinterDeviceSelection<T>(
+  modelKey: string,
+  mode: BluetoothRequestMode,
+  action: () => Promise<T>,
+): Promise<T> {
+  const bluetooth = getBluetoothAccess()
+  const originalRequestDevice = bluetooth.requestDevice.bind(bluetooth)
+  const previousDescriptor = Object.getOwnPropertyDescriptor(bluetooth, "requestDevice")
+
+  const requestRememberedDevice = async (_options?: unknown) => {
+    if (mode === "choose") {
+      const device = await originalRequestDevice(_options)
+      savePrinterDevice(device, modelKey)
+      return device
+    }
+
+    const deviceId = readStoredDeviceId()
+    if (!deviceId) throw new Error("Сначала подключите принтер в настройках.")
+    if (!bluetooth.getDevices) {
+      throw new Error("Браузер не поддерживает автоматическое восстановление Bluetooth. Используйте Chrome или Edge.")
+    }
+    const devices = await bluetooth.getDevices()
+    const device = devices.find((item) => item.id === deviceId)
+    if (!device) {
+      throw new Error("Браузер не видит сохранённый принтер. Нажмите «Сменить устройство» и подключите его заново.")
+    }
+    watchPrinterDevice(device)
+    return device
+  }
+
+  try {
+    Object.defineProperty(bluetooth, "requestDevice", {
+      configurable: true,
+      writable: true,
+      value: requestRememberedDevice,
+    })
+  } catch {
+    throw new Error("Не удалось включить автоматический выбор сохранённого Bluetooth-принтера. Обновите Chrome или Edge.")
+  }
+
+  try {
+    const result = await action()
+    const deviceId = readStoredDeviceId()
+    const devices = bluetooth.getDevices ? await bluetooth.getDevices().catch(() => []) : []
+    const device = devices.find((item) => item.id === deviceId) ?? activePrinterDevice
+    if (device && device.id === deviceId) {
+      watchPrinterDevice(device)
+      if (!device.gatt?.connected) {
+        try {
+          await device.gatt?.connect()
+        } catch {
+          // Printing may have succeeded even if the printer powered down immediately afterwards.
+        }
+      }
+      publishPrinterSnapshot({
+        status: device.gatt?.connected ? "connected" : "disconnected",
+        error: null,
+      })
+    }
+    return result
+  } catch (error) {
+    const deviceStillConnected =
+      activePrinterDevice?.id === readStoredDeviceId() && Boolean(activePrinterDevice.gatt?.connected)
+    publishPrinterSnapshot({
+      status: deviceStillConnected ? "connected" : "disconnected",
+      error: error instanceof Error ? error.message : "Ошибка Bluetooth-подключения",
+    })
+    throw error
+  } finally {
+    if (previousDescriptor) {
+      Object.defineProperty(bluetooth, "requestDevice", previousDescriptor)
+    } else {
+      Reflect.deleteProperty(bluetooth, "requestDevice")
+    }
+  }
+}
+
+async function identifyPrinterOperation(
+  profileKey: string,
+  mode: BluetoothRequestMode,
+): Promise<{ profile: PrinterProfile; printer: NiimbotPrinterInfo }> {
   const selected = getPrinterProfile(profileKey)
   if (selected.supportsDirectBluetooth === false) {
     throw new Error(`${selected.displayName} не поддерживается прямым Bluetooth-драйвером в этой версии. Подготовьте PNG и отправьте его через приложение Niimbot.`)
   }
+
   const api = await loadNiimbot()
-  try {
+  return withPrinterDeviceSelection(selected.key, mode, async () => {
     const info = await api.identify(selected)
     const printer = api.printer ?? info
     const matches = PRINTER_PROFILES.filter((profile) => profile.supportedIds.includes(printer.modelId))
@@ -61,10 +383,32 @@ export async function identifyPrinter(profileKey: string): Promise<{ profile: Pr
     if (!profile) {
       throw new Error(`Принтер ответил ID ${printer.modelId}, но модель неоднозначна или не входит в список. Выберите модель вручную.`)
     }
-    return { profile: { ...profile, id: printer.modelId }, printer }
-  } finally {
-    await api.disconnect()
-  }
+    const detectedProfile = { ...profile, id: printer.modelId }
+    savePrinterModelKey(detectedProfile.key)
+    publishPrinterSnapshot({ status: "connected", modelKey: detectedProfile.key, error: null })
+    return { profile: detectedProfile, printer }
+  })
+}
+
+export function identifyPrinter(profileKey: string): Promise<{ profile: PrinterProfile; printer: NiimbotPrinterInfo }> {
+  return enqueuePrinterOperation(() => identifyPrinterOperation(profileKey, "choose"))
+}
+
+export function reconnectPrinter(profileKey: string): Promise<{ profile: PrinterProfile; printer: NiimbotPrinterInfo }> {
+  return enqueuePrinterOperation(() => identifyPrinterOperation(profileKey, "remembered"))
+}
+
+export function changePrinterDevice(profileKey: string): Promise<{ profile: PrinterProfile; printer: NiimbotPrinterInfo }> {
+  return enqueuePrinterOperation(async () => {
+    clearSavedPrinterDevice()
+    try {
+      const api = await loadNiimbot()
+      await api.disconnect()
+    } catch {
+      // Selecting another printer should still work if the old device is already gone.
+    }
+    return identifyPrinterOperation(profileKey, "choose")
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -195,69 +539,85 @@ export async function printCanvas(
     )
   }
 
-  // Если прошлый сеанс остался открытым, разрываем его
-  try {
-    await api.disconnect()
-  } catch {
-    /* игнорируем */
-  }
-
-  // Задержка перед началом связи для освобождения BLE шины
-  await new Promise((resolve) => setTimeout(resolve, 300))
-
   // Безопасная конфигурация отправки для высоких бирок (600px)
   api.WRITE_MODE = model.task === "b1" ? "paced" : null
   api.PACE_MS = 50
 
   const dataUrl = canvasToLabelDataUrl(source, targetSize)
 
-  opts.onProgress?.(`Подключение к ${model.displayName}...`)
+  await enqueuePrinterOperation(() =>
+    withPrinterDeviceSelection(model.key, "remembered", async () => {
+      opts.onProgress?.(`Подключение к ${model.displayName}...`)
 
-  try {
-    await api.printImage(dataUrl, {
-      model,
-      size: targetSize,
-      copies: Math.max(1, opts.copies ?? 1),
-      density: opts.density ?? model.density,
-      onProgress: (p: number | string) => {
-        if (typeof p === "number") {
-          opts.onProgress?.(`Печать: ${Math.round(p * 100)}%`)
+      try {
+        await api.printImage(dataUrl, {
+          model,
+          size: targetSize,
+          copies: Math.max(1, opts.copies ?? 1),
+          density: opts.density ?? model.density,
+          onProgress: (p: number | string) => {
+            if (typeof p === "number") {
+              opts.onProgress?.(`Печать: ${Math.round(p * 100)}%`)
+            } else {
+              opts.onProgress?.(String(p))
+            }
+          },
+        })
+      } catch (err) {
+        const errorMsg = (err as Error)?.message || ""
+
+        // Перехват переполнения буфера и переключение на медленный режим с подтверждением (acked)
+        if (
+          errorMsg.includes("GATT") ||
+          errorMsg.includes("buffer full") ||
+          errorMsg.includes("paced") ||
+          errorMsg.includes("unknown reason")
+        ) {
+          opts.onProgress?.("Переключение на медленный безопасный режим (acked)...")
+          await new Promise((resolve) => setTimeout(resolve, 400))
+
+          api.WRITE_MODE = "acked"
+
+          await api.printImage(dataUrl, {
+            model,
+            size: targetSize,
+            copies: Math.max(1, opts.copies ?? 1),
+            density: opts.density ?? model.density,
+            onProgress: (progress) => opts.onProgress?.(progress),
+          })
         } else {
-          opts.onProgress?.(String(p))
+          throw err
         }
-      },
-    })
-  } catch (err) {
-    const errorMsg = (err as Error)?.message || ""
+      }
+    }),
+  )
+}
 
-    // Перехват переполнения буфера и переключение на медленный режим с подтверждением (acked)
-    if (
-      errorMsg.includes("GATT") ||
-      errorMsg.includes("buffer full") ||
-      errorMsg.includes("paced") ||
-      errorMsg.includes("unknown reason")
-    ) {
-      opts.onProgress?.("Переключение на медленный безопасный режим (acked)...")
-      await new Promise((resolve) => setTimeout(resolve, 400))
-
-      api.WRITE_MODE = "acked" // Валидный режим: каждый пакет отправляется только после ответа от принтера
-
-      await api.printImage(dataUrl, {
-        model,
-        size: targetSize,
-        copies: Math.max(1, opts.copies ?? 1),
-        density: opts.density ?? model.density,
-        onProgress: (progress) => opts.onProgress?.(progress),
-      })
-    } else {
-      throw err
-    }
-  } finally {
-    try {
-      await new Promise((resolve) => setTimeout(resolve, 200))
-      await api.disconnect()
-    } catch {
-      // Игнорируем ошибки при разрыве соединения
-    }
+export async function printPrinterTestLabel(profileKey: string) {
+  if (typeof document === "undefined") throw new Error("Тестовая печать доступна только в браузере.")
+  const profile = getPrinterProfile(profileKey)
+  const size = LABEL_SIZES.T12x30_d11
+  if (profile.supportsDirectBluetooth === false) {
+    throw new Error(`${profile.displayName}: прямое Bluetooth-подключение не поддерживается.`)
   }
+
+  const canvas = document.createElement("canvas")
+  canvas.width = size.w_px
+  canvas.height = size.h_px
+  const context = canvas.getContext("2d")
+  if (!context) throw new Error("Не удалось подготовить тестовую этикетку.")
+
+  context.fillStyle = "#fff"
+  context.fillRect(0, 0, canvas.width, canvas.height)
+  context.strokeStyle = "#111"
+  context.lineWidth = 2
+  context.strokeRect(2, 2, canvas.width - 4, canvas.height - 4)
+  context.fillStyle = "#111"
+  context.textAlign = "center"
+  context.font = "bold 10px sans-serif"
+  context.fillText("AURA", canvas.width / 2, 88)
+  context.font = "8px sans-serif"
+  context.fillText("ТЕСТ ПЕЧАТИ", canvas.width / 2, 110)
+
+  await printCanvas(canvas, size, { model: profile, copies: 1 })
 }

@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "Aura CRM"
+description = "Учёт товаров и торговых операций для ювелирного магазина, включая редактирование и печать товарных этикеток на принтерах Niimbot."
+version = "1.0.0"
+id = "artifacts/aura-crm"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 25038
+
+[services.development]
+run = "pnpm --filter @workspace/aura-crm run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/aura-crm", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/aura-crm/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "25038"
+BASE_PATH = "/"
