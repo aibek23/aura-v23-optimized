@@ -1,5 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  allowedDevOrigins: ["127.0.0.1", "**.replit.dev"],
+
   typescript: {
     ignoreBuildErrors: true,
   },

@@ -3,6 +3,7 @@ import { Geist, Geist_Mono, Playfair_Display } from "next/font/google"
 import { Analytics } from "@vercel/analytics/next"
 import { Suspense } from "react"
 import { PwaProvider } from "@/components/pwa-provider"
+import { Toaster } from "@/components/ui/sonner"
 import "./globals.css"
 
 const geistSans = Geist({ subsets: ["latin"], variable: "--font-geist-sans" })
@@ -37,6 +38,7 @@ export default function RootLayout({
       <body className="font-sans antialiased bg-background text-foreground">
         <PwaProvider />
         <Suspense fallback={null}>{children}</Suspense>
+        <Toaster position="top-center" richColors />
         {process.env.NODE_ENV === "production" && <Analytics />}
       </body>
     </html>

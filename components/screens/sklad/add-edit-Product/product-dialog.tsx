@@ -177,6 +177,9 @@ export function ProductDialog({
       // 2) Данные уже в БД — спрашиваем про печать этикетки.
       if (onPrintLabel) {
         setSavedProduct(saved)
+        // Не держим форму открытой под подтверждением печати:
+        // два одновременно открытых Dialog перехватывают фокус и клики друг у друга.
+        onOpenChange(false)
         setPrintConfirmOpen(true)
       } else {
         onOpenChange(false)

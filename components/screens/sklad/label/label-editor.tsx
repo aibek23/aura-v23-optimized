@@ -279,7 +279,7 @@ export function LabelEditor({
   const { handlePrint } = useLabelPrint(
     fabricRef, sizeDef, loaded, Boolean(autoPrint && canPrint),
     printerProfile, copies, density ?? printerProfile.density,
-    setIsPrinting, setPrintStatus,
+    setIsPrinting, setPrintStatus, autoPrint ? onClose : undefined,
   )
 
   const handleExportPng = useCallback(() => {
@@ -298,15 +298,6 @@ export function LabelEditor({
     anchor.download = `${safeName}-${sizeDef.key}-${printerProfile.key}-${printerProfile.dpi}dpi.png`
     anchor.click()
   }, [fabricRef, loaded, fitsPrinthead, sizeDef, printerProfile, product.sku, product.name])
-
-  const hasPrintedRef = useRef(false)
-  useEffect(() => {
-    if (isPrinting) {
-      hasPrintedRef.current = true
-    } else if (hasPrintedRef.current && loaded && autoPrint) {
-      onClose?.()
-    }
-  }, [isPrinting, loaded, autoPrint, onClose])
 
   // ── ЕДИНАЯ ЛОГИКА ПОВОРОТА (без подмены sizeKey) ─────────────────────────
   const handleRotateCanvas = useCallback(() => {
