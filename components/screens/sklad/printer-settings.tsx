@@ -146,7 +146,7 @@ export function PrinterSettings({ connection }: { connection: PrinterConnectionS
 
             {!connection.bluetoothSupported && (
               <p className="rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2.5 text-xs leading-5 text-destructive" role="alert">
-                Браузер не поддерживает Web Bluetooth. Откройте Aura в Chrome, Edge или Opera на устройстве с Bluetooth.
+                Web Bluetooth требует защищённого соединения. Откройте Aura по HTTPS (или localhost) в Chrome или Edge на устройстве с Bluetooth.
               </p>
             )}
 
@@ -161,7 +161,7 @@ export function PrinterSettings({ connection }: { connection: PrinterConnectionS
                 type="button"
                 className="gap-1.5"
                 onClick={() => void connection.connect()}
-                disabled={isWorking || !canUseBluetooth || connection.status === "connected"}
+                disabled={isWorking || !canUseBluetooth || profile.supportsDirectBluetooth === false || connection.status === "connected"}
                 data-testid="button-connect-printer"
               >
                 {isWorking ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Bluetooth className="h-3.5 w-3.5" />}
@@ -172,7 +172,7 @@ export function PrinterSettings({ connection }: { connection: PrinterConnectionS
                 variant="outline"
                 className="gap-1.5"
                 onClick={() => void connection.reconnect()}
-                disabled={isWorking || !canUseBluetooth || !connection.hasRememberedDevice}
+                disabled={isWorking || !canUseBluetooth || profile.supportsDirectBluetooth === false || !connection.hasRememberedDevice}
                 data-testid="button-reconnect-printer"
               >
                 <RefreshCw className="h-3.5 w-3.5" />
@@ -183,7 +183,7 @@ export function PrinterSettings({ connection }: { connection: PrinterConnectionS
                 variant="outline"
                 className="col-span-2 gap-1.5"
                 onClick={() => void connection.changeDevice()}
-                disabled={isWorking || !canUseBluetooth}
+                disabled={isWorking || !canUseBluetooth || profile.supportsDirectBluetooth === false}
                 data-testid="button-change-printer"
               >
                 <RefreshCw className="h-3.5 w-3.5" />
@@ -197,7 +197,7 @@ export function PrinterSettings({ connection }: { connection: PrinterConnectionS
                 variant="secondary"
                 className="w-full gap-2"
                 onClick={() => void connection.printTest()}
-                disabled={isWorking || !canUseBluetooth || connection.status !== "connected"}
+                disabled={isWorking || !canUseBluetooth || profile.supportsDirectBluetooth === false || connection.status !== "connected"}
                 data-testid="button-print-test-label"
               >
                 <Printer className="h-4 w-4" />

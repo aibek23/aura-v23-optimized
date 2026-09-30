@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState, useTransition } from "react"
+import { useCallback, useEffect, useMemo, useState, useTransition } from "react"
 import dynamic from "next/dynamic"
 import type { Product, Sale } from "@/lib/types"
 import { DEFAULT_SIZE_KEY, getLabelSizeDef, getPrinterProfile, PRINTER_PROFILES, type JewelryLabelSizeKey } from "@/lib/niimbot"
@@ -22,7 +22,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { Pencil, Trash2, Sparkles, PackageX, Printer, Plus, ChevronLeft, ChevronRight, CheckCircle2, Layers } from "lucide-react"
+import { ArrowLeft, Pencil, Trash2, Sparkles, PackageX, Printer, Plus, ChevronLeft, ChevronRight, CheckCircle2, Layers } from "lucide-react"
 import { toast } from "sonner"
 import { useRouter } from "next/navigation"
 import { ProductDialog } from "@/components/screens/sklad/add-edit-Product/product-dialog"
@@ -31,7 +31,7 @@ import { filterProducts } from "@/lib/product-search"
 import { ProductSearch } from "@/components/product-search"
 import { VirtualizedSkladTable } from "./virtualized-sklad-table"
 import { usePrinterConnection } from "./use-printer-connection"
-import { PrinterSettings } from "./printer-settings"
+import { PrinterStatusIndicator } from "./printer-status-indicator"
 
 // Загружаем LabelEditor строго на клиенте для корректного связывания пакетов Bluetooth
 const LabelEditor = dynamic(
@@ -152,10 +152,52 @@ export function SkladScreen({
       setLabelAutoPrint(autoPrint)
       setLabelSizeKey(printerProfile.defaultLabelKey)
       setLabelDialogOpen(true)
+      // Страница печати получает свою запись в истории: кнопка «Назад»
+      // (браузер, Android, жест на iOS) возвращает на склад, а не уходит со страницы.
+      if (typeof window !== "undefined" && !window.history.state?.auraLabel) {
+        const url = new URL(window.location.href)
+        url.searchParams.set("label", p.id)
+        window.history.pushState({ ...(window.history.state ?? {}), auraLabel: true }, "", url.toString())
+      }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Не удалось подготовить QR-код для этикетки")
     }
   }
+
+  // Закрытие страницы печати: шаг назад по истории → возвращаемся на склад
+  const closeLabel = useCallback(() => {
+    if (typeof window !== "undefined" && window.history.state?.auraLabel) {
+      window.history.back()
+    } else {
+      setLabelDialogOpen(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    const onPop = () => {
+      if (!window.history.state?.auraLabel) setLabelDialogOpen(false)
+    }
+    window.addEventListener("popstate", onPop)
+    // Если страницу обновили с ?label=..., убираем параметр — открыт склад
+    const url = new URL(window.location.href)
+    if (url.searchParams.has("label") && !window.history.state?.auraLabel) {
+      url.searchParams.delete("label")
+      window.history.replaceState(window.history.state, "", url.toString())
+    }
+    return () => window.removeEventListener("popstate", onPop)
+  }, [])
+
+  useEffect(() => {
+    if (!labelDialogOpen) return
+    const prev = document.body.style.overflow
+    document.body.style.overflow = "hidden"
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") closeLabel() }
+    window.addEventListener("keydown", onKey)
+    return () => {
+      document.body.style.overflow = prev
+      window.removeEventListener("keydown", onKey)
+    }
+  }, [labelDialogOpen, closeLabel])
 
   const onPrintLabel = (p: Product) => {
     void openLabel(p, false)
@@ -195,7 +237,7 @@ export function SkladScreen({
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2.5">
             <h1 className="font-serif text-2xl">{title}</h1>
-            <PrinterSettings connection={printerConnection} />
+            <PrinterStatusIndicator connection={printerConnection} />
           </div>
           <p className="text-sm text-muted-foreground">{subtitle}</p>
         </div>
@@ -257,6 +299,7 @@ export function SkladScreen({
           <TableHeader>
             <TableRow className="bg-muted/40 hover:bg-muted/40">
               <TableHead>Товар</TableHead>
+              <TableHead>Категория</TableHead>
               <TableHead>Металл</TableHead>
               <TableHead>Вес</TableHead>
               <TableHead>Дата создания</TableHead>
@@ -269,7 +312,7 @@ export function SkladScreen({
           <TableBody>
             {paginated.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={canSeePurchasePrice ? 8 : 7} className="py-16 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={canSeePurchasePrice ? 9 : 8} className="py-16 text-center text-sm text-muted-foreground">
                   <PackageX className="mx-auto mb-2 h-8 w-8 opacity-40" />
                   Нет товаров
                 </TableCell>
@@ -294,6 +337,7 @@ export function SkladScreen({
                       </div>
                     </div>
                   </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">{p.category || "—"}</TableCell>
                   <TableCell className="text-sm text-muted-foreground">{p.metal}</TableCell>
                   <TableCell className="text-sm">{formatWeight(p.weight)}</TableCell>
                   <TableCell className="text-sm text-muted-foreground">{formatDate(p.created_at)}</TableCell>
@@ -356,8 +400,6 @@ export function SkladScreen({
                   <div className="font-medium text-sm leading-tight line-clamp-2">{p.name}</div>
                   <div className="text-xs text-muted-foreground mt-0.5">
                     {p.sku && <span className="font-mono">{p.sku}</span>}
-                    {p.sku && p.category && <span className="mx-1">·</span>}
-                    {p.category}
                   </div>
                    <SupplierMark product={p} />
                 </div>
@@ -376,6 +418,9 @@ export function SkladScreen({
 
               {/* Строка 2: металл / вес / кол-во */}
               <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                <span className="flex items-center gap-1">
+                  <span className="font-medium text-foreground/70">Категория:</span> {p.category || "—"}
+                </span>
                 {p.metal && (
                   <span className="flex items-center gap-1">
                     <span className="font-medium text-foreground/70">Металл:</span> {p.metal}
@@ -477,22 +522,24 @@ export function SkladScreen({
         </>
       )}
 
-      {/* Диалог этикетки — корректные размеры на десктопе и full-screen на мобильных */}
-      <Dialog open={labelDialogOpen} onOpenChange={setLabelDialogOpen}>
-        <DialogContent
-          showCloseButton={false}
-          className={[
-            "flex flex-col p-0 gap-0",
-            // Мобильные: во весь экран
-            "max-sm:inset-0 max-sm:top-0 max-sm:left-0 max-sm:translate-x-0 max-sm:translate-y-0",
-            "max-sm:w-screen max-sm:max-w-none max-sm:h-[100dvh] max-sm:max-h-none max-sm:rounded-none",
-            // Десктоп: фиксированная ширина + высота по экрану
-            "sm:max-w-[500px] sm:h-[90vh] sm:max-h-[90vh] sm:rounded-xl",
-          ].join(" ")}
+      {/* Печать этикетки — отдельная страница поверх склада (без пункта в навбаре) */}
+      {labelDialogOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Этикетка: ${labelProduct?.name ?? ""}`}
+          className="fixed inset-0 z-50 flex h-[100dvh] w-screen flex-col bg-background"
         >
-          <DialogHeader className="sr-only">
-            <DialogTitle>Этикетка: {labelProduct?.name}</DialogTitle>
-          </DialogHeader>
+          <div className="flex shrink-0 items-center gap-2 border-b px-2 py-2 pt-[max(0.5rem,env(safe-area-inset-top))]">
+            <Button variant="ghost" size="sm" onClick={closeLabel} className="gap-1">
+              <ArrowLeft className="h-4 w-4" />
+              Склад
+            </Button>
+            <h1 className="min-w-0 flex-1 truncate text-sm font-semibold">
+              Печать этикетки{labelProduct?.name ? `: ${labelProduct.name}` : ""}
+            </h1>
+          </div>
+          <div className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col">
           <div className="flex shrink-0 items-center gap-2 border-b px-3 py-2">
             <label htmlFor="inventory-printer-model" className="shrink-0 text-xs font-medium">Принтер</label>
             <select
@@ -520,6 +567,75 @@ export function SkladScreen({
             </p>
           )}
           {labelProduct && (
+            <details className="shrink-0 border-b">
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2 text-xs font-medium hover:bg-muted/40 [&::-webkit-details-marker]:hidden">
+                <span>Подробная информация об изделии</span>
+                <span aria-hidden="true" className="text-muted-foreground">⌄</span>
+              </summary>
+              <div className="grid max-h-40 grid-cols-2 gap-x-4 gap-y-2 overflow-y-auto border-t px-3 py-2 text-xs sm:grid-cols-3">
+                {labelProduct.images?.length ? (
+                  <div className="col-span-2 flex gap-2 overflow-x-auto pb-1 sm:col-span-3">
+                    {labelProduct.images.map((image, index) => (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        key={`${image}:${index}`}
+                        src={image}
+                        alt={`${labelProduct.name} — фото ${index + 1}`}
+                        className="h-14 w-14 shrink-0 rounded-md border object-cover"
+                      />
+                    ))}
+                  </div>
+                ) : labelProduct.image_url ? (
+                  <div className="col-span-2 sm:col-span-3">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={labelProduct.image_url}
+                      alt={labelProduct.name}
+                      className="h-14 w-14 rounded-md border object-cover"
+                    />
+                  </div>
+                ) : null}
+                <ProductDetail label="Название" value={labelProduct.name} wide />
+                <ProductDetail label="Категория" value={labelProduct.category || "—"} />
+                <ProductDetail label="Артикул" value={labelProduct.sku} />
+                <ProductDetail label="Металл" value={labelProduct.metal} />
+                <ProductDetail label="Цвет металла" value={labelProduct.metal_color} />
+                <ProductDetail label="Вес" value={formatWeight(labelProduct.weight)} />
+                <ProductDetail label="Размер" value={labelProduct.size} />
+                <ProductDetail label="Вставки / камни" value={labelProduct.stones} />
+                <ProductDetail label="Статус" value={productStatusLabel(labelProduct.status)} />
+                <ProductDetail label="Цена продажи" value={formatSom(labelProduct.sale_price)} />
+                <ProductDetail
+                  label="Цена за грамм"
+                  value={labelProduct.price_per_gram_sale ? `${formatSom(labelProduct.price_per_gram_sale)} / г` : null}
+                />
+                {canSeePurchasePrice && (
+                  <>
+                    <ProductDetail label="Закупочная цена" value={formatSom(labelProduct.purchase_price)} />
+                    <ProductDetail
+                      label="Закупка за грамм"
+                      value={labelProduct.price_per_gram_purchase ? `${formatSom(labelProduct.price_per_gram_purchase)} / г` : null}
+                    />
+                    <ProductDetail
+                      label="Цена закупки для продавца"
+                      value={labelProduct.purchase_price_visible ? formatSom(labelProduct.purchase_price_visible) : null}
+                    />
+                    <ProductDetail
+                      label="Цена закупки для продавца за грамм"
+                      value={labelProduct.price_per_gram_purchase_visible
+                        ? `${formatSom(labelProduct.price_per_gram_purchase_visible)} / г`
+                        : null}
+                    />
+                  </>
+                )}
+                <ProductDetail label="Поставщик" value={labelProduct.supplier_name} />
+                <ProductDetail label="Телефон поставщика" value={labelProduct.supplier_phone} />
+                <ProductDetail label="Создано" value={formatDate(labelProduct.created_at)} />
+                <ProductDetail label="Описание" value={labelProduct.description} wide />
+              </div>
+            </details>
+          )}
+          {labelProduct && (
             <div className="min-h-0 flex-1">
               <LabelEditor
                 key={`${labelProduct.id}:${printerProfile.key}`}
@@ -528,12 +644,13 @@ export function SkladScreen({
                 initialSizeKey={labelSizeKey}
                 printerProfile={printerProfile}
                 onSizeChange={setLabelSizeKey}
-                onClose={() => setLabelDialogOpen(false)}
+                onClose={closeLabel}
               />
             </div>
           )}
-        </DialogContent>
-      </Dialog>
+          </div>
+        </div>
+      )}
 
       <ProductDialog
         open={productDialogOpen}
@@ -612,6 +729,36 @@ function SupplierMark({
     )
   }
   return <div className="mt-1 text-[11px] text-muted-foreground">Поставщик: {product.supplier_name}</div>
+}
+
+function ProductDetail({
+  label,
+  value,
+  wide = false,
+}: {
+  label: string
+  value: string | number | null | undefined
+  wide?: boolean
+}) {
+  if (value === null || value === undefined || String(value).trim() === "") return null
+
+  return (
+    <div className={wide ? "col-span-2 sm:col-span-3" : "min-w-0"}>
+      <div className="text-[10px] text-muted-foreground">{label}</div>
+      <div className="break-words font-medium">{value}</div>
+    </div>
+  )
+}
+
+function productStatusLabel(status: Product["status"]) {
+  const labels: Record<Product["status"], string> = {
+    in_stock: "В наличии",
+    reserved: "В резерве",
+    sold: "Продано",
+    archived: "В архиве",
+    draft: "Черновик",
+  }
+  return labels[status]
 }
 
 type ActualSaleSummary = {

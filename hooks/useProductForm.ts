@@ -5,6 +5,7 @@ import type { Product } from "@/lib/types"
 import { parseMetal, type MetalCondition } from "@/lib/metal"
 import { generateArticle } from "@/app/actions/article"
 import { articlePrefix } from "@/lib/article"
+import { inferProductCategory } from "@/lib/product-category"
 import {
   clearDraft,
   pushNameHistory,
@@ -152,8 +153,20 @@ export function useProductForm(open: boolean, product: Product | null) {
     return () => clearTimeout(id)
   }, [form, open, product])
 
-  const setField = <K extends keyof FormState>(k: K, v: FormState[K]) =>
+  const setField = <K extends keyof FormState>(k: K, v: FormState[K]) => {
+    if (k === "name" && !product) {
+      const inferredCategory = inferProductCategory(String(v))
+      setForm((f) => {
+        const next = { ...f, [k]: v }
+        return inferredCategory !== f.category
+          ? { ...next, category: inferredCategory }
+          : next
+      })
+      return
+    }
+
     setForm((f) => ({ ...f, [k]: v }))
+  }
 
   // Пересчеты цен за грамм / итого
   const changeWeight = (value: number) => {

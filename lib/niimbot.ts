@@ -186,10 +186,22 @@ function clearSavedPrinterDevice() {
 }
 
 function getBluetoothAccess(): BluetoothAccessLike {
+  const connectionIsLive = Boolean(activePrinterDevice?.gatt?.connected) || printerSnapshot.status === "connected"
+  const markUnavailable = () => {
+    publishPrinterSnapshot({
+      status: connectionIsLive ? "connected" : "unsupported",
+      error: null,
+    })
+  }
+
   if (typeof navigator === "undefined") throw new Error("Bluetooth доступен только в браузере.")
+  if (typeof window !== "undefined" && !window.isSecureContext) {
+    markUnavailable()
+    throw new Error("Web Bluetooth работает только по HTTPS или на localhost. Откройте Aura в Chrome или Edge на устройстве с Bluetooth.")
+  }
   const bluetooth = (navigator as Navigator & { bluetooth?: BluetoothAccessLike }).bluetooth
   if (!bluetooth?.requestDevice) {
-    publishPrinterSnapshot({ status: "unsupported", error: null })
+    markUnavailable()
     throw new Error("Web Bluetooth недоступен. Откройте приложение в Chrome или Edge на устройстве с Bluetooth.")
   }
   return bluetooth
@@ -240,17 +252,21 @@ function retryPrinterConnection(device: BluetoothDeviceLike, attempt: number) {
 async function restoreRememberedPrinter() {
   const deviceId = readStoredDeviceId()
   if (!deviceId) {
-    publishPrinterSnapshot({ status: "disconnected", error: null })
+    const status = activePrinterDevice?.gatt?.connected ? "connected" : "disconnected"
+    publishPrinterSnapshot({ status, error: null })
     return
   }
 
   const bluetooth = getBluetoothAccess()
   if (!bluetooth.getDevices) {
-    publishPrinterSnapshot({ status: "unsupported", error: null })
+    const stillConnected = Boolean(activePrinterDevice?.gatt?.connected) || printerSnapshot.status === "connected"
+    publishPrinterSnapshot({ status: stillConnected ? "connected" : "unsupported", error: null })
     return
   }
-  const devices = await bluetooth.getDevices()
-  const device = devices.find((item) => item.id === deviceId)
+  const devices = await bluetooth.getDevices().catch(() => [])
+  const device =
+    devices.find((item) => item.id === deviceId) ??
+    (activePrinterDevice?.id === deviceId && activePrinterDevice.gatt?.connected ? activePrinterDevice : undefined)
   if (!device) {
     publishPrinterSnapshot({ status: "disconnected", error: null })
     return
@@ -276,7 +292,9 @@ export function startPrinterConnectionMonitor() {
   monitorStarted = true
   publishPrinterSnapshot({ status: "checking", error: null })
   void enqueuePrinterOperation(restoreRememberedPrinter).catch(() => {
-    publishPrinterSnapshot({ status: "disconnected", error: null })
+    if (printerSnapshot.status !== "unsupported") {
+      publishPrinterSnapshot({ status: "disconnected", error: null })
+    }
   })
   window.addEventListener("focus", () => {
     void enqueuePrinterOperation(restoreRememberedPrinter).catch(() => undefined)
@@ -297,23 +315,42 @@ async function withPrinterDeviceSelection<T>(
   const originalRequestDevice = bluetooth.requestDevice.bind(bluetooth)
   const previousDescriptor = Object.getOwnPropertyDescriptor(bluetooth, "requestDevice")
 
+  const chooseAndRememberDevice = async (_options?: unknown) => {
+    publishPrinterSnapshot({ status: "connecting", modelKey, error: null })
+    const device = await originalRequestDevice(_options)
+    savePrinterDevice(device, modelKey)
+    return device
+  }
+
   const requestRememberedDevice = async (_options?: unknown) => {
     if (mode === "choose") {
-      const device = await originalRequestDevice(_options)
-      savePrinterDevice(device, modelKey)
-      return device
+      return chooseAndRememberDevice(_options)
     }
 
     const deviceId = readStoredDeviceId()
-    if (!deviceId) throw new Error("Сначала подключите принтер в настройках.")
-    if (!bluetooth.getDevices) {
-      throw new Error("Браузер не поддерживает автоматическое восстановление Bluetooth. Используйте Chrome или Edge.")
+    if (!deviceId) {
+      // Printing is also the first-connect path: open the browser chooser from
+      // the user's print click instead of requiring a separate settings dialog.
+      if (activePrinterDevice?.gatt?.connected) return activePrinterDevice
+      return chooseAndRememberDevice(_options)
     }
-    const devices = await bluetooth.getDevices()
+
+    if (!bluetooth.getDevices) {
+      const liveDevice = activePrinterDevice?.id === deviceId ? activePrinterDevice : null
+      if (liveDevice) return liveDevice
+      return chooseAndRememberDevice(_options)
+    }
+
+    const devices = await bluetooth.getDevices().catch(() => [])
     const device = devices.find((item) => item.id === deviceId)
     if (!device) {
-      throw new Error("Браузер не видит сохранённый принтер. Нажмите «Сменить устройство» и подключите его заново.")
+      if (activePrinterDevice?.id === deviceId && activePrinterDevice.gatt?.connected) {
+        watchPrinterDevice(activePrinterDevice)
+        return activePrinterDevice
+      }
+      return chooseAndRememberDevice(_options)
     }
+
     watchPrinterDevice(device)
     return device
   }
@@ -333,7 +370,7 @@ async function withPrinterDeviceSelection<T>(
     const deviceId = readStoredDeviceId()
     const devices = bluetooth.getDevices ? await bluetooth.getDevices().catch(() => []) : []
     const device = devices.find((item) => item.id === deviceId) ?? activePrinterDevice
-    if (device && device.id === deviceId) {
+    if (device && (!deviceId || device.id === deviceId)) {
       watchPrinterDevice(device)
       if (!device.gatt?.connected) {
         try {
