@@ -120,12 +120,23 @@ export async function getShopSeqIdForLabel(productShopId: string): Promise<numbe
 
 export async function getProducts(): Promise<Product[]> {
   const { supabase } = await requireProfile()
-  const { data, error } = await supabase
-    .from("products")
-    .select(PRODUCT_COLUMNS)
-    .order("created_at", { ascending: false })
-  if (error) throw error
-  return withShopSeqId(supabase, (data as unknown as Product[]) ?? [])
+  // Supabase отдаёт максимум 1000 строк за запрос — без постраничной загрузки
+  // товары сверх 1000 молча пропадали со склада и из поиска.
+  const PAGE = 1000
+  const all: Product[] = []
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase
+      .from("products")
+      .select(PRODUCT_COLUMNS)
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: true })
+      .range(from, from + PAGE - 1)
+    if (error) throw error
+    const rows = (data as unknown as Product[]) ?? []
+    all.push(...rows)
+    if (rows.length < PAGE) break
+  }
+  return withShopSeqId(supabase, all)
 }
 
 export type ProductPage = {
@@ -294,9 +305,23 @@ export async function updateProduct(
     throw new Error("Товар уже взят на реализацию: закупочную цену и поставщика менять нельзя")
   }
   validate(input)
+  // Разрешаем менять только поля карточки: статус, магазин, артикул и автора
+  // нельзя подменить с клиента (иначе проданный товар можно «вернуть» на склад).
+  const ALLOWED: (keyof ProductInput | "is_hidden")[] = [
+    "name", "category", "metal", "metal_color", "weight", "size",
+    "purchase_price", "purchase_price_visible", "price_per_gram_sale",
+    "price_per_gram_purchase", "price_per_gram_purchase_visible", "stones",
+    "description", "sale_price", "image_url", "images", "supplier_name",
+    "supplier_phone", "is_hidden",
+  ]
+  const patch: Record<string, unknown> = {}
+  for (const key of ALLOWED) {
+    if ((input as Record<string, unknown>)[key] !== undefined) patch[key] = (input as Record<string, unknown>)[key]
+  }
+  if (typeof patch.name === "string") patch.name = patch.name.trim()
   const { data, error } = await supabase
     .from("products")
-    .update(input)
+    .update(patch)
     .eq("id", id)
     .select("*")
     .single()

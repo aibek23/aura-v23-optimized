@@ -110,14 +110,30 @@ export async function createCashOperation(input: {
 
   // Списания и инкассация не должны уводить кассу в минус.
   if (input.type !== "income") {
-    const [{ data: salesRows }, { data: opRows }] = await Promise.all([
-      supabase.from("sales").select("*").eq("shop_id", shopId),
-      supabase.from("cash_operations").select("*").eq("shop_id", shopId),
+    // Supabase отдаёт максимум 1000 строк — читаем всё постранично,
+    // иначе при >1000 продажах остаток кассы считался неверно.
+    const fetchAll = async <T,>(table: "sales" | "cash_operations"): Promise<T[]> => {
+      const PAGE = 1000
+      const out: T[] = []
+      for (let from = 0; ; from += PAGE) {
+        const { data, error } = await supabase
+          .from(table)
+          .select("*")
+          .eq("shop_id", shopId)
+          .order("id", { ascending: true })
+          .range(from, from + PAGE - 1)
+        if (error) throw new Error(`Не удалось проверить остаток кассы: ${error.message}`)
+        const rows = (data as T[]) ?? []
+        out.push(...rows)
+        if (rows.length < PAGE) break
+      }
+      return out
+    }
+    const [salesRows, opRows] = await Promise.all([
+      fetchAll<Sale>("sales"),
+      fetchAll<CashOperation>("cash_operations"),
     ])
-    const balances = computeBalances(
-      (salesRows as Sale[]) ?? [],
-      (opRows as CashOperation[]) ?? [],
-    )
+    const balances = computeBalances(salesRows, opRows)
     if (fromCash > balances.cash + 0.5) {
       throw new Error(`Недостаточно наличных: доступно ${Math.round(balances.cash)} с`)
     }
@@ -152,8 +168,9 @@ export async function createCashOperation(input: {
 
 /** Удалить шаблон причины. Только администратор. */
 export async function deleteCashReasonPreset(id: string) {
-  const { supabase } = await requireAdmin()
-  const { error } = await supabase.from("cash_reason_presets").delete().eq("id", id)
+  const { supabase, shopId } = await requireAdmin()
+  if (!shopId) throw new Error("Ваш аккаунт не привязан ни к одному магазину")
+  const { error } = await supabase.from("cash_reason_presets").delete().eq("id", id).eq("shop_id", shopId)
   if (error) throw error
   revalidatePath("/crm")
   return { ok: true }

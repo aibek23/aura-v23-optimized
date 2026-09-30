@@ -2,10 +2,6 @@
 const nextConfig = {
   allowedDevOrigins: ["127.0.0.1", "**.replit.dev"],
 
-  typescript: {
-    ignoreBuildErrors: true,
-  },
-
   images: {
     unoptimized: true,
   },
@@ -17,6 +13,8 @@ const nextConfig = {
 
   transpilePackages: ['niimbot-web-bluetooth'],
 
+  // Expose the route-group pages under /crm while keeping their short paths
+  // available. Do not redirect those short paths back to /crm.
   async rewrites() {
     return [
       { source: '/manifest.json', destination: '/manifest.webmanifest' },
@@ -36,16 +34,6 @@ const nextConfig = {
   async redirects() {
     return [
       { source: '/', destination: '/prepress', permanent: false },
-      { source: '/pos', destination: '/crm/pos', permanent: false },
-      { source: '/showcase', destination: '/crm/showcase', permanent: false },
-      { source: '/inventory', destination: '/crm/inventory', permanent: false },
-      { source: '/customers', destination: '/crm/customers', permanent: false },
-      { source: '/reports', destination: '/crm/reports', permanent: false },
-      { source: '/stores', destination: '/crm/stores', permanent: false },
-      { source: '/notifications', destination: '/crm/notifications', permanent: false },
-      { source: '/suppliers', destination: '/crm/suppliers', permanent: false },
-      { source: '/cabinet', destination: '/crm/cabinet', permanent: false },
-      { source: '/money', destination: '/crm/money', permanent: false },
     ]
   },
 }

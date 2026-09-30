@@ -8,7 +8,8 @@ export default async function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    // Исключаем системные маршруты, статику, PWA-манифест и Service Worker.
-    "/((?!store|_next/static|_next/image|favicon.ico|manifest\\.json|manifest\\.webmanifest|site\\.webmanifest|sw\\.js|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|wasm|mjs|js|css|json|webmanifest|woff|woff2|ttf|eot)$).*)",
+    // Keep public storefront requests outside the auth proxy without excluding
+    // the protected /stores CRM route. Next.js 16 uses proxy.ts as its entrypoint.
+    "/((?!store(?:/|$)|_next/static|_next/image|favicon.ico|manifest\\.json|manifest\\.webmanifest|site\\.webmanifest|sw\\.js|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|wasm|mjs|js|css|json|webmanifest|woff|woff2|ttf|eot)$).*)",
   ],
 }
