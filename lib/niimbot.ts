@@ -494,9 +494,17 @@ export async function loadNiimbot(): Promise<NiimbotApi> {
 export function canvasToLabelDataUrl(
   source: HTMLCanvasElement,
   size: NiimbotSize = LABEL_SIZES[DEFAULT_SIZE_KEY],
+  /**
+   * Полная ширина страницы, которую ожидает принтер (ось печатающей головки).
+   * Для task "b1" (B1/B21/D11) страница ВСЕГДА равна ширине головки, иначе
+   * строки растра уходят с неверным stride и печатается только первая полоса.
+   * Макет при этом прижимается к левому краю (ось подачи не меняется).
+   */
+  pageW: number = size.w_px,
 ): string {
-  const targetW = size.w_px
+  const contentW = size.w_px
   const targetH = size.h_px
+  const targetW = Math.max(pageW, contentW)
 
   const out = document.createElement("canvas")
   out.width = targetW
@@ -508,10 +516,21 @@ export function canvasToLabelDataUrl(
   outCtx.fillStyle = "#ffffff"
   outCtx.fillRect(0, 0, targetW, targetH)
 
-  // Отрисовка источника напрямую с ресайзом
-  outCtx.drawImage(source, 0, 0, targetW, targetH)
+  // Отрисовка источника напрямую с ресайзом (контент слева, добивка — белая)
+  outCtx.drawImage(source, 0, 0, contentW, targetH)
 
   return out.toDataURL("image/png")
+}
+
+/**
+ * Ширина страницы для SetPageSize.
+ * task "b1": ширина печатающей головки, выровненная по 8 px — требование
+ * протокола 3 (см. docs/protocol-v4.md драйвера). task "v4": ширина этикетки.
+ */
+export function getPageWidthPx(model: PrinterProfile, contentW: number): number {
+  if (model.task !== "b1") return contentW
+  const head = Math.floor(model.printheadPx / 8) * 8
+  return Math.max(head, Math.ceil(contentW / 8) * 8)
 }
 
 // ---------------------------------------------------------------------------
@@ -528,22 +547,27 @@ export async function printCanvas(
   }
   const api = await loadNiimbot()
   const scale = model.dpi / 203
-  const targetSize: NiimbotSize = {
-    w_px: Math.round(sizeDef.w_px * scale),
+  const contentW = Math.round(sizeDef.w_px * scale)
+  const contentSize: NiimbotSize = {
+    w_px: contentW,
     h_px: Math.round(sizeDef.h_px * scale),
     dpi: model.dpi,
   }
-  if (targetSize.w_px > model.printheadPx) {
+  if (contentW > model.printheadPx) {
     throw new Error(
-      `Макет шириной ${targetSize.w_px} px превышает печатаемую ширину ${model.displayName} (${model.printheadPx} px). Выберите более узкий формат этикетки.`,
+      `Макет шириной ${contentW} px превышает печатаемую ширину ${model.displayName} (${model.printheadPx} px). Выберите более узкий формат этикетки.`,
     )
   }
+
+  // Растр и SetPageSize должны иметь одинаковую ширину страницы.
+  const pageW = getPageWidthPx(model, contentW)
+  const targetSize: NiimbotSize = { ...contentSize, w_px: pageW }
 
   // Безопасная конфигурация отправки для высоких бирок (600px)
   api.WRITE_MODE = model.task === "b1" ? "paced" : null
   api.PACE_MS = 50
 
-  const dataUrl = canvasToLabelDataUrl(source, targetSize)
+  const dataUrl = canvasToLabelDataUrl(source, contentSize, pageW)
 
   await enqueuePrinterOperation(() =>
     withPrinterDeviceSelection(model.key, "remembered", async () => {
