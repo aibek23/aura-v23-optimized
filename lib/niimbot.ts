@@ -535,7 +535,8 @@ export function canvasToLabelDataUrl(
    * Полная ширина страницы, которую ожидает принтер (ось печатающей головки).
    * Для task "b1" (B1/B21/D11) страница ВСЕГДА равна ширине головки, иначе
    * строки растра уходят с неверным stride и печатается только первая полоса.
-   * Макет при этом прижимается к левому краю (ось подачи не меняется).
+   * Макет центрируется по горизонтали внутри этой страницы; содержимое этикетки
+   * и его координаты при этом не меняются (ось подачи также не меняется).
    */
   pageW: number = size.w_px,
 ): string {
@@ -553,8 +554,10 @@ export function canvasToLabelDataUrl(
   outCtx.fillStyle = "#ffffff"
   outCtx.fillRect(0, 0, targetW, targetH)
 
-  // Отрисовка источника напрямую с ресайзом (контент слева, добивка — белая)
-  outCtx.drawImage(source, 0, 0, contentW, targetH)
+  // При отсутствии/неизвестной ширине рулона B1 печатает по всей головке.
+  // Белые поля центрируют этикетку на ленте, не сдвигая элементы внутри макета.
+  const left = Math.floor((targetW - contentW) / 2)
+  outCtx.drawImage(source, left, 0, contentW, targetH)
 
   return out.toDataURL("image/png")
 }
@@ -600,9 +603,10 @@ export async function printCanvas(
   const pageW = getPageWidthPx(model, contentW)
   const targetSize: NiimbotSize = { ...contentSize, w_px: pageW }
 
-  // Безопасная конфигурация отправки для высоких бирок (600px)
+  // B1 требует paced-запись, но 10 мс — минимальный интервал, подтверждённый
+  // драйвером как безопасный для этой модели. 50 мс заметно замедляли печать.
   api.WRITE_MODE = model.task === "b1" ? "paced" : null
-  api.PACE_MS = 50
+  api.PACE_MS = 10
 
   const dataUrl = canvasToLabelDataUrl(source, contentSize, pageW)
 
