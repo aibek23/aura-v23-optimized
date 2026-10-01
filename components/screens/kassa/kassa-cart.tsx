@@ -5,10 +5,9 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog"
 import { 
   AlertTriangle, 
-  ChevronDown, 
-  ChevronUp, 
   RefreshCw, 
   ShoppingCart, 
   Recycle,
@@ -17,7 +16,8 @@ import {
   Phone,
   Gift,
   CreditCard,
-  Tag
+  Tag,
+  ChevronDown
 } from "lucide-react"
 import { PAYMENT_METHODS, type Customer, type Product } from "@/lib/types"
 import { formatSom, formatWeight } from "@/lib/format"
@@ -107,6 +107,8 @@ export function KassaCart({
 }: KassaCartProps) {
   const [showSuggestions, setShowSuggestions] = useState(false)
   const autocompleteRef = useRef<HTMLDivElement>(null)
+  // Блок клиента по умолчанию свёрнут при первом открытии
+  const [isCustomerOpen, setIsCustomerOpen] = useState(false)
 
   // Локальное состояние для плавного ввода "Своей цены" без багов ререндера
   const [customPriceInputs, setCustomPriceInputs] = useState<Record<string, string>>({})
@@ -177,17 +179,16 @@ export function KassaCart({
     changeItemDiscountPercent(item.lineId, Math.min(100, discountPercent))
   }
 
-  return (
-    <div className="flex flex-col rounded-2xl border border-border/80 bg-card/90 backdrop-blur shadow-xl overflow-hidden">
+  const cartPanel = (
+    <div className="flex min-w-0 flex-col overflow-hidden rounded-2xl border border-border/80 bg-card shadow-xl">
       <div 
-        className="flex items-center justify-between border-b border-border/80 px-4 py-3.5 bg-muted/20 cursor-pointer lg:cursor-default"
-        onClick={() => isMobile && setIsCartOpenMobile(!isCartOpenMobile)}
+        className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-border/80 bg-muted/20 px-4 py-3.5"
       >
-        <div className="flex items-center gap-2.5">
+        <div className="flex min-w-0 items-center gap-2.5">
           <div className="p-1.5 rounded-lg bg-primary/10 text-primary">
             <ShoppingCart className="h-4 w-4" />
           </div>
-          <h2 className="font-semibold text-sm tracking-tight">Чек / Корзина</h2>
+          <h2 className="truncate text-sm font-semibold">Чек / Корзина</h2>
           {cart.length > 0 && (
             <Badge variant="secondary" className="px-2 py-0.5 text-xs font-mono font-bold bg-primary/15 text-primary border-primary/20">
               {cart.length}
@@ -208,15 +209,10 @@ export function KassaCart({
               Сброс
             </Button>
           )}
-          {isMobile && (
-            <Button variant="ghost" size="icon" className="h-7 w-7">
-              {isCartOpenMobile ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-            </Button>
-          )}
         </div>
       </div>
 
-      <div className={cn("flex-col", isMobile && !isCartOpenMobile ? "hidden" : "flex")}>
+      <div className="flex min-h-0 flex-col">
         {hasLoss && (
           <div className="mx-4 mt-3 flex items-start gap-2 rounded-xl border border-destructive/40 bg-destructive/10 p-3 text-xs font-semibold text-destructive">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
@@ -227,7 +223,7 @@ export function KassaCart({
           </div>
         )}
 
-        <div className="max-h-[35vh] lg:max-h-[40vh] overflow-y-auto px-4 py-2 scrollbar-thin">
+        <div className="max-h-[34vh] overflow-y-auto px-4 py-2 scrollbar-thin lg:max-h-[40vh]">
           {cart.length === 0 ? (
             <div className="py-12 text-center text-xs text-muted-foreground flex flex-col items-center justify-center gap-2">
               <ShoppingCart className="h-8 w-8 stroke-1 text-muted-foreground/30" />
@@ -270,21 +266,12 @@ export function KassaCart({
                           {isScrap ? `· ${formatWeight(i.weight)} лома` : "· 1 ед."}
                         </span>
                       </div>
-                      {(isAdmin || product) && (
+                      {isAdmin && (
                         <div className="mt-1 flex flex-wrap items-baseline gap-x-1.5 font-mono text-sm font-semibold">
                           <span className="font-sans font-medium text-muted-foreground">
-                            {isAdmin ? "Себестоимость:" : "Закупка:"}
+                            Себестоимость:
                           </span>
-                          {formatSom(
-                            isAdmin
-                              ? i.cost
-                              : (product?.purchase_price_visible ?? product?.purchase_price ?? i.cost),
-                          )}
-                          {isAdmin && product?.purchase_price_visible != null && (
-                            <span className="font-sans text-xs font-normal text-muted-foreground">
-                              Продавцу: {formatSom(product.purchase_price_visible)}
-                            </span>
-                          )}
+                          {formatSom(i.cost)}
                         </div>
                       )}
                       {itemLoss && (
@@ -297,8 +284,9 @@ export function KassaCart({
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-lg transition-colors"
+                      className="h-11 w-11 rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                       onClick={() => removeItem(i.lineId)}
+                      aria-label={`Удалить ${i.name} из чека`}
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </Button>
@@ -418,60 +406,98 @@ export function KassaCart({
           )}
         </div>
 
-        <div className="space-y-3 border-t border-border/80 p-4 bg-muted/20">
-          <div className="grid grid-cols-2 gap-2">
-            <div className="relative" ref={autocompleteRef}>
-              <User className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground z-10" />
-              <Input
-                placeholder="Клиент"
-                value={customerName}
-                onChange={(e) => { setCustomerName(e.target.value); setShowSuggestions(true) }}
-                onFocus={() => setShowSuggestions(true)}
-                className="h-8 pl-8 text-xs bg-background"
-                autoComplete="off"
-              />
-              {showSuggestions && filteredCustomers.length > 0 && (
-                <div className="absolute left-0 right-0 top-full z-50 mt-1 overflow-hidden rounded-xl border border-border bg-card shadow-xl">
-                  {filteredCustomers.map((c) => (
-                    <button
-                      key={c.id}
-                      type="button"
-                      onMouseDown={(e) => { e.preventDefault(); handleSelectCustomer(c) }}
-                      className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left hover:bg-muted/60 transition-colors border-b border-border/40 last:border-0"
-                    >
-                      <div className="min-w-0">
-                        <span className="text-xs font-medium block truncate">{c.name ?? "—"}</span>
-                        {c.phone && <span className="text-[10px] text-muted-foreground font-mono">{c.phone}</span>}
-                      </div>
-                      {(c.purchase_count ?? 0) > 0 && (
-                        <span className="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">
-                          {c.purchase_count} поку{(c.purchase_count ?? 0) === 1 ? "пка" : (c.purchase_count ?? 0) <= 4 ? "пки" : "пок"}
-                        </span>
-                      )}
-                    </button>
-                  ))}
-                </div>
-              )}
-              {selectedCustomer && !showSuggestions && (selectedCustomer.purchase_count ?? 0) > 0 && (
-                <div className="absolute left-0 right-0 top-full z-40 mt-1 flex items-center gap-1.5 rounded-lg border border-primary/20 bg-primary/5 px-2.5 py-1.5">
-                  <span className="text-[10px] text-primary font-medium">
-                    {selectedCustomer.purchase_count} покупок в истории
+        <div className="space-y-3 border-t border-border/80 bg-muted/20 p-4">
+          {/* Сворачиваемый блок клиента (по умолчанию закрыт) */}
+          <div className="overflow-hidden rounded-xl border border-border/60 bg-background/70 shadow-sm transition-all">
+            <button
+              type="button"
+              onClick={() => setIsCustomerOpen((prev) => !prev)}
+              className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left transition-colors hover:bg-muted/50"
+              aria-expanded={isCustomerOpen}
+              aria-label={isCustomerOpen ? "Свернуть блок клиента" : "Развернуть блок клиента"}
+            >
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+                  <User className="h-3 w-3" />
+                </span>
+                <span className="text-xs font-semibold text-foreground">Клиент</span>
+                {customerName.trim() || customerPhone.trim() ? (
+                  <span className="max-w-[150px] truncate rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">
+                    {customerName.trim() || customerPhone.trim()}
                   </span>
-                  {(selectedCustomer.is_blacklisted) && (
-                    <span className="ml-auto rounded-full bg-destructive/10 px-1.5 py-0.5 text-[9px] font-bold text-destructive">ЧС</span>
+                ) : (
+                  <span className="text-[10px] text-muted-foreground">(не указан)</span>
+                )}
+              </div>
+              <div className="flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground">
+                <span className="hidden sm:inline">{isCustomerOpen ? "Скрыть" : "Выбрать"}</span>
+                <ChevronDown
+                  className={cn(
+                    "h-4 w-4 transition-transform duration-200",
+                    isCustomerOpen && "rotate-180 text-primary"
                   )}
+                />
+              </div>
+            </button>
+
+            {isCustomerOpen && (
+              <div className="space-y-2 border-t border-border/40 p-2.5 pt-2">
+                <div className="grid grid-cols-1 gap-2 min-[390px]:grid-cols-2">
+                  <div className="relative" ref={autocompleteRef}>
+                    <User className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground z-10" />
+                    <Input
+                      placeholder="Имя клиента"
+                      value={customerName}
+                      onChange={(e) => { setCustomerName(e.target.value); setShowSuggestions(true) }}
+                      onFocus={() => setShowSuggestions(true)}
+                      className="h-8 pl-8 text-xs bg-background"
+                      autoComplete="off"
+                    />
+                    {showSuggestions && filteredCustomers.length > 0 && (
+                      <div className="absolute left-0 right-0 top-full z-50 mt-1 overflow-hidden rounded-xl border border-border bg-card shadow-xl">
+                        {filteredCustomers.map((c) => (
+                          <button
+                            key={c.id}
+                            type="button"
+                            onMouseDown={(e) => { e.preventDefault(); handleSelectCustomer(c) }}
+                            className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left hover:bg-muted/60 transition-colors border-b border-border/40 last:border-0"
+                          >
+                            <div className="min-w-0">
+                              <span className="text-xs font-medium block truncate">{c.name ?? "—"}</span>
+                              {c.phone && <span className="text-[10px] text-muted-foreground font-mono">{c.phone}</span>}
+                            </div>
+                            {(c.purchase_count ?? 0) > 0 && (
+                              <span className="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">
+                                {c.purchase_count} поку{(c.purchase_count ?? 0) === 1 ? "пка" : (c.purchase_count ?? 0) <= 4 ? "пки" : "пок"}
+                              </span>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {selectedCustomer && !showSuggestions && (selectedCustomer.purchase_count ?? 0) > 0 && (
+                      <div className="absolute left-0 right-0 top-full z-40 mt-1 flex items-center gap-1.5 rounded-lg border border-primary/20 bg-primary/5 px-2.5 py-1.5">
+                        <span className="text-[10px] text-primary font-medium">
+                          {selectedCustomer.purchase_count} покупок в истории
+                        </span>
+                        {(selectedCustomer.is_blacklisted) && (
+                          <span className="ml-auto rounded-full bg-destructive/10 px-1.5 py-0.5 text-[9px] font-bold text-destructive">ЧС</span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  <div className="relative">
+                    <Phone className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                    <Input 
+                      placeholder="Телефон" 
+                      value={customerPhone} 
+                      onChange={(e) => setCustomerPhone(e.target.value)} 
+                      className="h-8 pl-8 text-xs bg-background" 
+                    />
+                  </div>
                 </div>
-              )}
-            </div>
-            <div className="relative">
-              <Phone className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-              <Input 
-                placeholder="Телефон" 
-                value={customerPhone} 
-                onChange={(e) => setCustomerPhone(e.target.value)} 
-                className="h-8 pl-8 text-xs bg-background" 
-              />
-            </div>
+              </div>
+            )}
           </div>
 
           <div className={cn("grid gap-2", showBonus ? "grid-cols-2" : "grid-cols-1")}>
@@ -608,5 +634,42 @@ export function KassaCart({
         </div>
       </div>
     </div>
+  )
+
+  if (!isMobile) return cartPanel
+
+  return (
+    <>
+      <Button
+        type="button"
+        onClick={() => setIsCartOpenMobile(true)}
+        className="fixed bottom-[max(1rem,env(safe-area-inset-bottom))] right-4 z-40 h-16 max-w-[calc(100vw-2rem)] gap-3 rounded-2xl px-4 shadow-xl"
+        aria-label={`Открыть чек: ${cart.length} товаров, итог ${formatSom(total)}`}
+      >
+        <span className="relative grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-primary-foreground/15">
+          <ShoppingCart className="h-6 w-6" />
+          {cart.length > 0 && (
+            <span className="absolute -right-1.5 -top-1.5 grid h-6 min-w-6 place-items-center rounded-full border-2 border-primary bg-primary-foreground px-1 font-mono text-xs font-bold text-primary">
+              {cart.length}
+            </span>
+          )}
+        </span>
+        <span className="min-w-0 text-left">
+          <span className="block text-xs font-medium opacity-80">Чек · {cart.length} шт.</span>
+          <span className="block truncate font-mono text-base font-bold">{formatSom(total)}</span>
+        </span>
+      </Button>
+
+      <Dialog open={isCartOpenMobile} onOpenChange={setIsCartOpenMobile}>
+        <DialogContent
+          className="top-auto bottom-0 left-0 max-h-[calc(100dvh-0.5rem)] w-full max-w-none translate-x-0 translate-y-0 overflow-y-auto rounded-b-none rounded-t-2xl p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:left-1/2 sm:top-1/2 sm:max-w-lg sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-2xl"
+          showCloseButton
+        >
+          <DialogTitle className="sr-only">Чек</DialogTitle>
+          <DialogDescription className="sr-only">Товары, скидки, оплата и итоговая сумма продажи</DialogDescription>
+          {cartPanel}
+        </DialogContent>
+      </Dialog>
+    </>
   )
 }

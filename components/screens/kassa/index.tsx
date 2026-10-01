@@ -127,7 +127,7 @@ export function KassaScreen({
   const cartStorageKey = `${LOCAL_STORAGE_KEY}:${shopId || profile.shop_id || "default"}`
 
   const [showScrollTop, setShowScrollTop] = useState(false)
-  const [isCartOpenMobile, setIsCartOpenMobile] = useState(true)
+  const [isCartOpenMobile, setIsCartOpenMobile] = useState(false)
 
   const showBonus = viewRole === "seller"
   const canSeeProfit = viewRole !== "seller"
@@ -275,6 +275,20 @@ export function KassaScreen({
       if (lastIdx === -1) return [...prev, line]
       return [...prev.slice(0, lastIdx + 1), line, ...prev.slice(lastIdx + 1)]
     })
+  }
+
+  const removeProductFromCart = (productId: string) => {
+    setCart((prev) => prev.filter((i) => i.product_id !== productId))
+  }
+
+  const toggleCartProduct = (p: Product) => {
+    const inCart = cart.some((i) => i.product_id === p.id)
+    if (inCart) {
+      removeProductFromCart(p.id)
+      toast.info(`«${p.name}» убран из чека`)
+    } else {
+      addToCart(p)
+    }
   }
 
   /** Пересчёт строки чека по цене за грамм. */
@@ -469,8 +483,10 @@ export function KassaScreen({
             onTrackScroll={onTrackScroll}
             qtyInCart={qtyInCart}
             addToCart={addToCart}
+            onToggleCart={toggleCartProduct}
             minQuery={MIN_QUERY}
             recent={recentProducts}
+            isAdmin={isAdmin}
           />
         </div>
         <div className="order-3 z-10 w-full min-w-0 lg:sticky lg:top-4 lg:col-start-2 lg:row-start-1 lg:row-span-3">
