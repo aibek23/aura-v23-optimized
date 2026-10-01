@@ -465,19 +465,19 @@ export const LABEL_SIZES: Record<JewelryLabelSizeKey, LabelSizeDef> = {
     key: "T25x30_45",
     label: "T25*30+45",
     w_px: 200,
-    h_px: 600,
+    h_px: 240,
   },
   T30x25_45: {
     key: "T30x25_45",
     label: "T30*25+45",
     w_px: 240,
-    h_px: 560,
+    h_px: 200,
   },
   T30x25_50: {
     key: "T30x25_50",
     label: "T30*25+50",
     w_px: 240,
-    h_px: 600,
+    h_px: 200,
   },
   T50x30_rect: {
     key: "T50x30_rect",
