@@ -1,21 +1,13 @@
 "use server"
 
-import { createClient } from "@/lib/supabase/server"
-import { getActiveShopId } from "@/lib/supabase/current-shop"
 import { revalidatePath } from "next/cache"
 import type { Customer } from "@/lib/types"
+import { getRequestCrmContext } from "@/lib/supabase/request-context"
 
 async function requireProfile() {
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  const { supabase, user, profile, shopId } = await getRequestCrmContext()
   if (!user) throw new Error("Требуется вход в систему")
-  const { data: profile } = await supabase.from("profiles").select("*").eq("id", user.id).single()
   if (!profile || profile.status !== "approved") throw new Error("Аккаунт не подтверждён")
-  const fallbackShopId =
-    profile.role === "super_admin" ? profile.impersonated_shop_id ?? profile.shop_id : profile.shop_id
-  const shopId = await getActiveShopId(supabase, fallbackShopId ?? null)
   return { supabase, user, profile, shopId }
 }
 
@@ -26,16 +18,15 @@ export async function getClients(): Promise<Customer[]> {
   // 1. Загружаем клиентов магазина
   const { data: clients, error: clientsError } = await supabase
     .from("customers")
-    .select("*")
-  .eq("shop_id", shopId)
-  .order("created_at", { ascending: false })
-  .range(0, 99)
+    .select("id, shop_id, name, phone, gender, whatsapp, instagram, email, bonus_points, is_blacklisted, purchase_count, total_spent, last_purchase_at, created_at, updated_at, deleted_at")
+    .eq("shop_id", shopId)
+    .order("created_at", { ascending: false })
+    .range(0, 49)
 
   if (clientsError) throw clientsError
   if (!clients || clients.length === 0) return []
 
-  // v18: purchase_count теперь — денормализованная колонка в таблице customers.
-  // Запрос уже включает её через select("*"), дополнительный JOIN не нужен.
+  // v18: purchase_count is denormalized on customers; no sales JOIN is needed.
   return clients as Customer[]
 }
 

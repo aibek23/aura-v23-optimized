@@ -1,7 +1,7 @@
 "use server"
 
 import { createClient } from "@/lib/supabase/server"
-import { getActiveShopId } from "@/lib/supabase/current-shop"
+import { getRequestCrmContext } from "@/lib/supabase/request-context"
 import { revalidatePath } from "next/cache"
 import type { Product } from "@/lib/types"
 
@@ -40,14 +40,10 @@ const PRODUCT_COLUMNS = [
 ].join(", ")
 
 async function requireProfile() {
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  const { supabase, user, profile, shopId } = await getRequestCrmContext()
   if (!user) throw new Error("Требуется вход в систему")
-  const { data: profile } = await supabase.from("profiles").select("*").eq("id", user.id).single()
   if (!profile || profile.status !== "approved") throw new Error("Аккаунт не подтверждён")
-  return { supabase, user, profile }
+  return { supabase, user, profile, shopId }
 }
 
 /**
@@ -62,13 +58,11 @@ async function requireProfile() {
 async function requireShopId(
   supabase: Awaited<ReturnType<typeof createClient>>,
   profile: { shop_id: string | null; impersonated_shop_id?: string | null; role?: string | null },
+  resolvedShopId?: string | null,
 ): Promise<string> {
   const fallbackShopId =
     profile.role === "super_admin" ? profile.impersonated_shop_id ?? profile.shop_id : profile.shop_id
-  const shopId = await getActiveShopId(
-    supabase,
-    fallbackShopId,
-  )
+  const shopId = resolvedShopId ?? fallbackShopId
   if (!shopId) {
     throw new Error("Ваш аккаунт не привязан к магазину — обратитесь к администратору")
   }
@@ -100,8 +94,8 @@ async function withShopSeqId(
 
 /** Запрашивает короткий номер активного магазина для локально сохранённой этикетки. */
 export async function getShopSeqIdForLabel(productShopId: string): Promise<number> {
-  const { supabase, profile } = await requireProfile()
-  const shopId = await requireShopId(supabase, profile)
+  const { supabase, profile, shopId: resolvedShopId } = await requireProfile()
+  const shopId = await requireShopId(supabase, profile, resolvedShopId)
   if (productShopId !== shopId) {
     throw new Error("Товар принадлежит другому магазину. Обновите каталог перед печатью.")
   }
@@ -119,24 +113,11 @@ export async function getShopSeqIdForLabel(productShopId: string): Promise<numbe
 }
 
 export async function getProducts(): Promise<Product[]> {
-  const { supabase } = await requireProfile()
-  // Supabase отдаёт максимум 1000 строк за запрос — без постраничной загрузки
-  // товары сверх 1000 молча пропадали со склада и из поиска.
-  const PAGE = 1000
-  const all: Product[] = []
-  for (let from = 0; ; from += PAGE) {
-    const { data, error } = await supabase
-      .from("products")
-      .select(PRODUCT_COLUMNS)
-      .order("created_at", { ascending: false })
-      .order("id", { ascending: true })
-      .range(from, from + PAGE - 1)
-    if (error) throw error
-    const rows = (data as unknown as Product[]) ?? []
-    all.push(...rows)
-    if (rows.length < PAGE) break
-  }
-  return withShopSeqId(supabase, all)
+  // Ship only the first 50 catalog rows with the server-rendered page. The
+  // local-first sync engine continues its resumable, paginated full catalog
+  // pull into IndexedDB, so POS/offline search still receives the whole catalog.
+  const page = await getProductsPage({ limit: 50, offset: 0 })
+  return page.items
 }
 
 export type ProductPage = {
@@ -147,8 +128,8 @@ export type ProductPage = {
 }
 
 /**
- * Ограниченная выборка для экранов и будущих lazy-load сценариев.
- * Supabase range — inclusive, поэтому последний индекс равен offset + limit - 1.
+ * Ограниченная выборка для экранов и lazy-load сценариев. Берём одну
+ * дополнительную строку, чтобы корректно вычислить hasMore.
  */
 export async function getProductsPage(
   input: { limit?: number; offset?: number } = {},
@@ -244,11 +225,11 @@ function extractPrefix(value: string | null | undefined): string {
  * попадал в QR-код.
  */
 export async function createProduct(input: ProductInput): Promise<Product> {
-  const { supabase, user, profile } = await requireProfile()
+  const { supabase, user, profile, shopId: resolvedShopId } = await requireProfile()
   validate(input)
 
   // shop_id берём из того же источника, что и RLS-политика (см. requireShopId).
-  const shopId = await requireShopId(supabase, profile)
+  const shopId = await requireShopId(supabase, profile, resolvedShopId)
 
   const prefix = extractPrefix(input.sku)
 

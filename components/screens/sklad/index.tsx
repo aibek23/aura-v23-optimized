@@ -32,6 +32,7 @@ import { ProductSearch } from "@/components/product-search"
 import { VirtualizedSkladTable } from "./virtualized-sklad-table"
 import { usePrinterConnection } from "./use-printer-connection"
 import { PrinterStatusIndicator } from "./printer-status-indicator"
+import { useDebouncedValue } from "@/hooks/use-debounced-value"
 
 // Загружаем LabelEditor строго на клиенте для корректного связывания пакетов Bluetooth
 const LabelEditor = dynamic(
@@ -39,7 +40,7 @@ const LabelEditor = dynamic(
   { ssr: false }
 )
 
-const PAGE_SIZE = 20
+const PAGE_SIZE = 30
 
 const isValidShopSeqId = (value: number | null | undefined): value is number =>
   typeof value === "number" && Number.isSafeInteger(value) && value > 0
@@ -80,6 +81,7 @@ export function SkladScreen({
   const [productDialogOpen, setProductDialogOpen] = useState(false)
   const [editing, setEditing] = useState<Product | null>(null)
   const [query, setQuery] = useState("")
+  const debouncedQuery = useDebouncedValue(query)
   const [page, setPage] = useState(1)
   const printerProfile = getPrinterProfile(printerConnection.modelKey)
   const nativeWidth = Math.round(getLabelSizeDef(labelSizeKey).w_px * printerProfile.dpi / 203)
@@ -96,7 +98,7 @@ export function SkladScreen({
     })
   }, [products])
 
-  const filtered = useMemo(() => filterProducts(visibleProducts, query), [visibleProducts, query])
+  const filtered = useMemo(() => filterProducts(visibleProducts, debouncedQuery), [visibleProducts, debouncedQuery])
 
   const handleProductSaved = (savedProduct: Product, isNew: boolean) => {
     onProductSaved?.(savedProduct)
@@ -325,7 +327,7 @@ export function SkladScreen({
                       <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-muted">
                         {p.image_url ? (
                           // eslint-disable-next-line @next/next/no-img-element
-                          <img src={p.image_url} alt="" className="h-full w-full object-cover" />
+                          <img src={p.image_url} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover" />
                         ) : (
                           <Sparkles className="h-4 w-4 text-muted-foreground/40" />
                         )}
@@ -391,7 +393,7 @@ export function SkladScreen({
                 <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-muted">
                   {p.image_url ? (
                     // eslint-disable-next-line @next/next/no-img-element
-                    <img src={p.image_url} alt="" className="h-full w-full object-cover" />
+                    <img src={p.image_url} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover" />
                   ) : (
                     <Sparkles className="h-5 w-5 text-muted-foreground/40" />
                   )}

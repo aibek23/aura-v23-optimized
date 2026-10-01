@@ -1,6 +1,7 @@
 "use client"
 
 import { useMemo, useState } from "react"
+import dynamic from "next/dynamic"
 import type { CashOperation, CashOpType, CashReasonPreset, Sale } from "@/lib/types"
 import { formatSom } from "@/lib/format"
 import { PERIOD_PRESETS, periodRange, inPeriod, type PeriodId } from "@/lib/period"
@@ -9,8 +10,9 @@ import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { toast } from "sonner"
 import { ArrowDownLeft, ArrowUpRight, Banknote, CreditCard, ShieldCheck, Wallet } from "lucide-react"
-import { CashHistory } from "./cash-history"
-import { CashOperationDialog } from "./cash-operation-dialog"
+
+const CashHistory = dynamic(() => import("./cash-history").then((mod) => mod.CashHistory))
+const CashOperationDialog = dynamic(() => import("./cash-operation-dialog").then((mod) => mod.CashOperationDialog))
 
 /**
  * Сводные показатели кассы, инкассация и операции внесения/изъятия.

@@ -19,6 +19,7 @@ import { History, Search, Undo2 } from "lucide-react"
 import { ReturnDialog } from "@/components/sales-return/return-dialog"
 import { ReturnSearchModal } from "@/components/sales-return/return-search-modal"
 import { SaleUnitCard, type HistoryRow } from "./sale-unit-card"
+import { useDebouncedValue } from "@/hooks/use-debounced-value"
 
 const PAGE = 15
 
@@ -48,6 +49,17 @@ function unitToRow(unit: SaleUnit): HistoryRow {
   }
 }
 
+export type SalesHistoryProps = {
+  sales: Sale[]
+  returns?: SaleReturn[]
+  products?: Product[]
+  canSeeProfit: boolean
+  canReturn?: boolean
+  sellers: { id: string; name: string }[]
+  onReturned?: () => void
+  allowOffline?: boolean
+}
+
 /**
  * История продаж с поштучной декомпозицией и возвратом товара.
  *
@@ -66,18 +78,10 @@ export function SalesHistory({
   sellers,
   onReturned,
   allowOffline = true,
-}: {
-  sales: Sale[]
-  returns?: SaleReturn[]
-  products?: Product[]
-  canSeeProfit: boolean
-  canReturn?: boolean
-  sellers: { id: string; name: string }[]
-  onReturned?: () => void
-  allowOffline?: boolean
-}) {
+}: SalesHistoryProps) {
   const [visible, setVisible] = useState(PAGE)
   const [query, setQuery] = useState("")
+  const debouncedQuery = useDebouncedValue(query)
   const [period, setPeriod] = useState<PeriodId>("all")
   const [from, setFrom] = useState("")
   const [to, setTo] = useState("")
@@ -107,7 +111,7 @@ export function SalesHistory({
   )
 
   const range = useMemo(() => periodRange(period, { from, to }), [period, from, to])
-  const parsedQuery = useMemo(() => parseProductSearchQuery(query), [query])
+  const parsedQuery = useMemo(() => parseProductSearchQuery(debouncedQuery), [debouncedQuery])
 
   const rows = useMemo(() => {
     return units
@@ -123,7 +127,7 @@ export function SalesHistory({
     return map
   }, [units])
 
-  useEffect(() => setVisible(PAGE), [query, period, from, to, seller])
+  useEffect(() => setVisible(PAGE), [debouncedQuery, period, from, to, seller])
 
   useEffect(() => {
     const el = sentinel.current
@@ -138,13 +142,29 @@ export function SalesHistory({
     return () => io.disconnect()
   }, [rows.length])
 
-  const confirmedRows = rows.filter((row) => row.syncStatus !== "pending" && row.syncStatus !== "rejected")
-  const totalSum = confirmedRows.reduce((s, r) => s + Number(r.price), 0)
-  const pendingCount = rows.filter((row) => row.syncStatus === "pending").length
-  const rejectedCount = rows.filter((row) => row.syncStatus === "rejected").length
-  const returnedSum = confirmedRows
-    .filter((r) => refundByUnit.has(`${r.saleId}:${r.itemIndex}`))
-    .reduce((s, r) => s + Number(refundByUnit.get(`${r.saleId}:${r.itemIndex}`)?.amount ?? 0), 0)
+  const confirmedRows = useMemo(
+    () => rows.filter((row) => row.syncStatus !== "pending" && row.syncStatus !== "rejected"),
+    [rows],
+  )
+  const totalSum = useMemo(
+    () => confirmedRows.reduce((sum, row) => sum + Number(row.price), 0),
+    [confirmedRows],
+  )
+  const pendingCount = useMemo(
+    () => rows.filter((row) => row.syncStatus === "pending").length,
+    [rows],
+  )
+  const rejectedCount = useMemo(
+    () => rows.filter((row) => row.syncStatus === "rejected").length,
+    [rows],
+  )
+  const returnedSum = useMemo(
+    () =>
+      confirmedRows
+        .filter((row) => refundByUnit.has(`${row.saleId}:${row.itemIndex}`))
+        .reduce((sum, row) => sum + Number(refundByUnit.get(`${row.saleId}:${row.itemIndex}`)?.amount ?? 0), 0),
+    [confirmedRows, refundByUnit],
+  )
 
   const openReturn = (row: HistoryRow) => {
     const unit = unitByRowId.get(row.unitId)

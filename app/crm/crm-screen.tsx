@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation"
-import { createClient } from "@/lib/supabase/server"
+import { getRequestCrmContext } from "@/lib/supabase/request-context"
 import type { Profile, ProfileWithImpersonation } from "@/lib/types"
 import { PendingScreen } from "@/components/screens/sklad/add-edit-Product/pending-screen"
 import { Dashboard } from "@/components/dashboard"
@@ -14,7 +14,6 @@ import { getClients } from "@/app/actions/clients"
 import { getSuperAdminShops, getImpersonatedShop } from "@/app/actions/superadmin"
 import type { ShopBillingRow } from "@/app/actions/superadmin"
 import { getSupplierDebtData } from "@/app/actions/suppliers"
-import { getActiveShopId } from "@/lib/supabase/current-shop"
 
 /**
  * Общий серверный экран CRM. Каждый раздел имеет собственный URL
@@ -23,13 +22,8 @@ import { getActiveShopId } from "@/lib/supabase/current-shop"
  * со своим значением `screen`.
  */
 export async function CrmScreen({ screen }: { screen: ScreenId }) {
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  const { supabase, user, profile, shopId: activeShopId } = await getRequestCrmContext()
   if (!user) redirect("/auth/login")
-
-  const { data: profile } = await supabase.from("profiles").select("*").eq("id", user.id).single()
 
   // Любой пользователь (включая основателя магазина) должен быть подтверждён суперадмином.
   // Авто-подтверждение намеренно отключено в v18.
@@ -41,10 +35,6 @@ export async function CrmScreen({ screen }: { screen: ScreenId }) {
   }
 
   const isSuperAdmin = typed.role === "super_admin"
-  const fallbackShopId =
-    typed.role === "super_admin" ? typed.impersonated_shop_id ?? typed.shop_id : typed.shop_id
-  const activeShopId = await getActiveShopId(supabase, fallbackShopId ?? null)
-
   // A global super admin without a selected store should land on the store
   // selector instead of trying to initialize store-specific CRM data.
   if (isSuperAdmin && !activeShopId) {

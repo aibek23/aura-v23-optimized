@@ -26,6 +26,9 @@ import { cn } from "@/lib/utils"
 import { BadgeCheck, Coins, Gift, LogOut, RotateCcw, Trash2, UserCheck, UserX, Users, Wifi } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { runLogoutCleanup } from "@/lib/local-db/logout-cleanup"
+import { ActionHistory } from "./action-history"
+import type { UndoActionResult } from "@/lib/action-history"
+import type { UndoLocalBaseline } from "@/lib/local-db/undo-cache"
 
 const ONLINE_WINDOW_MS = 3 * 60 * 1000
 
@@ -486,6 +489,9 @@ export function KabinetScreen({
   returns = [],
   data,
   email,
+  syncLocal = true,
+  historyShopId,
+  onActionUndone,
 }: {
   profile: Profile
   viewRole: Role
@@ -494,6 +500,9 @@ export function KabinetScreen({
   returns?: SaleReturn[]
   data: CabinetData
   email: string
+  syncLocal?: boolean
+  historyShopId?: string | null
+  onActionUndone?: (result: UndoActionResult, baseline: UndoLocalBaseline) => Promise<boolean>
 }) {
   const router = useRouter()
   const [pending, start] = useTransition()
@@ -554,6 +563,13 @@ export function KabinetScreen({
           </div>
         </CardContent>
       </Card>
+
+      <ActionHistory
+        key={historyShopId ?? profile.shop_id ?? "no-shop"}
+        syncLocal={syncLocal}
+        canUndoRates={isAdmin}
+        onActionUndone={onActionUndone}
+      />
 
       {/* Продавец: статистика продаж */}
       {!isAdmin && <SellerStats sales={sales} returns={returns} profile={profile} />}

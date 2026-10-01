@@ -493,6 +493,9 @@ class SyncEngine {
       await setMeta('initial_sync_done', true)
       this.pullFailures = 0
       this.notifyServiceWorker({ type: 'AURA_CLOUD_REACHABLE' })
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('aura:initial_sync_complete'))
+      }
 
       const pendingOutbox = await getOutboxPendingCount(shopId)
       updateSyncState({

@@ -1,23 +1,15 @@
 "use server"
 
-import { createClient } from "@/lib/supabase/server"
-import { getActiveShopId } from "@/lib/supabase/current-shop"
 import { revalidatePath } from "next/cache"
 import type { CashOperation, CashReasonPreset, CashSource } from "@/lib/types"
 import { computeBalances } from "@/lib/cash"
 import type { Sale } from "@/lib/types"
+import { getRequestCrmContext } from "@/lib/supabase/request-context"
 
 async function requireProfile() {
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  const { supabase, user, profile, shopId } = await getRequestCrmContext()
   if (!user) throw new Error("Unauthorized")
-  const { data: profile } = await supabase.from("profiles").select("*").eq("id", user.id).single()
   if (!profile || profile.status !== "approved") throw new Error("Not approved")
-  const fallbackShopId =
-    profile.role === "super_admin" ? profile.impersonated_shop_id ?? profile.shop_id : profile.shop_id
-  const shopId = await getActiveShopId(supabase, fallbackShopId ?? null)
   return { supabase, user, profile, shopId }
 }
 

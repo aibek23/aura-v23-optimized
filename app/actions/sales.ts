@@ -1,26 +1,18 @@
 "use server"
 
-import { createClient } from "@/lib/supabase/server"
-import { getActiveShopId } from "@/lib/supabase/current-shop"
 import { revalidatePath } from "next/cache"
 import type { Sale, SaleItem } from "@/lib/types"
 import { DEFAULT_RATES } from "@/lib/rates"
+import { getRequestCrmContext } from "@/lib/supabase/request-context"
 
 const DEFAULT_BONUS_RATE = 2 // % от прибыли, если не задано иное
 const MAX_PRICE_FACTOR = 10 // защита от опечатки: цена не может быть в 10 раз выше прайса
 
 async function requireProfile() {
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  const { supabase, user, profile, shopId } = await getRequestCrmContext()
   if (!user) throw new Error("Сессия истекла. Войдите в систему заново")
-  const { data: profile } = await supabase.from("profiles").select("*").eq("id", user.id).single()
   if (!profile) throw new Error("Профиль не найден")
   if (profile.status !== "approved") throw new Error("Ваш аккаунт ещё не подтверждён администратором")
-  const fallbackShopId =
-    profile.role === "super_admin" ? profile.impersonated_shop_id ?? profile.shop_id : profile.shop_id
-  const shopId = await getActiveShopId(supabase, fallbackShopId ?? null)
   if (!shopId) throw new Error("Ваш аккаунт не привязан к магазину")
   return { supabase, user, profile, shopId }
 }
@@ -31,7 +23,7 @@ export async function getSales(): Promise<Sale[]> {
     .from("sales")
     .select("*")
     .order("created_at", { ascending: false })
-    .range(0, 199)
+    .range(0, 49)
   if (error) throw error
   return (data as Sale[]) ?? []
 }

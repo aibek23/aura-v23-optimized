@@ -1,15 +1,27 @@
 "use client"
 
 import { useState } from "react"
+import dynamic from "next/dynamic"
 import { Camera, Search, X } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
-import { BarcodeScannerModal } from "@/components/BarcodeScannerModal"
 import { cn } from "@/lib/utils"
 import { parseProductSearchQuery } from "@/lib/product-search"
 import { parseQrCode } from "@/lib/qr-code"
 import { checkQrShop } from "@/app/actions/qr"
 import { toast } from "sonner"
+
+const BarcodeScannerModal = dynamic(
+  () => import("@/components/BarcodeScannerModal").then((mod) => mod.BarcodeScannerModal),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="p-6 text-center text-sm text-muted-foreground" role="status">
+        Подготавливаем камеру…
+      </div>
+    ),
+  },
+)
 
 /**
  * Из содержимого QR/штрихкода извлекает значение для строки поиска (SKU).

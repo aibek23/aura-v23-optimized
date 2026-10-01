@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState, useTransition } from "react"
+import { useEffect, useMemo, useState, useTransition } from "react"
 import type { Customer } from "@/lib/types"
 import { createClient_, updateClient, deleteClient, getClientPurchases, setClientBlacklist, type ClientPurchase } from "@/app/actions/clients"
 import { Button } from "@/components/ui/button"
@@ -42,8 +42,9 @@ import { toast } from "sonner"
 import { useRouter } from "next/navigation"
 import { cn } from "@/lib/utils"
 import {PurchaseHistoryPanel} from "@/components/screens/clients/Purchase-History-Panel"
+import { useDebouncedValue } from "@/hooks/use-debounced-value"
 
-const PAGE_SIZE = 20
+const PAGE_SIZE = 30
 
 const GENDER_OPTIONS = [
   { value: "female", label: "Женский" },
@@ -97,6 +98,7 @@ export function ClientsScreen({
 }) {
   const router = useRouter()
   const [query, setQuery] = useState("")
+  const debouncedQuery = useDebouncedValue(query)
   const [genderFilter, setGenderFilter] = useState<string>("all")
   const [blacklistFilter, setBlacklistFilter] = useState<"all" | "blacklisted">("all")
   const [page, setPage] = useState(1)
@@ -110,7 +112,7 @@ export function ClientsScreen({
   const [isPending, startTransition] = useTransition()
 
   const filtered = useMemo(() => {
-    const q = query.toLowerCase()
+    const q = debouncedQuery.toLowerCase()
     return clients.filter((c) => {
       const matchQuery =
         !q ||
@@ -123,7 +125,9 @@ export function ClientsScreen({
       const matchBlacklist = blacklistFilter === "all" || c.is_blacklisted === true
       return matchQuery && matchGender && matchBlacklist
     })
-  }, [clients, query, genderFilter, blacklistFilter])
+  }, [clients, debouncedQuery, genderFilter, blacklistFilter])
+
+  useEffect(() => setPage(1), [debouncedQuery, genderFilter, blacklistFilter])
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
   const currentPage = Math.min(page, totalPages)

@@ -1,8 +1,8 @@
 "use server"
 
-import { createClient } from "@/lib/supabase/server"
 import { revalidatePath } from "next/cache"
 import type { SubscriptionStatus } from "@/lib/types"
+import { getRequestCrmContext } from "@/lib/supabase/request-context"
 
 // ---------------------------------------------------------------------------
 // Типы (реэкспорт для обратной совместимости импортов)
@@ -36,14 +36,8 @@ export type UpdateShopBillingInput = {
 // ---------------------------------------------------------------------------
 
 async function requireSuperAdmin() {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const { supabase, user, profile } = await getRequestCrmContext()
   if (!user) throw new Error("Требуется вход в систему")
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("id, role, status, shop_id")
-    .eq("id", user.id)
-    .single()
   if (!profile || profile.status !== "approved" || profile.role !== "super_admin") {
     throw new Error("Доступ запрещён: требуется роль суперадмина")
   }
@@ -121,15 +115,8 @@ export async function impersonateShop(shopId: string | null): Promise<void> {
 // ---------------------------------------------------------------------------
 
 export async function getImpersonatedShop(): Promise<{ shop_id: string; shop_name: string | null } | null> {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return null
-
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("impersonated_shop_id, role")
-    .eq("id", user.id)
-    .single()
+  const { supabase, profile } = await getRequestCrmContext()
+  if (!profile) return null
 
   if (!profile?.impersonated_shop_id || profile.role !== "super_admin") return null
 

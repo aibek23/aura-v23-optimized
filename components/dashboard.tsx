@@ -1,19 +1,12 @@
 "use client"
 
-import { useState, useTransition, useEffect, useRef, useCallback } from "react"
+import { memo, useMemo, useState, useTransition, useEffect, useRef, useCallback } from "react"
+import dynamic from "next/dynamic"
 import type { Customer, Product, Profile, Role, Sale, SaleReturn } from "@/lib/types"
 import { AppHeader } from "@/components/app-header"
 import { AppNav, SCREEN_PATHS, type ScreenId } from "@/components/app-nav"
 import { KassaScreen } from "@/components/screens/kassa/index"
 import { CashPanel } from "@/components/screens/kassa/cash-panel"
-import { VitrinaScreen } from "@/components/screens/vitrina"
-import { SkladScreen } from "@/components/screens/sklad"
-import { OtchetyScreen } from "@/components/screens/otchety"
-import { KabinetScreen } from "@/components/screens/kabinet"
-import { ClientsScreen } from "@/components/screens/clients"
-import { SuppliersScreen } from "@/components/screens/suppliers"
-import { NotificationsPage } from "@/components/notifications"
-import { SuperAdminShopsScreen, ImpersonationBanner } from "@/components/screens/superadmin/shops-panel"
 import type { CabinetData } from "@/app/actions/cabinet"
 import type { MetalRate } from "@/lib/types"
 import type { CashData } from "@/app/actions/cash"
@@ -26,6 +19,26 @@ import { toast } from "sonner"
 import { useLocalCrm } from "@/lib/local-db/use-local-crm"
 import { runLogoutCleanup } from "@/lib/local-db/logout-cleanup"
 import { saveUserSession } from "@/lib/local-db/db"
+
+const SectionLoading = () => (
+  <div className="flex min-h-40 items-center justify-center text-sm text-muted-foreground" role="status">
+    Подготавливаем раздел…
+  </div>
+)
+
+// Load infrequently used screens only when opened. Keep the point-of-sale
+// screen in the first bundle; it is the primary workflow.
+const VitrinaScreen = memo(dynamic(() => import("@/components/screens/vitrina").then((mod) => mod.VitrinaScreen), { loading: SectionLoading }))
+const SkladScreen = memo(dynamic(() => import("@/components/screens/sklad").then((mod) => mod.SkladScreen), { loading: SectionLoading }))
+const OtchetyScreen = memo(dynamic(() => import("@/components/screens/otchety").then((mod) => mod.OtchetyScreen), { loading: SectionLoading }))
+const KabinetScreen = memo(dynamic(() => import("@/components/screens/kabinet").then((mod) => mod.KabinetScreen), { loading: SectionLoading }))
+const ClientsScreen = memo(dynamic(() => import("@/components/screens/clients").then((mod) => mod.ClientsScreen), { loading: SectionLoading }))
+const SuppliersScreen = memo(dynamic(() => import("@/components/screens/suppliers").then((mod) => mod.SuppliersScreen), { loading: SectionLoading }))
+const NotificationsPage = memo(dynamic(() => import("@/components/notifications").then((mod) => mod.NotificationsPage), { loading: SectionLoading }))
+const SuperAdminShopsScreen = memo(dynamic(() => import("@/components/screens/superadmin/shops-panel").then((mod) => mod.SuperAdminShopsScreen), { loading: SectionLoading }))
+const ImpersonationBanner = dynamic(() => import("@/components/screens/superadmin/shops-panel").then((mod) => mod.ImpersonationBanner), { loading: () => null })
+const MemoizedKassaScreen = memo(KassaScreen)
+const MemoizedCashPanel = memo(CashPanel)
 
 // ---------------------------------------------------------------------------
 // Двухэтапная защита от случайного выхода из CRM через кнопку «Назад»
@@ -187,8 +200,9 @@ export function Dashboard({
 
   const currentProducts = !isImpersonating && localCrm.isReady ? localCrm.products : products
   const currentSales = !isImpersonating && localCrm.isReady ? localCrm.sales : sales
-  const confirmedSales = currentSales.filter(
-    (sale) => sale.sync_status !== "pending" && sale.sync_status !== "rejected",
+  const confirmedSales = useMemo(
+    () => currentSales.filter((sale) => sale.sync_status !== "pending" && sale.sync_status !== "rejected"),
+    [currentSales],
   )
   const currentReturns = !isImpersonating && localCrm.isReady ? localCrm.returns : returns
   const currentCash = !isImpersonating && localCrm.isReady ? localCrm.cash : cash
@@ -361,7 +375,7 @@ export function Dashboard({
         ) : (
           <>
         {activeScreen === "kassa" && (
-          <KassaScreen
+          <MemoizedKassaScreen
             key={activeShopId ?? "no-shop"}
             profile={profile}
             products={currentProducts}
@@ -377,7 +391,7 @@ export function Dashboard({
           />
         )}
         {activeScreen === "money" && (
-          <CashPanel
+          <MemoizedCashPanel
             sales={currentSales}
             operations={currentCash.operations}
             presets={currentCash.presets}
@@ -416,6 +430,9 @@ export function Dashboard({
             returns={currentReturns}
             data={cabinet}
             email={email}
+            syncLocal={!isImpersonating}
+            historyShopId={activeShopId}
+            onActionUndone={localCrm.cacheRestoredAction}
           />
         )}
         {activeScreen === "otchety" && isAdmin && (

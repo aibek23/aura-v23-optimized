@@ -14,6 +14,9 @@ import { toast } from "sonner"
 import { useRouter } from "next/navigation"
 import { ProductSearch } from "@/components/product-search"
 import { filterProducts } from "@/lib/product-search"
+import { useDebouncedValue } from "@/hooks/use-debounced-value"
+
+const PAGE_SIZE = 40
 
 function galleryOf(p: Product): string[] {
   const list = (p.images ?? []).filter(Boolean)
@@ -39,11 +42,13 @@ export function VitrinaScreen({
   const [selected, setSelected] = useState<Product | null>(null)
   const [togglingId, setTogglingId] = useState<string | null>(null)
   const [query, setQuery] = useState("")
+  const debouncedQuery = useDebouncedValue(query)
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
   const [category, setCategory] = useState<string>("all")
   const [statusFilter, setStatusFilter] = useState<"all" | "sold">("all")
 
   const filtered = useMemo(() => {
-    const rows = filterProducts(products, query).filter(
+    const rows = filterProducts(products, debouncedQuery).filter(
       (p) =>
         // Покупатель не видит скрытые товары; администратор видит все
         (isAdmin || !p.is_hidden) &&
@@ -51,7 +56,9 @@ export function VitrinaScreen({
         (category === "all" || p.category === category),
     )
     return rows.slice().sort((a, b) => Number(isActive(b)) - Number(isActive(a)))
-  }, [products, query, category, statusFilter, isAdmin])
+  }, [products, debouncedQuery, category, statusFilter, isAdmin])
+
+  const visibleProducts = filtered.slice(0, visibleCount)
 
   const handleToggleVisibility = async (p: Product) => {
     setTogglingId(p.id)
@@ -76,16 +83,19 @@ export function VitrinaScreen({
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
           <ProductSearch
             value={query}
-            onChange={setQuery}
+            onChange={(value) => {
+              setQuery(value)
+              setVisibleCount(PAGE_SIZE)
+            }}
             placeholder="Название, артикул, 1,25 г, 12300 с, 11.09.2026..."
             className="sm:max-w-xl sm:flex-1"
           />
           <div className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1">
-            <CategoryChip active={category === "all"} onClick={() => setCategory("all")}>
+            <CategoryChip active={category === "all"} onClick={() => { setCategory("all"); setVisibleCount(PAGE_SIZE) }}>
               Все
             </CategoryChip>
             {CATEGORIES.map((c) => (
-              <CategoryChip key={c} active={category === c} onClick={() => setCategory(c)}>
+              <CategoryChip key={c} active={category === c} onClick={() => { setCategory(c); setVisibleCount(PAGE_SIZE) }}>
                 {c}
               </CategoryChip>
             ))}
@@ -96,7 +106,7 @@ export function VitrinaScreen({
             type="button"
             size="sm"
             variant={statusFilter === "all" ? "default" : "outline"}
-            onClick={() => setStatusFilter("all")}
+            onClick={() => { setStatusFilter("all"); setVisibleCount(PAGE_SIZE) }}
           >
             Все
           </Button>
@@ -104,7 +114,7 @@ export function VitrinaScreen({
             type="button"
             size="sm"
             variant={statusFilter === "sold" ? "destructive" : "outline"}
-            onClick={() => setStatusFilter("sold")}
+            onClick={() => { setStatusFilter("sold"); setVisibleCount(PAGE_SIZE) }}
           >
             Проданные
           </Button>
@@ -117,7 +127,7 @@ export function VitrinaScreen({
         </div>
       ) : (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-          {filtered.map((p) => {
+          {visibleProducts.map((p) => {
             const margin = p.sale_price - p.purchase_price
             const photos = galleryOf(p)
             const active = isActive(p)
@@ -146,6 +156,8 @@ export function VitrinaScreen({
                     <img
                       src={photos[0]}
                       alt={p.name}
+                      loading="lazy"
+                      decoding="async"
                       className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
                     />
                   ) : (
@@ -214,6 +226,21 @@ export function VitrinaScreen({
               </div>
             )
           })}
+        </div>
+      )}
+
+      {filtered.length > visibleCount && (
+        <div className="mt-6 flex flex-col items-center gap-2">
+          <p className="text-xs text-muted-foreground">
+            Показано {visibleCount.toLocaleString("ru")} из {filtered.length.toLocaleString("ru")}
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setVisibleCount((count) => Math.min(count + PAGE_SIZE, filtered.length))}
+          >
+            Показать ещё
+          </Button>
         </div>
       )}
 

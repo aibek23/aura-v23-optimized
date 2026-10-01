@@ -1,12 +1,13 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState, useTransition } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react"
+import dynamic from "next/dynamic"
 import type { MetalRate, Product, Profile, Role, Sale, SaleItem, Customer, SaleReturn } from "@/lib/types"
 import { formatSom } from "@/lib/format"
 import { buildRateMap, scrapRateOf } from "@/lib/rates"
 import { round, toNumber } from "@/hooks/useCalculator"
 import { checkout } from "@/app/actions/sales"
-import { SalesHistory } from "@/components/sales-history"
+import type { SalesHistoryProps } from "@/components/sales-history"
 import { CashPanel } from "@/components/screens/kassa/cash-panel"
 import type { CashData } from "@/app/actions/cash"
 import { Button } from "@/components/ui/button"
@@ -29,6 +30,56 @@ export interface ExtendedSaleItem extends SaleItem {
 const DEBOUNCE_MS = 350
 const MIN_QUERY = 3
 const LOCAL_STORAGE_KEY = "kassa_cart_state_v2"
+
+const LazySalesHistory = dynamic(
+  () => import("@/components/sales-history").then((mod) => mod.SalesHistory),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="min-h-48 rounded-xl border border-dashed border-border p-4 text-sm text-muted-foreground" role="status">
+        Подготавливаем историю продаж…
+      </div>
+    ),
+  },
+)
+
+function DeferredSalesHistory(props: SalesHistoryProps) {
+  const container = useRef<HTMLDivElement | null>(null)
+  const [shouldLoad, setShouldLoad] = useState(false)
+
+  useEffect(() => {
+    const element = container.current
+    if (!element) return
+    if (!("IntersectionObserver" in window)) {
+      setShouldLoad(true)
+      return
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setShouldLoad(true)
+          observer.disconnect()
+        }
+      },
+      { rootMargin: "600px" },
+    )
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [])
+
+  return (
+    <div ref={container} className="min-w-0">
+      {shouldLoad ? (
+        <LazySalesHistory {...props} />
+      ) : (
+        <div className="min-h-48 rounded-xl border border-dashed border-border p-4 text-sm text-muted-foreground">
+          История загрузится при прокрутке к этому разделу
+        </div>
+      )}
+    </div>
+  )
+}
 
 export function KassaScreen({
   products,
@@ -57,6 +108,7 @@ export function KassaScreen({
 }) {
   const router = useRouter()
   const [, startTransition] = useTransition()
+  const refreshAfterReturn = useCallback(() => startTransition(() => router.refresh()), [router, startTransition])
   const [query, setQuery] = useState("")
   const [debounced, setDebounced] = useState("")
   
@@ -394,9 +446,8 @@ export function KassaScreen({
     <div className="relative w-full max-w-full overflow-x-hidden pb-12">
       {/* Лоадер при оформлении продажи */}
       {submitting && <PageLoader />}
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_380px] xl:grid-cols-[1fr_420px] gap-6 items-start">
-        
-        <div className="flex flex-col gap-6 order-1 min-w-0 w-full">
+      <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[1fr_380px] xl:grid-cols-[1fr_420px]">
+        <div className="order-1 min-w-0 w-full lg:col-start-1 lg:row-start-1">
           <CashPanel
             sales={sales}
             operations={cash.operations}
@@ -404,6 +455,8 @@ export function KassaScreen({
             isAdmin={isAdmin}
             balanceOnly
           />
+        </div>
+        <div className="order-2 min-w-0 w-full lg:col-start-1 lg:row-start-2">
           <KassaSearch
             query={query}
             setQuery={setQuery}
@@ -419,21 +472,8 @@ export function KassaScreen({
             minQuery={MIN_QUERY}
             recent={recentProducts}
           />
-          <div className="hidden lg:block">
-             <SalesHistory
-               sales={sales}
-               returns={returns}
-               products={products}
-               canSeeProfit={canSeeProfit}
-               canReturn
-               allowOffline={!onlineOnly}
-               sellers={sellers}
-               onReturned={() => startTransition(() => router.refresh())}
-             />
-          </div>
         </div>
-        <div className="order-2 w-full lg:sticky lg:top-4 z-10 min-w-0">
-          
+        <div className="order-3 z-10 w-full min-w-0 lg:sticky lg:top-4 lg:col-start-2 lg:row-start-1 lg:row-span-3">
           <KassaCart
             cart={cart}
             isMobile={isMobile}
@@ -475,18 +515,17 @@ export function KassaScreen({
             handleReset={handleReset}
           />
         </div>
-
-        <div className="order-3 lg:hidden w-full min-w-0 mt-2">
-           <SalesHistory
-             sales={sales}
-             returns={returns}
-             products={products}
-             canSeeProfit={canSeeProfit}
-             canReturn
-             allowOffline={!onlineOnly}
-             sellers={sellers}
-             onReturned={() => startTransition(() => router.refresh())}
-           />
+        <div className="order-4 min-w-0 w-full lg:col-start-1 lg:row-start-3">
+          <DeferredSalesHistory
+            sales={sales}
+            returns={returns}
+            products={products}
+            canSeeProfit={canSeeProfit}
+            canReturn
+            allowOffline={!onlineOnly}
+            sellers={sellers}
+            onReturned={refreshAfterReturn}
+          />
         </div>
       </div>
 

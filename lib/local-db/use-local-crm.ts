@@ -17,6 +17,7 @@ import { createLocalId } from './id'
 import { persistOfflineSale } from './sale-record'
 import { toast } from 'sonner'
 import type { TableName } from './schema'
+import { commitUndoCache, undoRecordFingerprint, type UndoLocalBaseline } from './undo-cache'
 
 /**
  * Server props are a useful first seed, but may be an older offline page snapshot.
@@ -188,16 +189,48 @@ export function useLocalCrm(initialData: {
       setClients(refreshedClients)
     }
 
+    const refreshAfterInitialSync = async () => {
+      const [
+        refreshedProducts,
+        refreshedSales,
+        refreshedReturns,
+        refreshedCashOperations,
+        refreshedPresets,
+        refreshedClients,
+        refreshedRates,
+      ] = await Promise.all([
+        getShopRecords<Product>('products', shopId),
+        getShopRecords<Sale>('sales', shopId),
+        getShopRecords<SaleReturn>('sale_returns', shopId),
+        getShopRecords<CashOperation>('cash_operations', shopId),
+        getShopRecords<any>('cash_reason_presets', shopId),
+        getShopRecords<Customer>('customers', shopId),
+        getShopRecords<MetalRate>('metal_rates', shopId),
+      ])
+      if (!mounted) return
+      if (refreshedProducts.length > 0) setProducts(refreshedProducts)
+      setSales(refreshedSales)
+      setReturns(refreshedReturns)
+      setCash({ operations: refreshedCashOperations, presets: refreshedPresets })
+      setClients(refreshedClients)
+      setRates(refreshedRates)
+    }
+
     const onSaleSyncStateChanged = () => {
       void refreshAfterSaleSync()
+    }
+    const onInitialSyncComplete = () => {
+      void refreshAfterInitialSync()
     }
 
     window.addEventListener('aura:phase1_ready', onPhase1Ready)
     window.addEventListener('aura:sale_sync_state_changed', onSaleSyncStateChanged)
+    window.addEventListener('aura:initial_sync_complete', onInitialSyncComplete)
     return () => {
       mounted = false
       window.removeEventListener('aura:phase1_ready', onPhase1Ready)
       window.removeEventListener('aura:sale_sync_state_changed', onSaleSyncStateChanged)
+      window.removeEventListener('aura:initial_sync_complete', onInitialSyncComplete)
     }
   }, [shopId, enabled])
 
@@ -481,6 +514,59 @@ export function useLocalCrm(initialData: {
     })
   }, [])
 
+  // Apply a committed server undo to the local-first UI/cache without putting
+  // it into Outbox again (that would replay the edit and recreate the history).
+  const cacheRestoredAction = useCallback(
+    async (result: import('@/lib/action-history').UndoActionResult, baseline: UndoLocalBaseline): Promise<boolean> => {
+      if (!('record' in result)) {
+        // Отмена добавления товара / продажи / кассовой операции: мягкое удаление.
+        if (result.shop_id !== shopId) throw new Error('Магазин локального кэша изменился')
+        const removed = { ...result.removed_record, deleted_at: (result.removed_record as any).deleted_at ?? new Date().toISOString() }
+        const table = result.entity_type === 'sale' ? 'sales'
+          : result.entity_type === 'cash_operation' ? 'cash_operations' : 'products'
+        await bulkPut(table as any, [removed as any])
+        if (result.restored_products?.length) await bulkPut('products', result.restored_products as any)
+        if (result.removed_cash_operations?.length) await bulkPut('cash_operations', result.removed_cash_operations as any)
+        const [p, s, c] = await Promise.all([
+          getShopRecords<Product>('products', shopId),
+          getShopRecords<Sale>('sales', shopId),
+          getShopRecords<CashOperation>('cash_operations', shopId),
+        ])
+        setProducts(p)
+        setSales(s)
+        setCash((prev) => ({ ...prev, operations: c }))
+        return true
+      }
+      if (result.record.shop_id !== shopId) throw new Error('Магазин локального кэша изменился')
+      if (!await commitUndoCache(await getLocalDB(), result, baseline)) return false
+      if (result.entity_type === 'product') {
+        const product = result.record
+        setProducts((prev) => {
+          const current = prev.find((row) => row.id === product.id)
+          if (undoRecordFingerprint(current) !== baseline.fingerprint) return prev
+          if (product.deleted_at) return prev.filter((row) => row.id !== product.id)
+          return current
+            ? prev.map((row) => row.id === product.id ? {
+              ...product, shop_seq_id: product.shop_seq_id ?? row.shop_seq_id,
+            } : row)
+            : [product, ...prev]
+        })
+      } else {
+        const rate = result.record
+        setRates((prev) => {
+          const current = prev.find((row) => row.id === rate.id)
+          if (undoRecordFingerprint(current) !== baseline.fingerprint) return prev
+          return rate.deleted_at ? prev.filter((row) => row.id !== rate.id)
+          : current
+            ? prev.map((row) => row.id === rate.id ? rate : row)
+            : [rate, ...prev]
+        })
+      }
+      return true
+    },
+    [shopId],
+  )
+
   const localDeleteProduct = useCallback(
     async (productId: string) => {
       const nowIso = new Date().toISOString()
@@ -588,6 +674,7 @@ export function useLocalCrm(initialData: {
     localReturn,
     localSaveProduct,
     cacheSavedProduct,
+    cacheRestoredAction,
     localDeleteProduct,
     localAddCustomer,
     localAddCashOperation,
