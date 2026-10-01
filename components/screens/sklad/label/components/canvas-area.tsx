@@ -287,10 +287,14 @@ export const CanvasArea = memo(function CanvasArea({
   const sin = Math.sin(angle)
 
   // Центр этикетки проходит через ту же матрицу, что и Fabric и guides.
-  const bodyDX = offsetX + sizeDef.w_px / 2 - stageW / 2
-  const bodyDY = offsetY + sizeDef.h_px / 2 - stageH / 2
-  const bodyCenterX = stageCX + (bodyDX * cos - bodyDY * sin) * zoom
-  const bodyCenterY = stageCY + (bodyDX * sin + bodyDY * cos) * zoom
+  // Якорим фон по печатной области (корпусу бирки), а не по центру всей
+  // высоты SVG: у длинной бирки хвост выходит за пределы области печати.
+  const svgCenterOffsetX = svgLayout.svgW / 2 - (svgLayout.canvasX + sizeDef.w_px / 2)
+  const svgCenterOffsetY = svgLayout.svgH / 2 - (svgLayout.canvasY + sizeDef.h_px / 2)
+  const backgroundDX = offsetX + sizeDef.w_px / 2 + svgCenterOffsetX - stageW / 2
+  const backgroundDY = offsetY + sizeDef.h_px / 2 + svgCenterOffsetY - stageH / 2
+  const backgroundCenterX = stageCX + (backgroundDX * cos - backgroundDY * sin) * zoom
+  const backgroundCenterY = stageCY + (backgroundDX * sin + backgroundDY * cos) * zoom
 
   return (
     <div
@@ -311,8 +315,8 @@ export const CanvasArea = memo(function CanvasArea({
         aria-hidden
         style={{
           position: "absolute",
-          left: bodyCenterX,
-          top: bodyCenterY,
+          left: backgroundCenterX,
+          top: backgroundCenterY,
           // Смещаем SVG так, чтобы его трансформация вращения происходила точно вокруг центра холста Fabric
           transform: `translate(-50%, -50%) scale(${zoom})`,
           pointerEvents: "none",

@@ -47,6 +47,14 @@
   --font-sans: var(--font-geist-sans);
   --font-serif: var(--font-playfair);
   --font-mono: var(--font-geist-mono);
+  --text-xs: 0.875rem;
+  --text-xs--line-height: 1.4;
+  --text-sm: 1rem;
+  --text-sm--line-height: 1.45;
+  --text-base: 1.0625rem;
+  --text-base--line-height: 1.5;
+  --text-lg: 1.25rem;
+  --text-lg--line-height: 1.5;
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -138,7 +146,21 @@
   }
   body {
     @apply bg-background text-foreground;
+    font-size: 1rem;
+    line-height: 1.5;
   }
+}
+
+/* Keep labels and helper text readable without changing the whole layout. */
+:where(
+  [class~="text-[9px]"],
+  [class~="text-[10px]"],
+  [class~="text-[11px]"],
+  [class~="text-[12px]"],
+  [class~="text-[13px]"]
+) {
+  font-size: 0.875rem;
+  line-height: 1.4;
 }
 
 /* Скрытие скроллбара — для горизонтальной ленты форматов бирки */

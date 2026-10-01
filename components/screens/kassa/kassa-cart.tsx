@@ -151,6 +151,9 @@ export function KassaCart({
     return () => document.removeEventListener("mousedown", handler)
   }, [])
 
+  const cartCost = cart.reduce((sum, item) => sum + item.cost * item.quantity, 0)
+  const expectedProfit = total - cartCost
+
   // Обработчик ручного ввода "Своей цены" без потери точности при округлении
   const handleCustomPriceInputChange = (item: ExtendedSaleItem, rawVal: string) => {
     setCustomPriceInputs((prev) => ({ ...prev, [item.lineId]: rawVal }))
@@ -267,17 +270,19 @@ export function KassaCart({
                           {isScrap ? `· ${formatWeight(i.weight)} лома` : "· 1 ед."}
                         </span>
                       </div>
-                      {product && (
-                        <div className="mt-0.5 font-mono text-[10px] text-muted-foreground">
-                          закупка{isAdmin ? "" : " (с)"}:{" "}
+                      {(isAdmin || product) && (
+                        <div className="mt-1 flex flex-wrap items-baseline gap-x-1.5 font-mono text-sm font-semibold">
+                          <span className="font-sans font-medium text-muted-foreground">
+                            {isAdmin ? "Себестоимость:" : "Закупка:"}
+                          </span>
                           {formatSom(
                             isAdmin
-                              ? product.purchase_price
-                              : (product.purchase_price_visible ?? product.purchase_price),
+                              ? i.cost
+                              : (product?.purchase_price_visible ?? product?.purchase_price ?? i.cost),
                           )}
-                          {isAdmin && product.purchase_price_visible != null && (
-                            <span className="ml-1 opacity-70">
-                              · для продавца {formatSom(product.purchase_price_visible)}
+                          {isAdmin && product?.purchase_price_visible != null && (
+                            <span className="font-sans text-xs font-normal text-muted-foreground">
+                              Продавцу: {formatSom(product.purchase_price_visible)}
                             </span>
                           )}
                         </div>
@@ -546,7 +551,7 @@ export function KassaCart({
             )}
           </div>
 
-          <div className="space-y-1.5 rounded-xl bg-background/80 border border-border/50 p-3 text-xs shadow-inner">
+          <div className="space-y-2 rounded-xl bg-background/80 border border-border/50 p-3 text-sm shadow-inner">
             <div className="flex justify-between text-muted-foreground">
               <span>Подытог</span>
               <span className="font-mono">{formatSom(subtotal)}</span>
@@ -562,6 +567,23 @@ export function KassaCart({
                 <span>Бонусами</span>
                 <span className="font-mono">−{formatSom(bonusNum)}</span>
               </div>
+            )}
+            {isAdmin && cart.length > 0 && (
+              <>
+                <div className="flex justify-between gap-3 border-t border-border/60 pt-2 text-muted-foreground">
+                  <span>Себестоимость</span>
+                  <span className="font-mono font-semibold text-foreground">{formatSom(cartCost)}</span>
+                </div>
+                <div
+                  className={cn(
+                    "flex justify-between gap-3 font-semibold",
+                    expectedProfit >= 0 ? "text-emerald-700 dark:text-emerald-400" : "text-destructive",
+                  )}
+                >
+                  <span>Прибыль после скидок</span>
+                  <span className="font-mono">{formatSom(expectedProfit)}</span>
+                </div>
+              </>
             )}
             <div className="flex justify-between pt-2 text-sm font-bold border-t border-border/60">
               <span>Итого</span>
