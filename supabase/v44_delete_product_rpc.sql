@@ -33,11 +33,21 @@ BEGIN
   END IF;
 
   SELECT * INTO v_product FROM public.products
-   WHERE id = _product_id AND shop_id = v_shop_id
+   WHERE id = _product_id
    FOR UPDATE;
   IF NOT FOUND THEN
-    RAISE EXCEPTION 'Товар не найден';
+    -- Товара нет в облаке (уже удалён или создан офлайн и не синхронизирован):
+    -- считаем удаление успешным и пишем tombstone, чтобы он не "воскрес".
+    INSERT INTO public.product_deletion_tombstones (shop_id, product_id)
+    VALUES (v_shop_id, _product_id)
+    ON CONFLICT (shop_id, product_id) DO UPDATE SET deleted_at = EXCLUDED.deleted_at;
+    RETURN jsonb_build_object('id', _product_id, 'mode', 'missing');
   END IF;
+  IF v_product.shop_id IS DISTINCT FROM v_shop_id
+     AND v_product.shop_id IS DISTINCT FROM v_profile.shop_id THEN
+    RAISE EXCEPTION 'Товар принадлежит другому магазину' USING errcode = '42501';
+  END IF;
+  v_shop_id := v_product.shop_id;
 
   IF EXISTS (
     SELECT 1 FROM public.sales s

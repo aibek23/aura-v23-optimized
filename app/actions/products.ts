@@ -313,24 +313,36 @@ export async function updateProduct(
 }
 
 
-export async function deleteProduct(id: string) {
-  const { supabase } = await requireProfile()
-  // Удаление через RPC (v44): обходит ошибки прав/связей и пишет tombstone.
-  const { error } = await supabase.rpc("delete_product", { _product_id: id })
-  if (error) {
-    // Если миграция v44 ещё не применена — мягкое удаление как запасной вариант.
-    if (["PGRST202", "42883"].includes(error.code ?? "")) {
-      const now = new Date().toISOString()
-      const { error: softErr } = await supabase
-        .from("products")
-        .update({ deleted_at: now, updated_at: now })
-        .eq("id", id)
-      if (softErr) throw new Error(`Не удалось удалить товар: ${softErr.message}`)
-    } else {
-      throw new Error(`Не удалось удалить товар: ${error.message}`)
+export async function deleteProduct(
+  id: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  // Server Action никогда не бросает исключение: в production Next.js скрывает
+  // текст ошибки и клиент получает лишь "React error #441" / HTTP 500.
+  try {
+    const { supabase } = await requireProfile()
+    const { error } = await supabase.rpc("delete_product", { _product_id: id })
+    if (error) {
+      // Миграция v44 ещё не применена — мягкое удаление как запасной вариант.
+      if (["PGRST202", "42883"].includes(error.code ?? "")) {
+        const now = new Date().toISOString()
+        const { error: softErr } = await supabase
+          .from("products")
+          .update({ deleted_at: now, updated_at: now })
+          .eq("id", id)
+        if (softErr) return { ok: false, error: `Не удалось удалить товар: ${softErr.message}` }
+      } else if (!/не найден/i.test(error.message)) {
+        return { ok: false, error: `Не удалось удалить товар: ${error.message}` }
+      }
     }
+    try {
+      revalidatePath("/crm")
+      revalidatePath("/crm/inventory")
+    } catch {}
+    return { ok: true }
+  } catch (e) {
+    console.error("[deleteProduct]", e)
+    return { ok: false, error: e instanceof Error ? e.message : "Не удалось удалить товар" }
   }
-  revalidatePath("/crm")
 }
 
 export async function generateArticle(prefix: string) {

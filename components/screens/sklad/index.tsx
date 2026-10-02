@@ -223,7 +223,15 @@ export function SkladScreen({
   const onDelete = async (p: Product) => {
     if (!confirm(`Удалить «${p.name}»?`)) return
     try {
-      await deleteProduct(p.id)
+      const res = await deleteProduct(p.id)
+      if (!res.ok) throw new Error(res.error)
+      // Убираем товар и из локальной базы устройства, иначе он снова появится.
+      try {
+        const { bulkDelete } = await import("@/lib/local-db/db")
+        await bulkDelete("products", [p.id])
+      } catch (err) {
+        console.warn("[delete] local purge failed", err)
+      }
       toast.success("Товар удалён")
       startTransition(() => router.refresh())
     } catch (e) {
