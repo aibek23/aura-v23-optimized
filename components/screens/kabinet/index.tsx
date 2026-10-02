@@ -35,6 +35,7 @@ import { BadgeCheck, Coins, Gift, LogOut, RotateCcw, Trash2, UserCheck, UserX, U
 import { createClient } from "@/lib/supabase/client"
 import { runLogoutCleanup } from "@/lib/local-db/logout-cleanup"
 import { ActionHistory } from "./action-history"
+import { InstallAppButton } from "@/components/install-app-button"
 import type { UndoActionResult } from "@/lib/action-history"
 import type { UndoLocalBaseline } from "@/lib/local-db/undo-cache"
 
@@ -771,10 +772,11 @@ export function KabinetScreen({
       )}
 
       {/* Выход из системы */}
-      <div className="pt-2 pb-6">
+      <div className="flex gap-2 pt-2 pb-6">
+        <InstallAppButton className="shrink-0 gap-2" />
         <Button
           variant="outline"
-          className="w-full gap-2 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+          className="flex-1 gap-2 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
           onClick={() => setLogoutOpen(true)}
         >
           <LogOut className="h-4 w-4" />
