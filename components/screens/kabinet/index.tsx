@@ -20,6 +20,14 @@ import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { toast } from "sonner"
 import { useRouter } from "next/navigation"
 import { cn } from "@/lib/utils"
@@ -507,6 +515,33 @@ export function KabinetScreen({
   const router = useRouter()
   const [pending, start] = useTransition()
   const [defaultRate, setDefaultRate] = useState(String(data.defaultBonusRate))
+  const [logoutOpen, setLogoutOpen] = useState(false)
+  const [loggingOut, setLoggingOut] = useState(false)
+
+  const handleLogout = async () => {
+    if (loggingOut) return
+    setLoggingOut(true)
+    // Полная очистка локальных данных и кэшей перед выходом.
+    // Ограничиваем очистку по времени: если IndexedDB заблокирована
+    // другой вкладкой или service worker не отвечает, выход всё равно
+    // должен сработать.
+    try {
+      await Promise.race([
+        runLogoutCleanup(),
+        new Promise<void>((resolve) => setTimeout(resolve, 3000)),
+      ])
+    } catch {
+      // игнорируем — выход важнее очистки
+    }
+    try {
+      const supabase = createClient()
+      await supabase.auth.signOut()
+    } catch {
+      // игнорируем ошибку сети — всё равно перенаправляем
+    }
+    // Жёсткий переход: сбрасывает состояние приложения и обходит кэш router'а
+    window.location.assign("/auth/login")
+  }
 
   const isSuper = viewRole === "super_admin"
   const isAdmin = viewRole === "admin" || isSuper
@@ -740,22 +775,41 @@ export function KabinetScreen({
         <Button
           variant="outline"
           className="w-full gap-2 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
-          onClick={async () => {
-            // Полная очистка локальных данных и кэшей перед выходом
-            await runLogoutCleanup()
-            try {
-              const supabase = createClient()
-              await supabase.auth.signOut()
-            } catch {
-              // игнорируем ошибку сети — всё равно перенаправляем
-            }
-            router.push("/auth/login")
-          }}
+          onClick={() => setLogoutOpen(true)}
         >
           <LogOut className="h-4 w-4" />
           Выйти из системы
         </Button>
       </div>
+
+      <Dialog open={logoutOpen} onOpenChange={(open) => !loggingOut && setLogoutOpen(open)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Выйти из учётной записи?</DialogTitle>
+            <DialogDescription>
+              Локальные данные и кэш на этом устройстве будут очищены. Несинхронизированные изменения могут быть потеряны.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setLogoutOpen(false)}
+              disabled={loggingOut}
+            >
+              Отмена
+            </Button>
+            <Button
+              variant="destructive"
+              className="gap-2"
+              onClick={handleLogout}
+              disabled={loggingOut}
+            >
+              <LogOut className="h-4 w-4" />
+              {loggingOut ? "Выходим…" : "Выйти"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
