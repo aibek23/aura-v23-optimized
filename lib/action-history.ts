@@ -4,7 +4,7 @@ export const ACTION_HISTORY_LIMIT = 50
 
 export type ActionEntityType = "product" | "metal_rate" | "product_create" | "sale" | "cash_operation"
 
-/** Records whose undo removes (soft-deletes) a created row instead of restoring fields. */
+/** Records whose undo removes a created entity instead of restoring edited fields. */
 export const REMOVAL_ENTITY_TYPES = ["product_create", "sale", "cash_operation"] as const
 export type RemovalEntityType = (typeof REMOVAL_ENTITY_TYPES)[number]
 export function isRemovalEntity(type: ActionEntityType): type is RemovalEntityType {

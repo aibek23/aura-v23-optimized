@@ -7,6 +7,7 @@ import type { SupplierDebtData } from '@/app/actions/suppliers'
 import {
   getLocalDB,
   getShopRecords,
+  bulkDelete,
   bulkPut,
   searchLocalProducts,
   ensureShopScope,
@@ -521,12 +522,16 @@ export function useLocalCrm(initialData: {
   const cacheRestoredAction = useCallback(
     async (result: import('@/lib/action-history').UndoActionResult, baseline: UndoLocalBaseline): Promise<boolean> => {
       if (!('record' in result)) {
-        // Отмена добавления товара / продажи / кассовой операции: мягкое удаление.
+        // Добавленный товар удалён физически на сервере; журнал удаления очистит
+        // кеши других устройств. Продажи и кассовые операции остаются tombstone-ами.
         if (result.shop_id !== shopId) throw new Error('Магазин локального кэша изменился')
-        const removed = { ...result.removed_record, deleted_at: (result.removed_record as any).deleted_at ?? new Date().toISOString() }
-        const table = result.entity_type === 'sale' ? 'sales'
-          : result.entity_type === 'cash_operation' ? 'cash_operations' : 'products'
-        await bulkPut(table as any, [removed as any])
+        if (result.entity_type === 'product_create') {
+          await bulkDelete('products', [result.removed_id])
+        } else {
+          const removed = { ...result.removed_record, deleted_at: (result.removed_record as any).deleted_at ?? new Date().toISOString() }
+          const table = result.entity_type === 'sale' ? 'sales' : 'cash_operations'
+          await bulkPut(table, [removed as any])
+        }
         if (result.restored_products?.length) await bulkPut('products', result.restored_products as any)
         if (result.removed_cash_operations?.length) await bulkPut('cash_operations', result.removed_cash_operations as any)
         const [p, s, c] = await Promise.all([

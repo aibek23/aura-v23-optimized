@@ -1,6 +1,6 @@
 import { createClient as createSupabaseClient } from '@/lib/supabase/client'
 import { toast } from 'sonner'
-import { bulkPut, bulkDelete, getMeta, setMeta, ensureShopScope, localDatabaseWasRebuilt } from '../local-db/db'
+import { bulkPut, bulkDelete, getMeta, setMeta, getLocalDB, ensureShopScope, localDatabaseWasRebuilt } from '../local-db/db'
 import {
   getDueOutboxItems,
   getOutboxPendingCount,
@@ -243,6 +243,7 @@ class SyncEngine {
       const tables = [
         'products', 'sales', 'sale_returns', 'cash_operations', 'customers',
         'cash_reason_presets', 'metal_rates', 'supplier_debt_operations', 'shop_settings',
+        'product_deletion_tombstones',
       ]
       let channel = supabase.channel(`aura-sync-${shopId}`)
       for (const table of tables) {
@@ -346,6 +347,9 @@ class SyncEngine {
     ]
     for (const table of tables) {
       await setMeta(this.cursorKey(table), null)
+    }
+    if (this.activeShopId) {
+      await setMeta(`cursor:product_deletion_tombstones:${this.activeShopId}`, null)
     }
     await setMeta('initial_sync_done', false)
   }
@@ -454,6 +458,73 @@ class SyncEngine {
     return { fetched, deleted: deletedCount }
   }
 
+  /**
+   * Hard-deleted products no longer appear in the products delta. The durable
+   * tombstone journal carries those IDs to every device, including devices that
+   * were offline when the product was undone.
+   */
+  private async pullProductDeletionTombstones(): Promise<{ fetched: number; deleted: number }> {
+    const shopId = this.activeShopId
+    if (!shopId) return { fetched: 0, deleted: 0 }
+
+    const supabase = createSupabaseClient()
+    const cursorKey = `cursor:product_deletion_tombstones:${shopId}`
+    const persistedCursor = await getMeta<string | null>(cursorKey, null)
+    let pageCursor: { deleted_at: string; product_id: string } | null = null
+    let latestDeletedAt = persistedCursor
+    let fetched = 0
+    let deleted = 0
+    let page = 0
+    const batchSize = this.getBatchSize()
+
+    while (page < MAX_PAGES_PER_TABLE) {
+      page++
+      const rows = await withTimeout(async (signal) => {
+        let query = supabase
+          .from('product_deletion_tombstones')
+          .select('product_id, deleted_at')
+          .eq('shop_id', shopId)
+          .order('deleted_at', { ascending: true })
+          .order('product_id', { ascending: true })
+          .limit(batchSize)
+          .abortSignal(signal)
+
+        if (pageCursor) {
+          query = query.or(
+            `deleted_at.gt.${pageCursor.deleted_at},and(deleted_at.eq.${pageCursor.deleted_at},product_id.gt.${pageCursor.product_id})`
+          )
+        } else if (persistedCursor) {
+          // Re-read the boundary timestamp so concurrent rows with an identical
+          // timestamp cannot be skipped. Repeated local deletes are harmless.
+          query = query.gte('deleted_at', persistedCursor)
+        }
+
+        const res = await query
+        if (res.error) throw res.error
+        return res.data ?? []
+      }, 'product_deletion_tombstones')
+
+      if (rows.length === 0) break
+      const productIds = rows.map((row: any) => row.product_id).filter(Boolean)
+      if (productIds.length > 0) {
+        const db = await getLocalDB()
+        const localRows = await Promise.all(productIds.map((id: string) => db.get('products', id)))
+        await bulkDelete('products', productIds)
+        deleted += localRows.filter(Boolean).length
+      }
+      fetched += rows.length
+
+      const last = rows[rows.length - 1] as { deleted_at: string; product_id: string }
+      pageCursor = { deleted_at: last.deleted_at, product_id: last.product_id }
+      latestDeletedAt = last.deleted_at
+      await setMeta(cursorKey, latestDeletedAt)
+
+      if (rows.length < batchSize) break
+    }
+
+    return { fetched, deleted }
+  }
+
   // Stage 1: minimum needed to start working (shop, rates, in-stock products)
   // Stage 2: customers, presets, cash operations
   // Stage 3: sales and returns history
@@ -495,6 +566,7 @@ class SyncEngine {
             updateSyncState({ currentTask: `Загрузка товаров: ${count}...`, processedCount: count }),
         }
       )
+      await this.pullProductDeletionTombstones()
 
       if (this.activeShopId !== shopId) return // shop switched mid-sync
 
@@ -603,6 +675,10 @@ class SyncEngine {
         if (this.activeShopId !== shopId || this.stopped) return
         const r = await this.pullTable({ table }, { incremental: true })
         changed += r.fetched + r.deleted
+        if (table === 'products') {
+          const tombstones = await this.pullProductDeletionTombstones()
+          changed += tombstones.deleted
+        }
       }
 
       const settingsRes = await withTimeout(

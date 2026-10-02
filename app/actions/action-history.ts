@@ -31,7 +31,7 @@ async function requireContext() {
 function historyError(error: { code?: string; message: string }): Error {
   if (["42P01", "42883", "PGRST202", "PGRST205"].includes(error.code ?? "")) {
     return new Error(
-      "История ещё не настроена. Выполните supabase/v39_action_history.sql и v40_undo_create_sale_cash.sql в SQL Editor Supabase и обновите страницу.",
+      "История ещё не настроена. Выполните миграции v39_action_history.sql, v40_undo_create_sale_cash.sql и v43_hard_delete_product_undo.sql в SQL Editor Supabase и обновите страницу.",
     )
   }
   return new Error(error.message)
