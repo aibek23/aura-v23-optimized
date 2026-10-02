@@ -228,7 +228,7 @@ export function SkladScreen({
       startTransition(() => router.refresh())
     } catch (e) {
       console.error("[sklad] delete error:", e)
-      toast.error("Не удалось удалить")
+      toast.error(e instanceof Error ? e.message : "Не удалось удалить")
     }
   }
 

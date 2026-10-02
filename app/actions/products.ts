@@ -315,8 +315,21 @@ export async function updateProduct(
 
 export async function deleteProduct(id: string) {
   const { supabase } = await requireProfile()
-  const { error } = await supabase.from("products").delete().eq("id", id)
-  if (error) throw new Error(`Не удалось удалить товар: ${error.message}`)
+  // Удаление через RPC (v44): обходит ошибки прав/связей и пишет tombstone.
+  const { error } = await supabase.rpc("delete_product", { _product_id: id })
+  if (error) {
+    // Если миграция v44 ещё не применена — мягкое удаление как запасной вариант.
+    if (["PGRST202", "42883"].includes(error.code ?? "")) {
+      const now = new Date().toISOString()
+      const { error: softErr } = await supabase
+        .from("products")
+        .update({ deleted_at: now, updated_at: now })
+        .eq("id", id)
+      if (softErr) throw new Error(`Не удалось удалить товар: ${softErr.message}`)
+    } else {
+      throw new Error(`Не удалось удалить товар: ${error.message}`)
+    }
+  }
   revalidatePath("/crm")
 }
 

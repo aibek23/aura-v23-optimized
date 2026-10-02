@@ -39,8 +39,8 @@ export function SupplierProducts({
       await deleteProduct(p.id)
       toast.success("Товар удалён")
       startTransition(() => router.refresh())
-    } catch {
-      toast.error("Не удалось удалить")
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Не удалось удалить")
     }
   }
 
