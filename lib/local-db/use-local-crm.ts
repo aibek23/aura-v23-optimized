@@ -226,7 +226,9 @@ export function useLocalCrm(initialData: {
     window.addEventListener('aura:phase1_ready', onPhase1Ready)
     window.addEventListener('aura:sale_sync_state_changed', onSaleSyncStateChanged)
     window.addEventListener('aura:initial_sync_complete', onInitialSyncComplete)
+    window.addEventListener('aura:data_changed', onInitialSyncComplete)
     return () => {
+      window.removeEventListener('aura:data_changed', onInitialSyncComplete)
       mounted = false
       window.removeEventListener('aura:phase1_ready', onPhase1Ready)
       window.removeEventListener('aura:sale_sync_state_changed', onSaleSyncStateChanged)

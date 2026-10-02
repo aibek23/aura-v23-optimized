@@ -22,7 +22,7 @@ interface CursorInfo {
 const REQUEST_TIMEOUT_MS = 20000
 /** Whole-pull safety valve, so pagination cannot loop forever. */
 const MAX_PAGES_PER_TABLE = 500
-const PERIODIC_SYNC_MS = 45000
+const PERIODIC_SYNC_MS = 15000
 /** Retry schedule for failed pulls (exponential with jitter). */
 const PULL_BACKOFF_BASE_MS = 5000
 const PULL_BACKOFF_MAX_MS = 5 * 60 * 1000
@@ -118,6 +118,9 @@ class SyncEngine {
   private pullFailures = 0
   private stopped = false
   private listenersBound = false
+  private realtimeChannel: any = null
+  private realtimeDebounce: any = null
+  private pendingRealtime = false
 
   constructor() {
     this.bindListeners()
@@ -173,6 +176,7 @@ class SyncEngine {
 
     this.startPeriodicSync()
     this.startStalenessWatch()
+    this.startRealtime(shopId)
     this.flushOutbox()
 
     // A rebuilt IndexedDB cannot be trusted as a baseline → do a full pull instead
@@ -192,6 +196,7 @@ class SyncEngine {
   public stop() {
     this.stopped = true
     this.activeShopId = null
+    this.stopRealtime()
     if (this.syncTimer) clearInterval(this.syncTimer)
     if (this.outboxTimer) clearTimeout(this.outboxTimer)
     if (this.pullRetryTimer) clearTimeout(this.pullRetryTimer)
@@ -228,6 +233,54 @@ class SyncEngine {
     }
     this.runDeltaSync()
     this.flushOutbox()
+  }
+
+  /** Instant updates: any change in the cloud for this shop triggers a delta pull. */
+  private startRealtime(shopId: string) {
+    this.stopRealtime()
+    try {
+      const supabase = createSupabaseClient()
+      const tables = [
+        'products', 'sales', 'sale_returns', 'cash_operations', 'customers',
+        'cash_reason_presets', 'metal_rates', 'supplier_debt_operations', 'shop_settings',
+      ]
+      let channel = supabase.channel(`aura-sync-${shopId}`)
+      for (const table of tables) {
+        channel = channel.on(
+          'postgres_changes' as any,
+          { event: '*', schema: 'public', table, filter: `shop_id=eq.${shopId}` },
+          () => this.onRealtimeChange()
+        )
+      }
+      this.realtimeChannel = channel.subscribe((status: string) => {
+        if (status === 'SUBSCRIBED') this.triggerSync()
+      })
+    } catch (err) {
+      console.warn('[Sync] Realtime unavailable, falling back to polling:', err)
+    }
+  }
+
+  private stopRealtime() {
+    if (this.realtimeDebounce) clearTimeout(this.realtimeDebounce)
+    this.realtimeDebounce = null
+    if (this.realtimeChannel) {
+      try {
+        createSupabaseClient().removeChannel(this.realtimeChannel)
+      } catch {}
+      this.realtimeChannel = null
+    }
+  }
+
+  private onRealtimeChange() {
+    if (this.realtimeDebounce) clearTimeout(this.realtimeDebounce)
+    this.realtimeDebounce = setTimeout(() => {
+      if (this.stopped || !this.isOnline) return
+      if (this.isRunning) {
+        this.pendingRealtime = true
+        return
+      }
+      this.runDeltaSync()
+    }, 400)
   }
 
   private startPeriodicSync() {
@@ -545,9 +598,11 @@ class SyncEngine {
 
       // Sequential on purpose: keeps request count predictable on weak connections
       // and lets every table persist its own cursor before the next one starts.
+      let changed = 0
       for (const table of tables) {
         if (this.activeShopId !== shopId || this.stopped) return
-        await this.pullTable({ table }, { incremental: true })
+        const r = await this.pullTable({ table }, { incremental: true })
+        changed += r.fetched + r.deleted
       }
 
       const settingsRes = await withTimeout(
@@ -557,6 +612,12 @@ class SyncEngine {
       )
       const settings = unwrap(settingsRes as any, 'shop_settings')
       if (settings) await bulkPut('shop_settings', [settings])
+
+      // Tell mounted screens to re-read local data — without this, new rows landed
+      // in IndexedDB but the UI only showed them after a full page reload.
+      if (changed > 0 && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('aura:data_changed'))
+      }
 
       this.pullFailures = 0
       this.notifyServiceWorker({ type: 'AURA_CLOUD_REACHABLE' })
@@ -577,6 +638,10 @@ class SyncEngine {
       this.handlePullError(err, 'Ошибка обновления')
     } finally {
       this.isRunning = false
+      if (this.pendingRealtime && !this.stopped) {
+        this.pendingRealtime = false
+        setTimeout(() => this.runDeltaSync(), 100)
+      }
     }
   }
 
