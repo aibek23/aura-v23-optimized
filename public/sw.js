@@ -28,7 +28,7 @@
  * - On logout the page posts AURA_LOGOUT_CLEANUP and every cache is dropped.
  */
 
-const VERSION = 'v6'
+const VERSION = 'v7'
 const SHELL_CACHE = `aura-crm-shell-${VERSION}`
 const STATIC_CACHE = `aura-crm-static-${VERSION}`
 const STATE_CACHE = `aura-crm-state-${VERSION}`

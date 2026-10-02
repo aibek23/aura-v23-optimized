@@ -81,7 +81,7 @@ export default function LoginPage() {
       console.error("[v0] Login error:", error)
       // If offline or network error, check if we can restore offline session
       if (!navigator.onLine && savedSession) {
-        router.push("/crm/pos")
+        window.location.assign("/crm/pos")
         return
       }
       setError(loginErrorMessage(error))
@@ -90,8 +90,50 @@ export default function LoginPage() {
     }
   }
 
-  const handleContinueOffline = () => {
-    router.push("/crm/pos")
+  const [isResuming, setIsResuming] = useState(false)
+
+  // Вход по сохранённой сессии: работает и без сети, и с сетью.
+  const handleContinueOffline = async () => {
+    setError(null)
+    if (!navigator.onLine) {
+      // Полная навигация — service worker отдаст закэшированную оболочку CRM.
+      window.location.assign("/crm/pos")
+      return
+    }
+    setIsResuming(true)
+    try {
+      const supabase = createClient()
+      const { data: current } = await supabase.auth.getSession()
+      if (!current.session) {
+        const saved = savedSession?.session
+        if (!saved?.refresh_token) throw new Error("no_tokens")
+        const { data, error } = await supabase.auth.setSession({
+          access_token: saved.access_token,
+          refresh_token: saved.refresh_token,
+        })
+        if (error || !data.session) throw error || new Error("restore_failed")
+        if (savedSession) {
+          await saveUserSession({
+            userId: savedSession.userId,
+            email: savedSession.email,
+            profile: savedSession.profile,
+            shopId: savedSession.shopId,
+            session: data.session,
+          })
+        }
+      }
+      window.location.assign("/crm/pos")
+    } catch (err) {
+      // Сеть «есть», но облако недоступно — пробуем открыть локальную копию.
+      const msg = String((err as Error)?.message || "")
+      if (/fetch|network|Failed/i.test(msg)) {
+        window.location.assign("/crm/pos")
+        return
+      }
+      setError("Сохранённая сессия истекла. Войдите по email и паролю.")
+    } finally {
+      setIsResuming(false)
+    }
   }
 
   return (
@@ -111,9 +153,10 @@ export default function LoginPage() {
             variant="outline"
             size="sm"
             onClick={handleContinueOffline}
+            disabled={isResuming}
             className="mt-3 w-full border-amber-400 bg-amber-100/70 text-amber-950 hover:bg-amber-200/80 dark:border-amber-700 dark:bg-amber-900/50 dark:text-amber-100 font-medium"
           >
-            Войти в CRM без сети
+            {isResuming ? "Вход..." : isOffline ? "Войти в CRM без сети" : "Продолжить как сохранённый сотрудник"}
           </Button>
         </div>
       )}

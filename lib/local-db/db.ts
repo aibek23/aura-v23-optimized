@@ -67,8 +67,13 @@ function readLegacyOfflineSession(): SavedUserSession | null {
 /** Keep the offline profile in the same IndexedDB used by the local CRM. */
 export async function saveUserSession(data: Omit<SavedUserSession, 'id' | 'updatedAt'>): Promise<void> {
   const db = await getLocalDB()
+  const prev = (await db.get('user_session', CURRENT_USER_SESSION_ID)) as SavedUserSession | undefined
+  // Не затираем сохранённые токены, если вызвали без session (например, из PwaProvider).
+  const keepPrev = prev && prev.userId === data.userId
   await db.put('user_session', {
+    ...(keepPrev ? prev : {}),
     ...data,
+    session: data.session ?? (keepPrev ? prev?.session : undefined),
     id: CURRENT_USER_SESSION_ID,
     updatedAt: new Date().toISOString(),
   })

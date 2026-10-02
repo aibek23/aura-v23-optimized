@@ -2,8 +2,10 @@
 
 import { useEffect } from "react"
 import type { Profile } from "@/lib/types"
-import { saveUserSession } from "@/lib/local-db/db"
+import { getSavedUserSession, saveUserSession } from "@/lib/local-db/db"
 import { updateSyncState } from "@/lib/local-db/sync-store"
+import { toast } from "sonner"
+import { createClient } from "@/lib/supabase/client"
 
 export function PwaProvider({ profile }: { profile?: Profile | null }) {
   useEffect(() => {
@@ -41,6 +43,18 @@ export function PwaProvider({ profile }: { profile?: Profile | null }) {
         .then((reg) => {
           reg.update().catch(() => {})
 
+          // Проверяем новую версию регулярно и при возврате во вкладку/появлении сети.
+          const check = () => {
+            if (navigator.onLine) reg.update().catch(() => {})
+          }
+          const timer = window.setInterval(check, 5 * 60 * 1000)
+          const onVis = () => {
+            if (document.visibilityState === "visible") check()
+          }
+          document.addEventListener("visibilitychange", onVis)
+          window.addEventListener("online", check)
+          void timer
+
           // Новая версия готова — активируем её без ожидания закрытия всех вкладок.
           reg.addEventListener("updatefound", () => {
             const installing = reg.installing
@@ -55,6 +69,19 @@ export function PwaProvider({ profile }: { profile?: Profile | null }) {
         .catch((err) => {
           console.warn("ServiceWorker registration failed:", err)
         })
+    }
+
+    // Новая версия взяла управление — перезагружаем страницу один раз.
+    let reloading = false
+    const hadController = "serviceWorker" in navigator && !!navigator.serviceWorker.controller
+    const onControllerChange = () => {
+      if (reloading || !hadController) return
+      reloading = true
+      toast.info("Загружена новая версия Aura CRM — обновляем…")
+      setTimeout(() => window.location.reload(), 800)
+    }
+    if (!isDev && "serviceWorker" in navigator) {
+      navigator.serviceWorker.addEventListener("controllerchange", onControllerChange)
     }
 
     // Приложение могло открыться из офлайн-кэша: показываем, что данные локальные.
@@ -79,8 +106,35 @@ export function PwaProvider({ profile }: { profile?: Profile | null }) {
     return () => {
       if ("serviceWorker" in navigator) {
         navigator.serviceWorker.removeEventListener("message", onSwMessage)
+        navigator.serviceWorker.removeEventListener("controllerchange", onControllerChange)
       }
     }
+  }, [])
+
+  // Держим сохранённые токены свежими, чтобы вход по локальной сессии работал и онлайн.
+  useEffect(() => {
+    let unsub: (() => void) | undefined
+    try {
+      const supabase = createClient()
+      const { data } = supabase.auth.onAuthStateChange((event, session) => {
+        if (!session?.user) return
+        if (event !== "SIGNED_IN" && event !== "TOKEN_REFRESHED" && event !== "INITIAL_SESSION") return
+        getSavedUserSession()
+          .then((saved) => {
+            if (!saved || saved.userId !== session.user.id) return
+            return saveUserSession({
+              userId: saved.userId,
+              email: saved.email,
+              profile: saved.profile,
+              shopId: saved.shopId,
+              session,
+            })
+          })
+          .catch(() => {})
+      })
+      unsub = () => data.subscription.unsubscribe()
+    } catch {}
+    return () => unsub?.()
   }, [])
 
   useEffect(() => {
