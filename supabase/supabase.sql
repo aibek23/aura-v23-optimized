@@ -319,29 +319,46 @@ CREATE OR REPLACE FUNCTION public.handle_new_user() RETURNS trigger
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-declare
+DECLARE
   v_shop_name text := nullif(new.raw_user_meta_data ->> 'shop_name', '');
   v_shop_id   uuid;
-begin
-  select shop_id into v_shop_id
-  from public.profiles
-  where shop_name is not distinct from v_shop_name and shop_id is not null
-  limit 1;
+BEGIN
+  -- Reuse the shop when the registration name matches an existing shop;
+  -- otherwise create an id for the new shop.
+  SELECT p.shop_id INTO v_shop_id
+  FROM public.profiles p
+  WHERE p.shop_name IS NOT DISTINCT FROM v_shop_name
+    AND p.shop_id IS NOT NULL
+  ORDER BY p.created_at ASC
+  LIMIT 1;
 
-  insert into public.profiles (id, full_name, shop_name, shop_id, phone, requested_role, email, status)
-  values (
+  IF v_shop_id IS NULL THEN
+    v_shop_id := gen_random_uuid();
+  END IF;
+
+  INSERT INTO public.profiles (
+    id, full_name, shop_name, shop_id, phone, requested_role, email, status
+  )
+  VALUES (
     new.id,
     new.raw_user_meta_data ->> 'full_name',
     v_shop_name,
-    coalesce(v_shop_id, gen_random_uuid()),
+    v_shop_id,
     new.raw_user_meta_data ->> 'phone',
     new.raw_user_meta_data ->> 'requested_role',
     new.email,
     'pending'
   )
-  on conflict (id) do nothing;
-  return new;
-end $$;
+  ON CONFLICT (id) DO NOTHING;
+
+  -- Keep shop_settings in sync even when the profile joined an existing shop.
+  INSERT INTO public.shop_settings AS existing (shop_id, shop_name)
+  VALUES (v_shop_id, v_shop_name)
+  ON CONFLICT (shop_id) DO UPDATE
+    SET shop_name = COALESCE(existing.shop_name, EXCLUDED.shop_name);
+
+  RETURN new;
+END $$;
 
 -- v20: increment_customer_stats работает с INTEGER purchase_count
 CREATE OR REPLACE FUNCTION public.increment_customer_stats(_customer_id uuid, _amount numeric) RETURNS void

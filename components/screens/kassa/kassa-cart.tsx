@@ -170,6 +170,7 @@ export function KassaCart({
     if (isNaN(customPriceVal) || customPriceVal < 0) return
 
     const basePrice = item.price
+
     // Точная фиксация скидки в сомах (округление до целого сома)
     const discountSom = Math.max(0, Math.round(basePrice - customPriceVal))
     // Процент рассчитывается без грубого округления до 2 знаков, исключая накопительную ошибку
@@ -218,7 +219,7 @@ export function KassaCart({
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
             <div>
               <span>⚠️ Товар продаётся в убыток! Убыток: −{formatSom(lossAmount)}</span>
-              <span className="mt-0.5 block text-[10px] font-normal opacity-90">{lossItems.map((i) => i.name).join(", ")}</span>
+              <span className="mt-0.5 block text-[10px] font-normal opacity-90">{lossItems.map((i) => i.id).join(", ")}</span>
             </div>
           </div>
         )}
@@ -236,7 +237,7 @@ export function KassaCart({
               const effectiveUnitPrice = Math.max(0, i.price - discountVal)
               const itemLoss = !isScrap && effectiveUnitPrice < i.cost
               
-              const product = productsMap.get(i.product_id!)
+              const product = productsMap.get(i.product_id!)  
               
               const marketRate = isScrap ? scrapRateOf(i.metal ?? "") : 0
               const offMarket = isScrap && marketRate > 0 && Math.abs((i.price_per_gram ?? 0) - marketRate) / marketRate > 0.15
@@ -274,7 +275,13 @@ export function KassaCart({
                           {formatSom(i.cost)}
                         </div>
                       )}
-                      {itemLoss && (
+                         {/* <div className="mt-1 flex flex-wrap items-baseline gap-x-1.5 font-mono text-sm font-semibold">
+                          <span className="font-sans font-medium text-muted-foreground">
+                             Цена продажи: {formatSom(i.purchase_price_visible)} :
+                          </span>
+                         
+                        </div> */}Ц
+                      {isAdmin && itemLoss && (
                         <div className="font-mono text-[10px] font-semibold text-destructive mt-0.5">
                           убыток −{formatSom(i.cost - effectiveUnitPrice)}
                         </div>

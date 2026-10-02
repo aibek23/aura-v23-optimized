@@ -1,7 +1,7 @@
 "use client"
 
 import type { SaleReturn } from "@/lib/types"
-import { formatDateTime, formatSom, formatWeight } from "@/lib/format"
+import { formatDateTime, formatSom, formatWeight,formatDateTimeTotal } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { AlertTriangle, RotateCcw, Undo2 } from "lucide-react"
@@ -97,15 +97,16 @@ export function SaleUnitCard({
           </div>
 
           <div className="text-xs text-muted-foreground">
-            {row.metal ?? "—"} · {formatWeight(row.weight)} · 1 шт.
+            {row.metal ?? "—"} · {formatWeight(row.weight)}
           </div>
           <div className="text-xs text-muted-foreground">
-            {formatDateTime(row.createdAt)} · продавец: {row.sellerName ?? "—"}
+            {formatDateTimeTotal(row.createdAt)} · продавец: {row.sellerName ?? "—"}
             {row.customerName ? ` · клиент: ${row.customerName}` : ""}
             {row.customerPhone ? ` (${row.customerPhone})` : ""}
           </div>
           <div className="mt-1 font-mono text-[11px] text-muted-foreground/80">
-            ID: {row.unitId} · чек: {row.saleId.slice(0, 8)} · позиция #{row.position}
+          чек: {row.saleId.slice(0, 8)}
+            {/* ID: {row.unitId} · чек: {row.saleId.slice(0, 8)} · позиция #{row.position} */}
           </div>
 
           {isReturned && refund && (

@@ -123,21 +123,22 @@ function ProductRow({
           <span className="shrink-0">{formatDate(p.created_at)}</span>
         </div>
       </div>
-
+  {<div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground bg-muted/30 px-2 py-1 rounded-md">
       {isAdmin && (
-        <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground bg-muted/30 px-2 py-1 rounded-md">
           <div>
             Себестоимость: <strong className="font-mono text-foreground">{formatSom(p.purchase_price)}</strong>
             {purchasePerGram != null && <span className="font-mono ml-1">({formatSom(purchasePerGram)}/г)</span>}
           </div>
+      )}
+                   <div>
           {p.purchase_price_visible != null && (
             <div>
-              Продавцу: <strong className="font-mono text-foreground">{formatSom(p.purchase_price_visible)}</strong>
+              Цена продажи: <strong className="font-mono text-foreground">{formatSom(p.purchase_price_visible)}</strong>
               {sellerPerGram != null && <span className="font-mono ml-1">({formatSom(sellerPerGram)}/г)</span>}
             </div>
-          )}
-        </div>
-      )}
+            
+          )}</div>
+    </div>}
     </div>
   )
 }
