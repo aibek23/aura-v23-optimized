@@ -238,6 +238,11 @@ export function KassaCart({
               const itemLoss = !isScrap && effectiveUnitPrice < i.cost
               
               const product = productsMap.get(i.product_id!)  
+              const sellerPerGram = product?.price_per_gram_purchase_visible ?? (
+                product && product.weight > 0 && product.purchase_price_visible != null
+                  ? product.purchase_price_visible / product.weight
+                  : null
+              )
               
               const marketRate = isScrap ? scrapRateOf(i.metal ?? "") : 0
               const offMarket = isScrap && marketRate > 0 && Math.abs((i.price_per_gram ?? 0) - marketRate) / marketRate > 0.15
@@ -275,12 +280,21 @@ export function KassaCart({
                           {formatSom(i.cost)}
                         </div>
                       )}
-                         {/* <div className="mt-1 flex flex-wrap items-baseline gap-x-1.5 font-mono text-sm font-semibold">
+                      {product?.purchase_price_visible != null && (
+                        <div className="mt-1 flex flex-wrap items-baseline gap-x-1.5 font-mono text-sm">
                           <span className="font-sans font-medium text-muted-foreground">
-                             Цена продажи: {formatSom(i.purchase_price_visible)} :
+                            Цена продажи:
                           </span>
-                         
-                        </div> */}Ц
+                          <strong className="font-mono text-foreground">
+                            {formatSom(product.purchase_price_visible)}
+                          </strong>
+                          {sellerPerGram != null && (
+                            <span className="font-mono ml-1">
+                              ({formatSom(sellerPerGram)}/г)
+                            </span>
+                          )}
+                        </div>
+                      )}
                       {isAdmin && itemLoss && (
                         <div className="font-mono text-[10px] font-semibold text-destructive mt-0.5">
                           убыток −{formatSom(i.cost - effectiveUnitPrice)}
