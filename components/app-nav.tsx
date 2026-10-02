@@ -6,7 +6,7 @@ import { roleLabel } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { createClient } from "@/lib/supabase/client"
 import { useRouter } from "next/navigation"
-
+import { AuraMark } from "@/components/brand/aura-mark"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import {
@@ -204,9 +204,9 @@ export function AppNav({
               collapsed ? "p-1.5" : "gap-2 px-1.5 py-1"
             )}
           >
-            <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10">
-              <span className="font-serif text-xl text-primary">A</span>
-            </span>
+                   <div className="flex min-w-0 shrink-0 items-center gap-2 rounded-lg bg-primary/15">
+          <AuraMark className="h-7 w-7 shrink-0" />
+        </div>
             <span className={cn("font-serif text-lg tracking-tight", collapsed && "lg:hidden")}>
               Aura CRM
             </span>
