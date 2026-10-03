@@ -43,17 +43,8 @@ export function PwaProvider({ profile }: { profile?: Profile | null }) {
         .then((reg) => {
           reg.update().catch(() => {})
 
-          // Проверяем новую версию регулярно и при возврате во вкладку/появлении сети.
-          const check = () => {
-            if (navigator.onLine) reg.update().catch(() => {})
-          }
-          const timer = window.setInterval(check, 5 * 60 * 1000)
-          const onVis = () => {
-            if (document.visibilityState === "visible") check()
-          }
-          document.addEventListener("visibilitychange", onVis)
-          window.addEventListener("online", check)
-          void timer
+          // Автоматическая проверка каждые 5 минут отключена — версия проверяется
+          // только при открытии приложения.
 
           // Новая версия готова — активируем её без ожидания закрытия всех вкладок.
           reg.addEventListener("updatefound", () => {
@@ -77,8 +68,11 @@ export function PwaProvider({ profile }: { profile?: Profile | null }) {
     const onControllerChange = () => {
       if (reloading || !hadController) return
       reloading = true
-      toast.info("Загружена новая версия Aura CRM — обновляем…")
-      setTimeout(() => window.location.reload(), 800)
+      // Без автоматической перезагрузки: пользователь сам решает, когда обновить.
+      toast.info("Доступна новая версия Aura CRM", {
+        duration: Infinity,
+        action: { label: "Обновить", onClick: () => window.location.reload() },
+      })
     }
     if (!isDev && "serviceWorker" in navigator) {
       navigator.serviceWorker.addEventListener("controllerchange", onControllerChange)
