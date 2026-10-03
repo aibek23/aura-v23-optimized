@@ -173,9 +173,7 @@ export function useLocalCrm(initialData: {
     // Listen to phase 1 ready event
     const onPhase1Ready = async () => {
       const refreshedProducts = await getShopRecords<Product>('products', shopId)
-      if (mounted && refreshedProducts.length > 0) {
-        setProducts(refreshedProducts)
-      }
+      if (mounted) setProducts(refreshedProducts)
     }
 
     const refreshAfterSaleSync = async () => {
@@ -185,7 +183,7 @@ export function useLocalCrm(initialData: {
         getShopRecords<Customer>('customers', shopId),
       ])
       if (!mounted) return
-      if (refreshedProducts.length > 0) setProducts(refreshedProducts)
+      setProducts(refreshedProducts)
       setSales(refreshedSales)
       setClients(refreshedClients)
     }
@@ -209,7 +207,7 @@ export function useLocalCrm(initialData: {
         getShopRecords<MetalRate>('metal_rates', shopId),
       ])
       if (!mounted) return
-      if (refreshedProducts.length > 0) setProducts(refreshedProducts)
+      setProducts(refreshedProducts)
       setSales(refreshedSales)
       setReturns(refreshedReturns)
       setCash({ operations: refreshedCashOperations, presets: refreshedPresets })
@@ -575,12 +573,14 @@ export function useLocalCrm(initialData: {
   )
 
   const localDeleteProduct = useCallback(
-    async (productId: string) => {
+    async (productOrId: Product | string) => {
+      const productId = typeof productOrId === 'string' ? productOrId : productOrId.id
       const nowIso = new Date().toISOString()
       const clientOpId = createLocalId()
 
       const target = products.find((p) => p.id === productId)
-      if (!target) return
+        ?? (typeof productOrId === 'string' ? undefined : productOrId)
+      if (!target) throw new Error('Товар не найден в локальной базе')
 
       const softDeleted = { ...target, deleted_at: nowIso, updated_at: nowIso }
       await bulkPut('products', [softDeleted])
@@ -597,6 +597,17 @@ export function useLocalCrm(initialData: {
     },
     [products, shopId]
   )
+
+  /** Убирает товар после серверного удаления, не ставя операцию в очередь повторно. */
+  const cacheDeletedProduct = useCallback(async (productId: string) => {
+    setProducts((prev) => prev.filter((product) => product.id !== productId))
+    try {
+      await bulkDelete('products', [productId])
+    } catch (err) {
+      // Серверное удаление уже прошло; последующая синхронизация сверит локальный кэш.
+      console.warn('[LocalCRM] failed to purge deleted product from IndexedDB:', err)
+    }
+  }, [])
 
   // 5. Offline-first Customer Management
   const localAddCustomer = useCallback(
@@ -683,6 +694,7 @@ export function useLocalCrm(initialData: {
     cacheSavedProduct,
     cacheRestoredAction,
     localDeleteProduct,
+    cacheDeletedProduct,
     localAddCustomer,
     localAddCashOperation,
   }

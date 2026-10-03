@@ -409,6 +409,8 @@ export function Dashboard({
             isAdmin={isAdmin}
             allowOffline={!isImpersonating}
             onProductSaved={!isImpersonating ? localCrm.cacheSavedProduct : undefined}
+            onProductDeleted={!isImpersonating ? localCrm.cacheDeletedProduct : undefined}
+            onOfflineDeleteProduct={!isImpersonating ? localCrm.localDeleteProduct : undefined}
           />
         )}
         {activeScreen === "clients" && (

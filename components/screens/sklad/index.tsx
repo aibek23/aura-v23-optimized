@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState, useTransition } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react"
 import dynamic from "next/dynamic"
 import type { Product, Sale } from "@/lib/types"
 import { DEFAULT_SIZE_KEY, getLabelSizeDef, getPrinterProfile, PRINTER_PROFILES, type JewelryLabelSizeKey } from "@/lib/niimbot"
@@ -45,6 +45,11 @@ const PAGE_SIZE = 30
 const isValidShopSeqId = (value: number | null | undefined): value is number =>
   typeof value === "number" && Number.isSafeInteger(value) && value > 0
 
+const isConnectivityError = (error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error ?? "")
+  return /network|failed to fetch|fetch failed|timed out|timeout|connection (reset|refused|lost)/i.test(message)
+}
+
 export function SkladScreen({
   products,
   sales = [],
@@ -56,6 +61,8 @@ export function SkladScreen({
   showAdd = true,
   allowOffline = true,
   onProductSaved,
+  onProductDeleted,
+  onOfflineDeleteProduct,
 }: {
   products: Product[]
   sales?: Sale[]
@@ -67,6 +74,8 @@ export function SkladScreen({
   showAdd?: boolean
   allowOffline?: boolean
   onProductSaved?: (product: Product) => void
+  onProductDeleted?: (productId: string) => void | Promise<void>
+  onOfflineDeleteProduct?: (product: Product) => void | Promise<void>
 }) {
   const router = useRouter()
   const [, startTransition] = useTransition()
@@ -76,6 +85,8 @@ export function SkladScreen({
   const [labelDialogOpen, setLabelDialogOpen] = useState(false)
   const [labelAutoPrint, setLabelAutoPrint] = useState(false)
   const [labelSizeKey, setLabelSizeKey] = useState<JewelryLabelSizeKey>(DEFAULT_SIZE_KEY)
+  const labelReturnScrollY = useRef<number | null>(null)
+  const [deletedProductIds, setDeletedProductIds] = useState<Set<string>>(() => new Set())
   const [virtualMode, setVirtualMode] = useState(false)
 
   const [productDialogOpen, setProductDialogOpen] = useState(false)
@@ -88,7 +99,11 @@ export function SkladScreen({
   const fitsPrinthead = nativeWidth <= printerProfile.printheadPx
 
   const visibleProducts = useMemo(() => {
-    const byId = new Map(products.map((product) => [product.id, product] as const))
+    const byId = new Map(
+      products
+        .filter((product) => !product.deleted_at && !deletedProductIds.has(product.id))
+        .map((product) => [product.id, product] as const),
+    )
 
     return [...byId.values()].sort((a, b) => {
       const aCreated = Date.parse(a.created_at)
@@ -96,7 +111,7 @@ export function SkladScreen({
       const dateOrder = (Number.isFinite(bCreated) ? bCreated : 0) - (Number.isFinite(aCreated) ? aCreated : 0)
       return dateOrder || b.id.localeCompare(a.id)
     })
-  }, [products])
+  }, [products, deletedProductIds])
 
   const filtered = useMemo(() => filterProducts(visibleProducts, debouncedQuery), [visibleProducts, debouncedQuery])
 
@@ -144,6 +159,10 @@ export function SkladScreen({
 
   const openLabel = async (p: Product, autoPrint: boolean) => {
     try {
+      // В сценарии «товар → печать» сохраняем позицию до блокировки прокрутки диалогом.
+      if (!productDialogOpen || labelReturnScrollY.current === null) {
+        labelReturnScrollY.current = window.scrollY
+      }
       const cachedSeqId = isValidShopSeqId(p.shop_seq_id)
         ? p.shop_seq_id
         : products.find((row) => row.shop_id === p.shop_id && isValidShopSeqId(row.shop_seq_id))?.shop_seq_id
@@ -190,16 +209,17 @@ export function SkladScreen({
   }, [])
 
   useEffect(() => {
-    if (!labelDialogOpen) return
-    const prev = document.body.style.overflow
-    document.body.style.overflow = "hidden"
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") closeLabel() }
-    window.addEventListener("keydown", onKey)
+    if (labelDialogOpen || labelReturnScrollY.current === null) return
+    const scrollY = labelReturnScrollY.current
+        // Диалог закрывается за 100 мс; восстанавливаем позицию после снятия блокировки прокрутки.
+    const timer = window.setTimeout(() => {
+      window.scrollTo(0, scrollY)
+      labelReturnScrollY.current = null
+    }, 120)
     return () => {
-      document.body.style.overflow = prev
-      window.removeEventListener("keydown", onKey)
+      window.clearTimeout(timer)
     }
-  }, [labelDialogOpen, closeLabel])
+  }, [labelDialogOpen])
 
   const onPrintLabel = (p: Product) => {
     void openLabel(p, false)
@@ -211,11 +231,13 @@ export function SkladScreen({
   }
 
   const onAdd = () => {
+    labelReturnScrollY.current = window.scrollY
     setEditing(null)
     setProductDialogOpen(true)
   }
 
   const onEdit = (p: Product) => {
+    labelReturnScrollY.current = window.scrollY
     setEditing(p)
     setProductDialogOpen(true)
   }
@@ -223,15 +245,36 @@ export function SkladScreen({
   const onDelete = async (p: Product) => {
     if (!confirm(`Удалить «${p.name}»?`)) return
     try {
-      const res = await deleteProduct(p.id)
-      if (!res.ok) throw new Error(res.error)
-      // Убираем товар и из локальной базы устройства, иначе он снова появится.
-      try {
-        const { bulkDelete } = await import("@/lib/local-db/db")
-        await bulkDelete("products", [p.id])
-      } catch (err) {
-        console.warn("[delete] local purge failed", err)
+      const queueOfflineDelete = async () => {
+        if (!allowOffline || !onOfflineDeleteProduct) return false
+        await onOfflineDeleteProduct(p)
+        setDeletedProductIds((previous) => new Set(previous).add(p.id))
+        toast.success("Удаление сохранено", {
+          description: "Товар будет удалён на сервере после восстановления подключения",
+        })
+        return true
       }
+
+      if (!navigator.onLine) {
+        if (!(await queueOfflineDelete())) {
+          throw new Error("Для удаления товара требуется подключение к интернету")
+        }
+        return
+      }
+
+      let res: Awaited<ReturnType<typeof deleteProduct>>
+      try {
+        res = await deleteProduct(p.id)
+      } catch (error) {
+        if (isConnectivityError(error) && await queueOfflineDelete()) return
+        throw error
+      }
+      if (!res.ok) {
+        if (isConnectivityError(res.error) && await queueOfflineDelete()) return
+        throw new Error(res.error)
+      }
+      setDeletedProductIds((previous) => new Set(previous).add(p.id))
+      await onProductDeleted?.(p.id)
       toast.success("Товар удалён")
       startTransition(() => router.refresh())
     } catch (e) {
@@ -533,21 +576,41 @@ export function SkladScreen({
       )}
 
       {/* Печать этикетки — отдельная страница поверх склада (без пункта в навбаре) */}
+      <Dialog
+        open={labelDialogOpen}
+        onOpenChange={(open) => {
+          if (!open) closeLabel()
+        }}
+      >
       {labelDialogOpen && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-label={`Этикетка: ${labelProduct?.name ?? ""}`}
-          className="fixed inset-0 z-50 flex h-[100dvh] w-screen flex-col bg-background"
+        <DialogContent
+          showCloseButton={false}
+          className="fixed inset-0 left-0 top-0 z-[60] m-0 flex h-[100dvh] w-screen max-w-none translate-x-0 translate-y-0 flex-col gap-0 rounded-none p-0 ring-0 bg-background"
+          style={{
+            zIndex: 60,
+            inset: 0,
+            top: 0,
+            left: 0,
+            width: "100vw",
+            maxWidth: "none",
+            height: "100dvh",
+            margin: 0,
+            padding: 0,
+            transform: "none",
+            display: "flex",
+            flexDirection: "column",
+            gap: 0,
+            borderRadius: 0,
+          }}
         >
           <div className="flex shrink-0 items-center gap-2 border-b px-2 py-2 pt-[max(0.5rem,env(safe-area-inset-top))]">
             <Button variant="ghost" size="sm" onClick={closeLabel} className="gap-1">
               <ArrowLeft className="h-4 w-4" />
               Склад
             </Button>
-            <h1 className="min-w-0 flex-1 truncate text-sm font-semibold">
+            <DialogTitle className="min-w-0 flex-1 truncate text-sm font-semibold">
               Печать этикетки{labelProduct?.name ? `: ${labelProduct.name}` : ""}
-            </h1>
+            </DialogTitle>
           </div>
           <div className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col">
           <div className="flex shrink-0 items-center gap-2 border-b px-3 py-2">
@@ -659,8 +722,9 @@ export function SkladScreen({
             </div>
           )}
           </div>
-        </div>
+        </DialogContent>
       )}
+      </Dialog>
 
       <ProductDialog
         open={productDialogOpen}

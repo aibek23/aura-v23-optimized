@@ -140,6 +140,7 @@ export async function getProductsPage(
   const { data, error } = await supabase
     .from("products")
     .select(PRODUCT_COLUMNS)
+    .is("deleted_at", null)
     .order("created_at", { ascending: false })
     .range(offset, offset + limit)
 
