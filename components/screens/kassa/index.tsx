@@ -16,6 +16,7 @@ import { toast } from "sonner"
 import { useRouter } from "next/navigation"
 import { PageLoader } from "@/components/ui/page-loader"
 import { filterProducts, isSearchReady } from "@/lib/product-search"
+import { getClientOperationAttempt, type ClientOperationAttempt } from "@/lib/client-operation"
 
 import { KassaSearch } from "./kassa-search"
 import { KassaCart } from "./kassa-cart"
@@ -121,6 +122,8 @@ export function KassaScreen({
   const [customerPhone, setCustomerPhone] = useState("")
   
   const [submitting, setSubmitting] = useState(false)
+  const checkoutAttempt = useRef<ClientOperationAttempt | null>(null)
+  const checkoutBusy = useRef(false)
   const [confirmLoss, setConfirmLoss] = useState(false)
   const [isMobile, setIsMobile] = useState(false)
   const [isLoaded, setIsLoaded] = useState(false)
@@ -351,6 +354,7 @@ export function KassaScreen({
   const removeItem = (lineId: string) => setCart((prev) => prev.filter((i) => i.lineId !== lineId))
 
   const handleReset = () => {
+    checkoutAttempt.current = null
     setCart([])
     setBonusUsed("")
     setCustomerName("")
@@ -394,6 +398,8 @@ export function KassaScreen({
   const hasLoss = lossAmount > 0
 
   const doCheckout = async () => {
+    if (checkoutBusy.current) return
+    checkoutBusy.current = true
     setConfirmLoss(false)
     setSubmitting(true)
     try {
@@ -418,7 +424,11 @@ export function KassaScreen({
           description: "Ожидает подтверждения сервера. При конфликте с другой продажей приложение сообщит об этом.",
         })
       } else {
-        const res = await checkout(checkoutPayload)
+        checkoutAttempt.current = getClientOperationAttempt(checkoutAttempt.current, checkoutPayload)
+        const res = await checkout({
+          ...checkoutPayload,
+          client_op_id: checkoutAttempt.current.clientOpId,
+        })
         toast.success(`Продажа оформлена: ${formatSom(res.total)}`, {
           description: showBonus ? `Начислено ${res.bonusEarned} бонусов` : undefined,
         })
@@ -429,6 +439,7 @@ export function KassaScreen({
       console.error("[kassa] checkout error:", e)
       toast.error(e instanceof Error ? e.message : "Ошибка оформления продажи")
     } finally {
+      checkoutBusy.current = false
       setSubmitting(false)
     }
   }

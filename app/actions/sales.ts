@@ -4,9 +4,7 @@ import { revalidatePath } from "next/cache"
 import type { Sale, SaleItem } from "@/lib/types"
 import { DEFAULT_RATES } from "@/lib/rates"
 import { getRequestCrmContext } from "@/lib/supabase/request-context"
-
-const DEFAULT_BONUS_RATE = 2 // % от прибыли, если не задано иное
-const MAX_PRICE_FACTOR = 10 // защита от опечатки: цена не может быть в 10 раз выше прайса
+import { resolveClientOperationId } from "@/lib/client-operation"
 
 async function requireProfile() {
   const { supabase, user, profile, shopId } = await getRequestCrmContext()
@@ -32,20 +30,20 @@ export type CheckoutInput = {
   items: SaleItem[]
   discount: number
   payment_method: string
-  /** Для смешанной оплаты: сколько наличными и сколько переводом. */
   amount_cash?: number
   amount_electronic?: number
   customer_name: string
   customer_phone: string
   bonus_used: number
+  /** Generate once on the client and reuse when retrying an uncertain result. */
+  client_op_id?: string
 }
 
 const PAYMENTS = new Set(["cash", "card", "transfer", "mixed"])
 
 export async function checkout(input: CheckoutInput) {
-  const { supabase, user, profile, shopId } = await requireProfile()
-
-  // ------------------------------------------------------------- валидация
+  const { supabase, shopId } = await requireProfile()
+  const clientOpId = resolveClientOperationId(input.client_op_id)
   const items = Array.isArray(input.items) ? input.items : []
   if (items.length === 0) throw new Error("Чек пуст — добавьте хотя бы одну позицию")
   if (items.length > 200) throw new Error("Слишком много позиций в одном чеке")
@@ -53,239 +51,81 @@ export async function checkout(input: CheckoutInput) {
   if (items.some((item) => Number(item.quantity) !== 1)) {
     throw new Error("Количество каждой позиции должно быть равно 1")
   }
-
   const phone = (input.customer_phone ?? "").trim()
-  if (phone && !/^[\d+()\s-]{5,20}$/.test(phone)) {
-    throw new Error("Проверьте номер телефона клиента")
-  }
+  if (phone && !/^[\d+()\s-]{5,20}$/.test(phone)) throw new Error("Проверьте номер телефона клиента")
 
-  const productIds = items
-    .filter((i) => i.kind !== "scrap" && i.product_id)
-    .map((i) => i.product_id as string)
-  if (new Set(productIds).size !== productIds.length) {
-    throw new Error("Одно изделие нельзя добавить в чек дважды")
-  }
-
-  const { data: products, error: prodErr } = productIds.length
-    ? await supabase
-        .from("products")
-        .select("id, sale_price, purchase_price, name, weight, metal, status")
-        .in("id", productIds)
-    : { data: [], error: null }
-  if (prodErr) throw new Error(`Не удалось прочитать склад: ${prodErr.message}`)
-
-  const priceMap = new Map((products ?? []).map((p) => [p.id, p]))
-
-  for (const item of items) {
-    if (item.kind !== "scrap" && item.product_id && !priceMap.has(item.product_id)) {
-      throw new Error("Один из товаров был удалён со склада — обновите страницу")
-    }
-  }
-
-  let subtotal = 0
-  let costTotal = 0
+  // Only validate the payload here. Do not check product availability or bonus
+  // balances before the RPC: on an idempotent retry they have already changed.
   const validated: SaleItem[] = []
-
   for (const item of items) {
-    // ------------------------------------------------------------- лом
     if (item.kind === "scrap") {
       const weight = Number(item.weight)
-      if (!Number.isFinite(weight) || weight <= 0) throw new Error("Укажите вес лома больше нуля")
-      if (weight > 100000) throw new Error("Некорректный вес лома")
+      if (!Number.isFinite(weight) || weight <= 0 || weight > 100000) {
+        throw new Error("Укажите корректный вес лома")
+      }
       const metal = item.metal ?? ""
-
-      // Курс берём из настроек магазина, иначе — рыночный по умолчанию.
-      const { data: rateRow } = await supabase
+      const { data: rateRow, error: rateError } = await supabase
         .from("metal_rates")
         .select("scrap_price_per_gram")
         .eq("shop_id", shopId)
         .eq("metal", metal)
         .maybeSingle()
-
+      if (rateError) throw new Error(`Не удалось прочитать курс лома: ${rateError.message}`)
       const rate = Number(rateRow?.scrap_price_per_gram) || DEFAULT_RATES[metal]?.scrap || 0
-      if (rate <= 0) throw new Error(`Не задан курс лома для «${metal || "металла"}»`)
-
-      const price = Math.round(weight * rate)
-      subtotal += price
-      costTotal += price // лом продаётся по курсу — прибыль в нём не заложена
+      if (!Number.isFinite(rate) || rate <= 0) throw new Error(`Не задан курс лома для «${metal || "металла"}»`)
       validated.push({
-        product_id: null,
-        kind: "scrap",
-        quantity: 1,
+        product_id: null, kind: "scrap", quantity: 1,
         name: item.name?.trim() || `Лом · ${metal}`,
-        weight,
-        metal,
-        price_per_gram: rate,
-        price,
-        cost: price,
+        weight, metal, price_per_gram: rate, price: Math.round(weight * rate), cost: Math.round(weight * rate),
       })
-      continue
-    }
-
-    // ---------------------------------------------------------- товар
-    const p = priceMap.get(item.product_id as string)
-    if (!p) throw new Error("Товар не найден на складе")
-    if (p.status !== "in_stock") throw new Error(`«${p.name}» уже продан или недоступен`)
-
-    const basePrice = Number(p.sale_price)
-    const requestedPrice = Number(item.price)
-    if (!Number.isFinite(requestedPrice) || requestedPrice < 0) {
-      throw new Error(`«${p.name}»: некорректная цена`)
-    }
-    if (basePrice > 0 && requestedPrice > basePrice * MAX_PRICE_FACTOR) {
-      throw new Error(`«${p.name}»: цена завышена — проверьте расчёт`)
-    }
-
-    const price = Math.round(requestedPrice)
-    subtotal += price
-    costTotal += Number(p.purchase_price)
-    validated.push({
-      product_id: p.id,
-      kind: "product",
-      quantity: 1,
-      name: p.name,
-      weight: Number(p.weight) || Number(item.weight) || 0,
-      metal: p.metal ?? item.metal ?? null,
-      price_per_gram: Number(p.weight) > 0 ? Math.round(price / Number(p.weight)) : null,
-      price,
-      cost: Number(p.purchase_price),
-    })
-  }
-
-  const discount = 0 // скидки уже учтены в цене позиции
-  const bonusUsed = Math.max(0, Math.min(Number(input.bonus_used) || 0, subtotal))
-  if (bonusUsed > Number(profile.bonus_points ?? 0)) {
-    throw new Error("Недостаточно бонусов для списания")
-  }
-  const total = Math.max(0, subtotal - bonusUsed)
-  const profit = total - costTotal
-
-  // ------------------------------------------------ разбивка оплаты по кассам
-  let paidCash = 0
-  let paidElectronic = 0
-  if (input.payment_method === "mixed") {
-    paidCash = Math.round(Number(input.amount_cash) || 0)
-    paidElectronic = Math.round(Number(input.amount_electronic) || 0)
-    if (paidCash < 0 || paidElectronic < 0) throw new Error("Суммы оплаты не могут быть отрицательными")
-    if (Math.abs(paidCash + paidElectronic - total) > 1) {
-      throw new Error("Сумма наличных и перевода должна совпадать с итогом чека")
-    }
-  } else if (input.payment_method === "cash") {
-    paidCash = total
-  } else {
-    paidElectronic = total
-  }
-
-  const { data: settings } = await supabase
-    .from("shop_settings")
-    .select("default_bonus_rate")
-    .eq("shop_id", shopId)
-    .maybeSingle()
-  const rate = Number(profile.bonus_rate ?? settings?.default_bonus_rate ?? DEFAULT_BONUS_RATE)
-  const bonusEarned = Math.round(Math.max(0, profit) * (rate / 100))
-
-  // ------------------------------------------------ поиск или автоматическое создание клиента
-  let customerId: string | null = null
-  const trimmedPhone = (input.customer_phone ?? "").trim()
-  const trimmedName = (input.customer_name ?? "").trim()
-
-  if (trimmedPhone) {
-    const { data: existingCustomer } = await supabase
-      .from("customers")
-      .select("id")
-      .eq("shop_id", shopId)
-      .eq("phone", trimmedPhone)
-      .maybeSingle()
-
-    if (existingCustomer) {
-      customerId = existingCustomer.id
-      if (trimmedName) {
-        await supabase.from("customers").update({ name: trimmedName }).eq("id", customerId)
-      }
-    } else if (trimmedName) {
-      const { data: newCustomer } = await supabase
-        .from("customers")
-        .insert({
-          shop_id: shopId,
-          name: trimmedName,
-          phone: trimmedPhone,
-          bonus_points: 0,
-        })
-        .select("id")
-        .single()
-
-      if (newCustomer) {
-        customerId = newCustomer.id
-      }
+    } else {
+      const price = Number(item.price)
+      if (!Number.isFinite(price) || price < 0) throw new Error("В чеке указана некорректная цена")
+      if (!item.product_id) throw new Error("В позиции не указан товар")
+      validated.push({ ...item, kind: "product", quantity: 1, price: Math.round(price) })
     }
   }
-  // ------------------------------------------------ списание товара ДО записи чека
-  // Сначала атомарно переводим изделия в sold: если одно из них уже продано
-  // (параллельная продажа), чек не создаётся, а уже списанные откатываются.
-  const soldIds: string[] = []
-  const rollbackSold = async () => {
-    if (soldIds.length === 0) return
-    const { error: rbErr } = await supabase
-      .from("products")
-      .update({ status: "in_stock" })
-      .in("id", soldIds)
-    if (rbErr) console.error("[sales] rollback error:", rbErr.message)
-  }
-  for (const item of validated) {
-    if (item.kind !== "product" || !item.product_id) continue
-    const { error: updErr } = await supabase.rpc("sell_product", { _product_id: item.product_id })
-    if (updErr) {
-      await rollbackSold()
-      throw new Error(`Не удалось списать «${item.name}»: ${updErr.message}`)
-    }
-    soldIds.push(item.product_id)
-  }
 
-  // ------------------------------------------------ запись продажи
-  const { error: saleErr } = await supabase.from("sales").insert({
-    shop_id: shopId,
-    seller_id: user.id,
-    seller_name: profile.full_name,
-    customer_id: customerId,
-    customer_name: trimmedName || null,
-    customer_phone: trimmedPhone || null,
-    payment_method: input.payment_method,
-    amount_cash: paidCash,
-    amount_electronic: paidElectronic,
-    subtotal,
-    discount,
-    total,
-    cost_total: costTotal,
-    profit,
-    bonus_earned: bonusEarned,
-    bonus_used: bonusUsed,
-    items: validated,
+  const { data: result, error } = await supabase.rpc("commit_offline_sale", {
+    _client_op_id: clientOpId,
+    _sale: {
+      items: validated,
+      payment_method: input.payment_method,
+      amount_cash: input.amount_cash,
+      amount_electronic: input.amount_electronic,
+      bonus_used: input.bonus_used,
+      customer_name: (input.customer_name ?? "").trim() || null,
+      customer_phone: phone || null,
+    },
   })
-  if (saleErr) {
-    await rollbackSold()
-    throw new Error(`Не удалось провести продажу: ${saleErr.message}`)
+  if (error) throw new Error(`Не удалось провести продажу: ${error.message}`)
+  if (result?.accepted === false) {
+    const product = result.product_name ? ` «${result.product_name}»` : ""
+    throw new Error(`Конфликт остатков: товар${product} уже продан или недоступен. Обновите склад и проверьте чек.`)
+  }
+  if (result?.accepted !== true || !result.sale_id) {
+    throw new Error("Не удалось подтвердить продажу. Повторите отправку с тем же идентификатором операции.")
   }
 
-  // ------------------------------------------------ обновление статистики клиента
-  // Атомарно инкрементируем денормализованные счётчики через RPC-функцию,
-  // чтобы избежать гонки при параллельных продажах одному клиенту.
-  if (customerId) {
-    const { error: statsErr } = await supabase.rpc("increment_customer_stats", {
-      _customer_id: customerId,
-      _amount:      total,
-    })
-    if (statsErr) {
-      // Не прерываем транзакцию — счётчик можно пересчитать позже.
-      console.error("[sales] increment_customer_stats error:", statsErr.message)
-    }
-  }
-
-
-  if (bonusEarned > 0) {
-    const { error: bonusErr } = await supabase.rpc("add_bonus_points", { _amount: bonusEarned })
-    if (bonusErr) console.error("[sales] bonus rpc error:", bonusErr.message)
+  // Read the committed receipt, including on duplicate=true. Never recompute
+  // totals or award bonuses here: the RPC commits those changes exactly once.
+  const { data: sale, error: readError } = await supabase
+    .from("sales")
+    .select("id, total, bonus_earned, profit")
+    .eq("id", result.sale_id)
+    .eq("shop_id", shopId)
+    .single()
+  if (readError || !sale) {
+    throw new Error("Продажа проведена, но ответ не получен. Повторите отправку с тем же идентификатором — повторного списания не будет.")
   }
 
   revalidatePath("/crm")
-  return { total, bonusEarned, profit }
+  return {
+    total: Number(sale.total),
+    bonusEarned: Number(sale.bonus_earned),
+    profit: Number(sale.profit),
+    saleId: sale.id,
+    clientOpId,
+    duplicate: result.duplicate === true,
+  }
 }

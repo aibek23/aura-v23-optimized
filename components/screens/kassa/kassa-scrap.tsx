@@ -1,6 +1,7 @@
 "use client"
 
-import { useMemo, useState, useTransition } from "react"
+import { useMemo, useRef, useState, useTransition } from "react"
+import { getClientOperationAttempt, type ClientOperationAttempt } from "@/lib/client-operation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -51,6 +52,8 @@ export function KassaScrap({
   const calc = useCalculator()
   const [open, setOpen] = useState(false)
   const [saving, setSaving] = useState(false)
+  const intakeAttempt = useRef<(ClientOperationAttempt & { productCreated: boolean }) | null>(null)
+  const intakeBusy = useRef(false)
   const [shortage, setShortage] = useState<number | null>(null)
 
   const [condition, setCondition] = useState<MetalCondition>("secondary")
@@ -80,6 +83,7 @@ export function KassaScrap({
     method === "cash" ? balances.cash : method === "transfer" ? balances.electronic : balances.total
 
   const reset = () => {
+    intakeAttempt.current = null
     setName("")
     setWeight("")
     setPerGram("")
@@ -114,6 +118,7 @@ export function KassaScrap({
 
   /** Оприходовать лом на склад и выплатить деньги из кассы. */
   const submit = async () => {
+    if (intakeBusy.current) return
     const err = validate()
     if (err) {
       toast.error(err)
@@ -134,10 +139,11 @@ export function KassaScrap({
       return
     }
 
+    intakeBusy.current = true
     setSaving(true)
     try {
       const w = calc.toNumber(weight)
-      await createProduct({
+      const productPayload = {
         name: name.trim() || `Лом · ${metal}`,
         category,
         metal,
@@ -154,17 +160,27 @@ export function KassaScrap({
         supplier_name: supplierName.trim() || null,
         supplier_phone: supplierPhone.trim() || null,
         images: [],
-      })
+      }
 
-      await createCashOperation({
-        type: "outcome",
+      const cashPayload = {
+        type: "outcome" as const,
         amount: total,
-        source: payment === "cash" ? "cash" : payment === "transfer" ? "electronic" : "mixed",
+        source: payment === "cash" ? "cash" as const : payment === "transfer" ? "electronic" as const : "mixed" as const,
         amount_cash: payment === "mixed" ? mixedCash : undefined,
         amount_electronic: payment === "mixed" ? mixedElectronic : undefined,
         reason: `Приём лома: ${name.trim() || metal} · ${w} г`,
         allowSeller: true,
-      })
+      }
+      const attempt = getClientOperationAttempt(intakeAttempt.current, { productPayload, cashPayload })
+      if (attempt.clientOpId !== intakeAttempt.current?.clientOpId) {
+        intakeAttempt.current = { ...attempt, productCreated: false }
+      }
+      // A known successful stock insert must not repeat if the cash RPC failed.
+      if (!intakeAttempt.current!.productCreated) {
+        await createProduct(productPayload)
+        intakeAttempt.current!.productCreated = true
+      }
+      await createCashOperation({ ...cashPayload, client_op_id: attempt.clientOpId })
 
       toast.success(`Лом принят, выплачено ${formatSom(total)}`)
       reset()
@@ -174,6 +190,7 @@ export function KassaScrap({
       console.error("[kassa] scrap intake error:", e)
       toast.error(e instanceof Error ? e.message : "Не удалось провести приём лома")
     } finally {
+      intakeBusy.current = false
       setSaving(false)
     }
   }

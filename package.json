@@ -9,7 +9,9 @@
     "build:dev": "next build --webpack",
     "start": "node scripts/run-next.mjs start",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:atomic": "node --test scripts/test-atomic-actions.mjs",
+    "test:atomic:postgres": "node scripts/test-atomic-postgres.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.5.0",

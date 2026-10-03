@@ -2,9 +2,8 @@
 
 import { revalidatePath } from "next/cache"
 import type { CashOperation, CashReasonPreset, CashSource } from "@/lib/types"
-import { computeBalances } from "@/lib/cash"
-import type { Sale } from "@/lib/types"
 import { getRequestCrmContext } from "@/lib/supabase/request-context"
+import { resolveClientOperationId } from "@/lib/client-operation"
 
 async function requireProfile() {
   const { supabase, user, profile, shopId } = await getRequestCrmContext()
@@ -62,15 +61,18 @@ export async function createCashOperation(input: {
   savePreset?: boolean
   /** Списание за лом проводится продавцом, а не только администратором. */
   allowSeller?: boolean
+  /** Keep this UUID unchanged when retrying after a network failure. */
+  client_op_id?: string
 }) {
-  const { supabase, user, profile, shopId } = input.allowSeller ? await requireProfile() : await requireAdmin()
+  const { supabase, shopId } = input.allowSeller ? await requireProfile() : await requireAdmin()
+  const clientOpId = resolveClientOperationId(input.client_op_id)
 
   // Проверка на привязку магазина
   if (!shopId) {
     throw new Error("Ваш аккаунт не привязан ни к одному магазину")
   }
 
-  const amount = Number(input.amount)
+  const amount = Math.round(Number(input.amount) * 100) / 100
   const reason = (input.reason ?? "").trim()
   
   if (!Number.isFinite(amount) || amount <= 0) throw new Error("Укажите сумму больше нуля")
@@ -92,70 +94,35 @@ export async function createCashOperation(input: {
   let fromCash = source === "cash" ? amount : 0
   let fromElectronic = source === "electronic" ? amount : 0
   if (source === "mixed") {
-    fromCash = Math.round(Number(input.amount_cash) || 0)
-    fromElectronic = Math.round(Number(input.amount_electronic) || 0)
+    fromCash = Math.round(Number(input.amount_cash ?? 0) * 100) / 100
+    fromElectronic = Math.round(Number(input.amount_electronic ?? 0) * 100) / 100
+    if (!Number.isFinite(fromCash) || !Number.isFinite(fromElectronic)) {
+      throw new Error("Укажите корректные суммы оплаты")
+    }
     if (fromCash < 0 || fromElectronic < 0) throw new Error("Суммы не могут быть отрицательными")
-    if (Math.abs(fromCash + fromElectronic - amount) > 1) {
+    if (Math.round(fromCash * 100) + Math.round(fromElectronic * 100) !== Math.round(amount * 100)) {
       throw new Error("Сумма наличных и электронных должна совпадать с общей суммой")
     }
   }
 
-  // Списания и инкассация не должны уводить кассу в минус.
-  if (input.type !== "income") {
-    // Supabase отдаёт максимум 1000 строк — читаем всё постранично,
-    // иначе при >1000 продажах остаток кассы считался неверно.
-    const fetchAll = async <T,>(table: "sales" | "cash_operations"): Promise<T[]> => {
-      const PAGE = 1000
-      const out: T[] = []
-      for (let from = 0; ; from += PAGE) {
-        const { data, error } = await supabase
-          .from(table)
-          .select("*")
-          .eq("shop_id", shopId)
-          .order("id", { ascending: true })
-          .range(from, from + PAGE - 1)
-        if (error) throw new Error(`Не удалось проверить остаток кассы: ${error.message}`)
-        const rows = (data as T[]) ?? []
-        out.push(...rows)
-        if (rows.length < PAGE) break
-      }
-      return out
-    }
-    const [salesRows, opRows] = await Promise.all([
-      fetchAll<Sale>("sales"),
-      fetchAll<CashOperation>("cash_operations"),
-    ])
-    const balances = computeBalances(salesRows, opRows)
-    if (fromCash > balances.cash + 0.5) {
-      throw new Error(`Недостаточно наличных: доступно ${Math.round(balances.cash)} с`)
-    }
-    if (fromElectronic > balances.electronic + 0.5) {
-      throw new Error(`Недостаточно электронных средств: доступно ${Math.round(balances.electronic)} с`)
-    }
-  }
-
-  const { error } = await supabase.from("cash_operations").insert({
-    shop_id: shopId,
-    created_by: user.id,
-    author_name: profile.full_name,
-    type: input.type,
-    amount,
-    source,
-    amount_cash: fromCash,
-    amount_electronic: fromElectronic,
-    reason,
+  const { data: result, error } = await supabase.rpc("create_cash_operation_atomic", {
+    _client_op_id: clientOpId,
+    _type: input.type,
+    _amount: amount,
+    _source: source,
+    _amount_cash: fromCash,
+    _amount_electronic: fromElectronic,
+    _reason: reason,
+    _allow_seller: input.allowSeller === true,
+    _save_preset: input.savePreset === true,
   })
-  
-  if (error) throw error
-
-  if (input.savePreset) {
-    await supabase
-      .from("cash_reason_presets")
-      .insert({ shop_id: shopId, created_by: user.id, text: reason })
+  if (error) throw new Error(`Не удалось провести кассовую операцию: ${error.message}`)
+  if (result?.accepted !== true) {
+    throw new Error("Не удалось подтвердить кассовую операцию. Повторите с тем же идентификатором.")
   }
 
   revalidatePath("/crm")
-  return { ok: true }
+  return { ok: true, operationId: result.operation_id, clientOpId, duplicate: result.duplicate === true }
 }
 
 /** Удалить шаблон причины. Только администратор. */

@@ -1,6 +1,7 @@
 "use client"
 
-import { useEffect, useMemo, useState, useTransition } from "react"
+import { useEffect, useMemo, useRef, useState, useTransition } from "react"
+import { getClientOperationAttempt, type ClientOperationAttempt } from "@/lib/client-operation"
 import type { CashOpType, CashReasonPreset, CashSource } from "@/lib/types"
 import { CASH_SOURCES } from "@/lib/types"
 import type { CashBalances } from "@/lib/cash"
@@ -47,6 +48,8 @@ export function CashOperationDialog({
   const [reason, setReason] = useState(initialReason ?? "")
   const [savePreset, setSavePreset] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  const operationAttempt = useRef<ClientOperationAttempt | null>(null)
+  const operationBusy = useRef(false)
   const [removing, setRemoving] = useState<string | null>(null)
   const [source, setSource] = useState<CashSource>("cash")
 
@@ -74,13 +77,15 @@ export function CashOperationDialog({
   const valid = amountNum > 0 && reason.trim().length > 0 && !over
 
   const submit = async () => {
+    if (operationBusy.current) return
     if (!valid) {
       toast.error(over ? "Сумма превышает доступный остаток" : "Укажите сумму и причину операции")
       return
     }
+    operationBusy.current = true
     setSubmitting(true)
     try {
-      await createCashOperation({
+      const payload: Parameters<typeof createCashOperation>[0] = {
         type,
         amount: amountNum,
         source: isWithdrawal ? source : "cash",
@@ -88,7 +93,9 @@ export function CashOperationDialog({
         amount_electronic: source === "mixed" ? Number(elePart) || 0 : undefined,
         reason: reason.trim(),
         savePreset,
-      })
+      }
+      operationAttempt.current = getClientOperationAttempt(operationAttempt.current, payload)
+      await createCashOperation({ ...payload, client_op_id: operationAttempt.current.clientOpId })
       toast.success(
         type === "income" ? "Внесение проведено" : type === "collection" ? "Инкассация проведена" : "Изъятие проведено",
       )
@@ -98,6 +105,7 @@ export function CashOperationDialog({
       console.error("[kassa] cash operation error:", e)
       toast.error(e instanceof Error ? e.message : "Не удалось провести операцию")
     } finally {
+      operationBusy.current = false
       setSubmitting(false)
     }
   }

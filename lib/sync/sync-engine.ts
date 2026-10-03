@@ -818,7 +818,11 @@ class SyncEngine {
         await markOutboxCompleted(item.id)
         syncedCount++
       } catch (err: any) {
-        const kind = classifyError(err)
+        // The cash RPC handles actual idempotent retries itself. A remaining
+        // unique violation is a conflicting payload/id, not a successful send.
+        const kind = item.op_type === 'atomic_cash' && String(err?.code) === '23505'
+          ? 'permanent'
+          : classifyError(err)
 
         if (err?.code === 'OFFLINE_SALE_CONFLICT') {
           await markOutboxFailed(item.id, err.message, { permanent: true })
@@ -845,8 +849,18 @@ class SyncEngine {
               shopId,
             })
           }
+          if (item.op_type === 'atomic_cash' && item.payload?.id) {
+            // Keep the rejected request in the outbox for review, but remove
+            // its optimistic cash row so local balances cannot count it.
+            await bulkDelete('cash_operations', [item.payload.id])
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('aura:data_changed'))
+            }
+          }
           await markOutboxFailed(item.id, err?.message || 'Операция отклонена сервером', { permanent: true })
-          toast.error('Операция отклонена сервером и требует проверки')
+          toast.error('Операция отклонена сервером и требует проверки', {
+            description: err?.message || undefined,
+          })
         } else if (kind === 'auth') {
           await markOutboxFailed(item.id, 'Сессия истекла')
           break // no point trying the rest with an invalid session
@@ -1015,16 +1029,21 @@ class SyncEngine {
     }
 
     if (item.op_type === 'atomic_cash') {
-      const { original_updated_at, ...cleanPayload } = item.payload
-      await this.run(supabase, (client, signal) =>
-        client
-          .from('cash_operations')
-          .upsert(
-            { ...cleanPayload, client_op_id: item.client_op_id, shop_id: item.shop_id, updated_at: nowIso },
-            { onConflict: 'client_op_id', ignoreDuplicates: true }
-          )
-          .abortSignal(signal)
+      const payload = item.payload
+      const result = await this.run(supabase, (client, signal) =>
+        client.rpc('create_cash_operation_atomic', {
+          _client_op_id: item.client_op_id,
+          _type: payload.type,
+          _amount: payload.amount,
+          _source: payload.source || 'cash',
+          _amount_cash: payload.amount_cash || 0,
+          _amount_electronic: payload.amount_electronic || 0,
+          _reason: payload.reason,
+          _operation_id: payload.id,
+          _created_at: payload.created_at,
+        }).abortSignal(signal)
       )
+      if (result?.accepted !== true) throw new Error('Кассовая операция не подтверждена сервером')
       return
     }
 

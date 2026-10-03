@@ -6,13 +6,12 @@ import { syncEngine } from "@/lib/sync/sync-engine"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import {
-  WifiOff,
   RefreshCw,
-  CheckCircle2,
   AlertCircle,
-  Send,
   Database,
   X,
+  Wifi,
+  WifiOff,
 } from "lucide-react"
 
 /**
@@ -23,12 +22,24 @@ import {
 export function SyncIndicator() {
   const [state, setState] = useState<SyncProgressState>(getSyncState())
   const [isOpen, setIsOpen] = useState(false)
+  const [isOnline, setIsOnline] = useState(true)
   const containerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     return subscribeSyncState((newState) => {
       setState({ ...newState })
     })
+  }, [])
+
+  useEffect(() => {
+    const updateNetworkStatus = () => setIsOnline(navigator.onLine)
+    updateNetworkStatus()
+    window.addEventListener("online", updateNetworkStatus)
+    window.addEventListener("offline", updateNetworkStatus)
+    return () => {
+      window.removeEventListener("online", updateNetworkStatus)
+      window.removeEventListener("offline", updateNetworkStatus)
+    }
   }, [])
 
   // Close popup when clicking outside
@@ -60,111 +71,46 @@ export function SyncIndicator() {
     syncEngine.triggerSync()
   }
 
-  // Circular progress math (r=7, perimeter ≈ 44)
-  const radius = 7
-  const circumference = 2 * Math.PI * radius
-  const strokeDashoffset = circumference - (percent / 100) * circumference
+  const dotColor =
+    status === "synced"
+      ? "bg-emerald-500"
+      : status === "syncing"
+      ? "bg-blue-500 animate-pulse"
+      : status === "offline"
+      ? "bg-amber-500"
+      : status === "error"
+      ? "bg-destructive"
+      : "bg-muted-foreground"
+  const progressPercent = Math.max(0, Math.min(100, Math.round(percent)))
+  const statusDescription =
+    status === "synced"
+      ? "Онлайн"
+      : status === "syncing"
+      ? `Синхронизация, ${progressPercent}%`
+      : status === "offline"
+      ? "Офлайн"
+      : status === "error"
+      ? "Ошибка связи"
+      : "Ожидание"
 
   return (
     <div className="relative inline-block" ref={containerRef}>
       <button
         type="button"
         onClick={() => setIsOpen((prev) => !prev)}
-        className="flex items-center gap-2 px-2.5 py-1.5 rounded-full text-xs font-medium border transition-all cursor-pointer bg-card/60 hover:bg-card border-border shadow-xs"
-        title="Статус синхронизации"
+        className="relative flex h-8 w-8 items-center justify-center rounded-full border border-border bg-card/60 shadow-xs transition-colors hover:bg-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+        title={`Статус синхронизации: ${statusDescription}${outboxPendingCount > 0 ? `; неотправленных операций: ${outboxPendingCount}` : ""}`}
+        aria-label={`Статус синхронизации: ${statusDescription}${outboxPendingCount > 0 ? `; неотправленных операций: ${outboxPendingCount}` : ""}`}
+        aria-expanded={isOpen}
       >
-        {/* Circular Progress Ring */}
-        <div className="relative w-5 h-5 flex items-center justify-center shrink-0">
-          <svg className="w-5 h-5 -rotate-90">
-            <circle
-              cx="10"
-              cy="10"
-              r={radius}
-              className="stroke-muted-foreground/20"
-              strokeWidth="2.2"
-              fill="none"
-            />
-            <circle
-              cx="10"
-              cy="10"
-              r={radius}
-              className={`transition-all duration-300 ${
-                status === "error"
-                  ? "stroke-destructive"
-                  : status === "offline"
-                  ? "stroke-muted-foreground"
-                  : "stroke-emerald-600 dark:stroke-emerald-400"
-              }`}
-              strokeWidth="2.2"
-              strokeDasharray={circumference}
-              strokeDashoffset={strokeDashoffset}
-              strokeLinecap="round"
-              fill="none"
-            />
-          </svg>
-
-          {/* Icon inside or alongside */}
-          <div className="absolute inset-0 flex items-center justify-center">
-            {status === "syncing" && (
-              <RefreshCw className="w-2.5 h-2.5 text-emerald-600 animate-spin" />
-            )}
-            {status === "synced" && (
-              <CheckCircle2 className="w-2.5 h-2.5 text-emerald-600 dark:text-emerald-400" />
-            )}
-            {status === "offline" && (
-              <WifiOff className="w-2.5 h-2.5 text-muted-foreground" />
-            )}
-            {status === "error" && (
-              <AlertCircle className="w-2.5 h-2.5 text-destructive" />
-            )}
-          </div>
-        </div>
-
-        {/* Status Text and Percentage */}
-        <div className="flex items-center gap-1.5">
-          {status === "syncing" && (
-            <span className="text-emerald-700 dark:text-emerald-300 font-semibold">
-              Синхр. {Math.round(percent)}%
-            </span>
-          )}
-          {status === "synced" && (
-            <span className="text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-              Онлайн
-            </span>
-          )}
-          {status === "offline" && (
-            <span className="text-amber-700 dark:text-amber-400 font-medium flex items-center gap-1">
-              <WifiOff className="w-3 h-3 text-amber-600" />
-              Офлайн
-            </span>
-          )}
-          {status === "error" && (
-            <span className="text-destructive font-medium">Ошибка связи</span>
-          )}
-
-          {/* Данные локальные и давно не проверялись в облаке */}
-          {isStale && status !== "syncing" && (
-            <Badge
-              variant="outline"
-              className="bg-amber-50 text-amber-800 border-amber-300 dark:bg-amber-950/60 dark:text-amber-200 dark:border-amber-800 text-[10px] px-1.5 py-0 h-4"
-              title="Показаны локальные данные, не подтверждённые облаком"
-            >
-              Устаревшие
-            </Badge>
-          )}
-
-          {/* Outbox badge if pending operations exist */}
-          {outboxPendingCount > 0 && (
-            <Badge
-              variant="secondary"
-              className="bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200 text-[10px] px-1.5 py-0 h-4 border-amber-300 dark:border-amber-800"
-            >
-              <Send className="w-2.5 h-2.5 mr-0.5 inline" />
-              {outboxPendingCount}
-            </Badge>
-          )}
-        </div>
+        <span className={`h-2.5 w-2.5 rounded-full ${dotColor}`} aria-hidden="true" />
+        {outboxPendingCount > 0 && (
+          <span
+            className="absolute right-0 top-0 h-2 w-2 rounded-full bg-amber-500 ring-2 ring-card"
+            title="Есть неотправленные данные"
+            aria-hidden="true"
+          />
+        )}
       </button>
 
       {/* Detail Popover Panel */}
@@ -186,13 +132,16 @@ export function SyncIndicator() {
                       ? "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/50 dark:text-blue-300"
                       : status === "offline"
                       ? "bg-muted text-muted-foreground"
-                      : "bg-destructive/10 text-destructive border-destructive/20"
+                      : status === "error"
+                      ? "bg-destructive/10 text-destructive border-destructive/20"
+                      : "bg-muted text-muted-foreground border-border"
                   }
                 >
                   {status === "synced" && "Всё зеркально"}
                   {status === "syncing" && `Обмен (${Math.round(percent)}%)`}
                   {status === "offline" && "Локальный режим"}
                   {status === "error" && "Сбой связи"}
+                  {status === "idle" && "Ожидание"}
                 </Badge>
                 <button
                   type="button"
@@ -203,6 +152,48 @@ export function SyncIndicator() {
                 </button>
               </div>
             </div>
+
+            <div className="space-y-2 rounded-lg bg-muted/50 p-2.5">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-muted-foreground">Прогресс синхронизации</span>
+                <span className="font-medium text-foreground">{progressPercent}%</span>
+              </div>
+              {status === "syncing" && (
+                <div
+                  className="h-1.5 overflow-hidden rounded-full bg-muted"
+                  role="progressbar"
+                  aria-label="Прогресс синхронизации"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={progressPercent}
+                >
+                  <div
+                    className="h-full rounded-full bg-blue-500 transition-[width] duration-300"
+                    style={{ width: `${progressPercent}%` }}
+                  />
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-muted-foreground">Состояние сети:</span>
+              <span className={`inline-flex items-center gap-1.5 font-medium ${isOnline ? "text-emerald-600 dark:text-emerald-400" : "text-amber-700 dark:text-amber-400"}`}>
+                {isOnline ? <Wifi className="h-3.5 w-3.5" /> : <WifiOff className="h-3.5 w-3.5" />}
+                {isOnline ? "Подключение есть" : "Нет подключения"}
+              </span>
+            </div>
+
+            {isStale && (
+              <div>
+                <Badge
+                  variant="outline"
+                  className="h-5 border-amber-300 bg-amber-50 px-2 text-[10px] text-amber-800 dark:border-amber-800 dark:bg-amber-950/60 dark:text-amber-200"
+                  title="Показаны локальные данные, не подтверждённые облаком"
+                >
+                  Устаревшие данные
+                </Badge>
+              </div>
+            )}
 
             <div className="space-y-1.5 text-xs text-muted-foreground">
               <div className="flex items-center justify-between">

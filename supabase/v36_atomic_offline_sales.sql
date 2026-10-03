@@ -59,10 +59,11 @@ BEGIN
    WHERE id = v_user_id
    FOR UPDATE;
 
-  IF NOT FOUND OR v_profile.status::text <> 'approved' OR v_profile.shop_id IS NULL THEN
+  -- Match RLS and the server action's active shop, including impersonation.
+  v_shop_id := public.current_shop_id();
+  IF NOT FOUND OR v_profile.status::text <> 'approved' OR v_shop_id IS NULL THEN
     RAISE EXCEPTION 'Нет доступа к магазину' USING ERRCODE = '42501';
   END IF;
-  v_shop_id := v_profile.shop_id;
 
   IF _sale IS NULL OR jsonb_typeof(_sale) <> 'object' THEN
     RAISE EXCEPTION 'Некорректные данные продажи' USING ERRCODE = '22023';
