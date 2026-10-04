@@ -31,11 +31,11 @@ const nextConfig = {
     ]
   },
 
-  async redirects() {
-    return [
-      { source: '/', destination: '/prepress', permanent: false },
-    ]
-  },
+  // async redirects() {
+  //   return [
+  //     { source: '/', destination: '/crm', permanent: false },
+  //   ]
+  // },
 }
 
 export default nextConfig
