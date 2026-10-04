@@ -22,7 +22,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { ArrowLeft, Pencil, Trash2, Sparkles, PackageX, Printer, Plus, ChevronLeft, ChevronRight, CheckCircle2, Layers } from "lucide-react"
+import { ArrowLeft, Pencil, Trash2, Sparkles, PackageX, Printer, Plus, ChevronLeft, ChevronRight, CheckCircle2, Layers, ChevronUp, ChevronDown } from "lucide-react"
 import { toast } from "sonner"
 import { useRouter } from "next/navigation"
 import { ProductDialog } from "@/components/screens/sklad/add-edit-Product/product-dialog"
@@ -85,6 +85,7 @@ export function SkladScreen({
   const [labelDialogOpen, setLabelDialogOpen] = useState(false)
   const [labelAutoPrint, setLabelAutoPrint] = useState(false)
   const [labelSizeKey, setLabelSizeKey] = useState<JewelryLabelSizeKey>(DEFAULT_SIZE_KEY)
+  const [isTopControlsCollapsed, setIsTopControlsCollapsed] = useState(true)
   const labelReturnScrollY = useRef<number | null>(null)
   const [deletedProductIds, setDeletedProductIds] = useState<Set<string>>(() => new Set())
   const [virtualMode, setVirtualMode] = useState(false)
@@ -159,6 +160,8 @@ export function SkladScreen({
 
   const openLabel = async (p: Product, autoPrint: boolean) => {
     try {
+      // На каждом открытии сразу освобождаем максимум места под редактор этикетки.
+      setIsTopControlsCollapsed(true)
       // В сценарии «товар → печать» сохраняем позицию до блокировки прокрутки диалогом.
       if (!productDialogOpen || labelReturnScrollY.current === null) {
         labelReturnScrollY.current = window.scrollY
@@ -603,35 +606,66 @@ export function SkladScreen({
             borderRadius: 0,
           }}
         >
-          <div className="flex shrink-0 items-center gap-2 border-b px-2 py-2 pt-[max(0.5rem,env(safe-area-inset-top))]">
-            <Button variant="ghost" size="sm" onClick={closeLabel} className="gap-1">
-              <ArrowLeft className="h-4 w-4" />
-              Склад
+          <div className="flex shrink-0 items-center justify-between gap-2 border-b px-2 py-2 pt-[max(0.5rem,env(safe-area-inset-top))]">
+            <div className="flex min-w-0 items-center gap-2 flex-1">
+              <Button variant="ghost" size="sm" onClick={closeLabel} className="gap-1 shrink-0">
+                <ArrowLeft className="h-4 w-4" />
+                <span className="hidden xs:inline">Склад</span>
+              </Button>
+              <DialogTitle className="min-w-0 truncate text-sm font-semibold">
+                Печать{labelProduct?.name ? `: ${labelProduct.name}` : " этикетки"}
+              </DialogTitle>
+            </div>
+            {/* Кнопка сворачивания параметров в верхней части для увеличения рабочей зоны на мобильных устройствах */}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setIsTopControlsCollapsed((v) => !v)}
+              className={`h-8 gap-1.5 rounded-lg px-2.5 text-xs font-medium shrink-0 transition-colors ${
+                isTopControlsCollapsed ? "max-w-[48vw] sm:max-w-[16rem]" : ""
+              }`}
+              title={isTopControlsCollapsed ? "Развернуть параметры принтера и изделия" : "Свернуть параметры для увеличения рабочей области"}
+              aria-label={isTopControlsCollapsed
+                ? `Развернуть параметры этикетки ${labelProduct?.name ?? ""}`.trim()
+                : "Свернуть верхние параметры"}
+            >
+              {isTopControlsCollapsed ? (
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <ChevronDown className="h-3.5 w-3.5 text-primary" />
+                  <span className="truncate text-[11px] font-medium text-primary">
+                    {labelProduct?.name || "Этикетка"}
+                  </span>
+                </span>
+              ) : (
+                <>
+                  <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" />
+                  <span className="text-[11px] text-muted-foreground hidden xs:inline">Свернуть верх</span>
+                </>
+              )}
             </Button>
-            <DialogTitle className="min-w-0 flex-1 truncate text-sm font-semibold">
-              Печать этикетки{labelProduct?.name ? `: ${labelProduct.name}` : ""}
-            </DialogTitle>
           </div>
           <div className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col">
-          <div className="flex shrink-0 items-center gap-2 border-b px-3 py-2">
-            <label htmlFor="inventory-printer-model" className="shrink-0 text-xs font-medium">Принтер</label>
-            <select
-              id="inventory-printer-model"
-              value={printerConnection.modelKey}
-              onChange={(event) => {
-                const profile = getPrinterProfile(event.target.value)
-                printerConnection.setModelKey(profile.key)
-                setLabelSizeKey(profile.defaultLabelKey)
-                setLabelAutoPrint(false)
-              }}
-              className="min-w-0 flex-1 rounded-md border border-input bg-background px-2 py-1.5 text-xs"
-            >
-              {PRINTER_PROFILES.map((profile) => (
-                <option key={profile.key} value={profile.key}>{profile.displayName}</option>
-              ))}
-            </select>
-            <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">{printerProfile.dpi} dpi</span>
-          </div>
+          {!isTopControlsCollapsed && (
+            <div className="flex shrink-0 items-center gap-2 border-b px-3 py-2 bg-muted/20">
+              <label htmlFor="inventory-printer-model" className="shrink-0 text-xs font-medium">Принтер</label>
+              <select
+                id="inventory-printer-model"
+                value={printerConnection.modelKey}
+                onChange={(event) => {
+                  const profile = getPrinterProfile(event.target.value)
+                  printerConnection.setModelKey(profile.key)
+                  setLabelSizeKey(profile.defaultLabelKey)
+                  setLabelAutoPrint(false)
+                }}
+                className="min-w-0 flex-1 rounded-md border border-input bg-background px-2 py-1.5 text-xs"
+              >
+                {PRINTER_PROFILES.map((profile) => (
+                  <option key={profile.key} value={profile.key}>{profile.displayName}</option>
+                ))}
+              </select>
+              <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">{printerProfile.dpi} dpi</span>
+            </div>
+          )}
           {labelProduct && (printerProfile.supportsDirectBluetooth === false || !fitsPrinthead) && (
             <p role="status" className="shrink-0 border-b bg-amber-500/10 px-3 py-1.5 text-[11px] leading-4 text-amber-700 dark:text-amber-300">
               {!fitsPrinthead
@@ -639,7 +673,7 @@ export function SkladScreen({
                 : `B3S: прямой Bluetooth недоступен. Скачайте PNG и напечатайте через приложение Niimbot без масштабирования.`}
             </p>
           )}
-          {labelProduct && (
+          {!isTopControlsCollapsed && labelProduct && (
             <details className="shrink-0 border-b">
               <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2 text-xs font-medium hover:bg-muted/40 [&::-webkit-details-marker]:hidden">
                 <span>Подробная информация об изделии</span>

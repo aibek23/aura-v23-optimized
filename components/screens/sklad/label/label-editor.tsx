@@ -2,7 +2,7 @@
 import React, {
   useRef, useState, useMemo, useCallback, useEffect,
 } from "react"
-import { Download, X } from "lucide-react"
+import { Download, X, ChevronUp, ChevronDown } from "lucide-react"
 import { canvasToLabelDataUrl, getLabelSizeDef, DEFAULT_SIZE_KEY, LABEL_SIZES, NIIMBOT_MODEL } from "@/lib/niimbot"
 import type { JewelryLabelSizeKey } from "@/lib/niimbot"
 import type { LabelEditorProps } from "./types"
@@ -104,6 +104,7 @@ export function LabelEditor({
   const [printStatus,   setPrintStatus]   = useState("")
   const [loaded,      setLoaded]      = useState(false)
   const [collapsed,   setCollapsed]   = useState(false)
+  const [topCollapsed, setTopCollapsed] = useState(false)
 
   const isTransformingRef = useRef(false)
   const isPanModeForPan   = useRef(false)
@@ -442,49 +443,126 @@ export function LabelEditor({
         </div>
       )}
 
-      {/* ── ВЕРХНЯЯ ПАНЕЛЬ ── */}
-      {!collapsed && (
+      {/* ── ВЕРХНЯЯ ПАНЕЛЬ (ПОЛНАЯ ИЛИ СВЁРНУТАЯ ДЛЯ УВЕЛИЧЕНИЯ РАБОЧЕЙ ЗОНЫ) ── */}
+      {!collapsed && !topCollapsed && (
         <div className="z-20 border-b bg-background/90 backdrop-blur-md shrink-0">
           <div className="flex items-center justify-between px-3 py-2">
-            <span className="text-sm font-semibold truncate max-w-[70vw] leading-tight">
-              Этикетка · <span className="text-primary">{sizeDef.label}</span>
+            <span className="text-sm font-semibold truncate max-w-[50vw] leading-tight">
+              Этикетка · <span className="text-primary font-mono">{sizeDef.label}</span>
             </span>
-            <div className="flex shrink-0 items-center gap-1">
+            <div className="flex shrink-0 items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setTopCollapsed(true)}
+                className="inline-flex items-center gap-1 rounded-lg border border-border/80 bg-background/80 px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors shrink-0"
+                title="Свернуть верхнюю панель для увеличения рабочей области"
+              >
+                <ChevronUp className="h-3.5 w-3.5" />
+                <span className="text-[11px] hidden xs:inline">Свернуть</span>
+              </button>
               <button
                 type="button"
                 onClick={handleExportPng}
                 disabled={!loaded || !fitsPrinthead}
-                className="inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs hover:bg-muted disabled:opacity-50"
+                className="inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs hover:bg-muted disabled:opacity-50"
                 title={fitsPrinthead ? `Скачать PNG · ${printerProfile.dpi} dpi` : "Ширина макета превышает ширину печатающей головки"}
               >
                 <Download className="h-3.5 w-3.5" aria-hidden="true" />
-                PNG
+                <span className="hidden xs:inline">PNG</span>
               </button>
-            {onClose && (
-              <button
-                type="button"
-                onClick={onClose}
-                className="rounded-full p-1.5 hover:bg-muted transition-colors shrink-0"
-                aria-label="Закрыть"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            )}
+              {onClose && (
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="rounded-full p-1.5 hover:bg-muted transition-colors shrink-0"
+                  aria-label="Закрыть"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              )}
             </div>
           </div>
           <LabelEditorToolbar zone="header" {...toolbarCommon} />
         </div>
       )}
 
-      {collapsed && onClose && (
-        <button
-          type="button"
-          onClick={onClose}
-          className="absolute right-3 top-3 z-30 rounded-full border border-white/20 bg-black/35 p-1.5 text-white/90 backdrop-blur-md hover:bg-black/50 transition-colors"
-          aria-label="Закрыть"
-        >
-          <X className="h-4 w-4" />
-        </button>
+      {/* Компактный режим верхней панели: только статус и кнопка разворачивания */}
+      {!collapsed && topCollapsed && (
+        <div className="z-20 border-b bg-background/95 backdrop-blur-md shrink-0 px-3 py-1.5 flex items-center justify-between">
+          <div className="flex min-w-0 items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setTopCollapsed(false)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border/80 bg-background px-2.5 py-1 text-xs font-medium text-foreground hover:border-primary/50 hover:bg-muted transition-colors"
+              title="Развернуть верхнюю панель инструментов"
+            >
+              <ChevronDown className="h-3.5 w-3.5 text-primary shrink-0" />
+              <span className="truncate text-[11px]">
+                Этикетка · <strong className="text-primary font-mono">{sizeDef.label}</strong>
+              </span>
+            </button>
+          </div>
+          <div className="flex shrink-0 items-center gap-1.5">
+            <button
+              type="button"
+              onClick={handleExportPng}
+              disabled={!loaded || !fitsPrinthead}
+              className="inline-flex items-center gap-1 rounded border px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
+              title="Скачать PNG"
+            >
+              <Download className="h-3 w-3" />
+              <span className="hidden xs:inline">PNG</span>
+            </button>
+            {onClose && (
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-full p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                aria-label="Закрыть"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Свёрнутый режим (и верх и низ свернуты): плавающие кнопки управления */}
+      {collapsed && (
+        <div className="absolute top-2 left-3 right-3 z-30 pointer-events-none flex items-center justify-between">
+          <button
+            type="button"
+            onClick={() => { setCollapsed(false); setTopCollapsed(false); }}
+            className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full border border-border/80 bg-background/90 px-3 py-1 text-xs font-medium shadow-md backdrop-blur-md hover:bg-background hover:border-primary/50 transition-colors"
+            title="Развернуть панели настроек"
+          >
+            <ChevronDown className="h-3.5 w-3.5 text-primary" />
+            <span className="text-[11px]">
+              Этикетка · <strong className="text-primary font-mono">{sizeDef.label}</strong>
+            </span>
+          </button>
+          <div className="pointer-events-auto flex items-center gap-1">
+            <button
+              type="button"
+              onClick={handleExportPng}
+              disabled={!loaded || !fitsPrinthead}
+              className="rounded-full border border-border/80 bg-background/90 p-1.5 text-muted-foreground shadow-md backdrop-blur-md hover:text-foreground"
+              title="Скачать PNG"
+            >
+              <Download className="h-3.5 w-3.5" />
+            </button>
+            {onClose && (
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-full border border-border/80 bg-background/90 p-1.5 text-muted-foreground shadow-md backdrop-blur-md hover:text-foreground"
+                aria-label="Закрыть"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+        </div>
       )}
 
       {/* ── ОБЛАСТЬ ХОЛСТА ── */}

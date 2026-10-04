@@ -135,7 +135,7 @@ export function ProductGeneralInfo({
       </div>
 
       {/* Категория (проба выбирается один раз — рядом с «Состояние изделия») */}
-      <div className="grid gap-3">
+      <div className="grid grid-cols-2 gap-3">
         <div className="grid gap-2">
           <Label>Категория</Label>
           <Select
@@ -155,38 +155,36 @@ export function ProductGeneralInfo({
             </SelectContent>
           </Select>
         </div>
-      </div>
 
-      {/* Артикул */}
-      <div className="grid gap-2">
-        <Label htmlFor="p-sku">Артикул</Label>
-        <div className="flex gap-2">
-          <Input
-            id="p-sku"
-            value={form.sku}
-            readOnly
-            aria-readonly="true"
-            tabIndex={-1}
-            placeholder={skuLoading ? "Генерируем…" : "Выберите категорию и цвет металла"}
-            className={cn(
-              "cursor-not-allowed bg-muted/40 font-mono tracking-wide",
-              skuError && "border-destructive",
-            )}
-          />
-          <Button
-            type="button"
-            variant="outline"
-            size="icon"
-            disabled={skuLoading}
-            onClick={onRefreshArticle}
-          >
-            <RefreshCw className={cn("size-4", skuLoading && "animate-spin")} />
-          </Button>
+        {/* Артикул (сделан блеклым) */}
+        <div className="grid gap-2 opacity-75">
+          <Label htmlFor="p-sku" className="text-muted-foreground">Артикул</Label>
+          <div className="flex gap-2">
+            <Input
+              id="p-sku"
+              value={form.sku}
+              readOnly
+              aria-readonly="true"
+              tabIndex={-1}
+              placeholder={skuLoading ? "Генерируем…" : "Авто"}
+              className={cn(
+                "cursor-not-allowed bg-muted/60 text-muted-foreground font-mono tracking-wide border-dashed",
+                skuError && "border-destructive",
+              )}
+            />
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              disabled={skuLoading}
+              onClick={onRefreshArticle}
+              className="text-muted-foreground"
+            >
+              <RefreshCw className={cn("size-4", skuLoading && "animate-spin")} />
+            </Button>
+          </div>
+          {skuError ? <p className="text-xs text-destructive">{skuError}</p> : null}
         </div>
-        <p className="text-[11px] text-muted-foreground">
-          Артикул создаётся автоматически по категории и цвету металла и недоступен для ручного ввода.
-        </p>
-        {skuError ? <p className="text-xs text-destructive">{skuError}</p> : null}
       </div>
     </>
   )

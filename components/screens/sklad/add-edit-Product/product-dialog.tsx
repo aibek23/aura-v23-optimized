@@ -17,7 +17,7 @@ import { cn } from "@/lib/utils"
 import { toast } from "sonner"
 import { useRouter } from "next/navigation"
 import { InlineLoader } from "@/components/ui/page-loader"
-import { CheckCircle2 } from "lucide-react"
+import { CheckCircle2, ChevronDown, ChevronUp } from "lucide-react"
 import { formatSom } from "@/lib/format"
 
 export function ProductDialog({
@@ -47,6 +47,9 @@ export function ProductDialog({
   const [consignmentChecked, setConsignmentChecked] = useState(
     Boolean(product?.consignment_operation_id),
   )
+
+  // Единственное состояние для общего блока (по умолчанию false — закрыт)
+  const [extraSectionOpen, setExtraSectionOpen] = useState(false)
 
   const {
     form,
@@ -248,39 +251,6 @@ export function ProductDialog({
             </div>
           </div>
 
-          {/* Цена продажи */}
-          <div className="grid gap-3 rounded-xl border border-border bg-muted/30 p-3">
-            <div className="text-sm font-medium">Цена на этикетку</div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="grid gap-2">
-                <Label htmlFor="p-gram-sale">За грамм (с)</Label>
-                <Input
-                  id="p-gram-sale"
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  value={form.price_per_gram_sale || ""}
-                  onChange={(e) => changeGramSale(Number(e.target.value))}
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="p-sell">Итого (с)</Label>
-                <Input
-                  id="p-sell"
-                  type="number"
-                  min={0}
-                  value={form.sale_price || ""}
-                  onChange={(e) => changeSalePrice(Number(e.target.value))}
-                />
-              </div>
-            </div>
-            {consignmentChecked && !form.supplier_name.trim() && (
-              <p className="text-[11px] text-muted-foreground">
-                Если поставщик не указан, при сохранении им будет назначен пользователь, который оформил операцию.
-              </p>
-            )}
-          </div>
-
           {/* Закупка */}
           {canSeePurchasePrice && (
             <div className="grid gap-3 rounded-xl border border-border bg-muted/30 p-3">
@@ -348,72 +318,124 @@ export function ProductDialog({
               </div>
             </div>
           )}
-
-          {/* Вставки и Описание */}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="grid gap-2">
-              <Label htmlFor="p-stones">Вставки / камни</Label>
-              <Input id="p-stones" value={form.stones} onChange={(e) => setField("stones", e.target.value)} />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="p-desc">Описание</Label>
-              <Input id="p-desc" value={form.description} onChange={(e) => setField("description", e.target.value)} />
-            </div>
-          </div>
-
-          {/* Поставщик */}
+          
+          {/* Цена на этикетку */}
           <div className="grid gap-3 rounded-xl border border-border bg-muted/30 p-3">
-            <div className="flex items-center justify-between gap-2">
-              <div className="text-sm font-medium">Поставщик</div>
-              <label
-                className={cn(
-                  "inline-flex items-center gap-2 text-xs font-medium",
-                  product?.consignment_operation_id
-                    ? "cursor-not-allowed text-emerald-600"
-                    : "cursor-pointer text-primary",
-                )}
-                title={
-                  product?.consignment_operation_id
-                    ? "Операция уже записана и не может быть отменена"
-                    : "Операция будет записана после нажатия «Сохранить»"
-                }
-              >
-                <input
-                  type="checkbox"
-                  checked={consignmentChecked}
-                  disabled={saving || Boolean(product?.consignment_operation_id)}
-                  onChange={(e) => setConsignmentChecked(e.target.checked)}
-                  className="h-4 w-4 rounded border-border accent-primary"
-                />
-                <span className="inline-flex items-center gap-1">
-                  {product?.consignment_operation_id && <CheckCircle2 className="h-3.5 w-3.5" />}
-                  Взято на реализацию
-                </span>
-              </label>
-            </div>
+            <div className="text-sm font-medium">Цена на этикетку</div>
             <div className="grid grid-cols-2 gap-3">
               <div className="grid gap-2">
-                <Label htmlFor="p-supplier-name">Имя / компания</Label>
+                <Label htmlFor="p-gram-sale">За грамм (с)</Label>
                 <Input
-                  id="p-supplier-name"
-                  placeholder="Иванов И.И."
-                  value={form.supplier_name ?? ""}
-                  onChange={(e) => setField("supplier_name", e.target.value)}
+                  id="p-gram-sale"
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={form.price_per_gram_sale || ""}
+                  onChange={(e) => changeGramSale(Number(e.target.value))}
                 />
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="p-supplier-phone">Телефон</Label>
+                <Label htmlFor="p-sell">Итого (с)</Label>
                 <Input
-                  id="p-supplier-phone"
-                  placeholder="+996 700 000 000"
-                  value={form.supplier_phone ?? ""}
-                  onChange={(e) => setField("supplier_phone", e.target.value)}
+                  id="p-sell"
+                  type="number"
+                  min={0}
+                  value={form.sale_price || ""}
+                  onChange={(e) => changeSalePrice(Number(e.target.value))}
                 />
               </div>
             </div>
+            {consignmentChecked && !form.supplier_name.trim() && (
+              <p className="text-[11px] text-muted-foreground">
+                Если поставщик не указан, при сохранении им будет назначен пользователь, который оформил операцию.
+              </p>
+            )}
           </div>
 
-          <ProductImages images={form.images} onChange={(next) => setField("images", next)}  />
+          {/* Единый сворачиваемый блок (Дефолтно закрыт) */}
+          <div className="rounded-xl border border-border bg-muted/20 overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setExtraSectionOpen(!extraSectionOpen)}
+              className="flex w-full items-center justify-between p-3 text-sm font-medium hover:bg-muted/40 transition-colors"
+            >
+              <span>Дополнительно (вставки, поставщик, фото)</span>
+              {extraSectionOpen ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+            </button>
+            
+            {extraSectionOpen && (
+              <div className="grid gap-4 p-3 border-t border-border/50">
+                {/* Вставки и Описание */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="grid gap-2">
+                    <Label htmlFor="p-stones">Вставки / камни</Label>
+                    <Input id="p-stones" value={form.stones} onChange={(e) => setField("stones", e.target.value)} />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="p-desc">Описание</Label>
+                    <Input id="p-desc" value={form.description} onChange={(e) => setField("description", e.target.value)} />
+                  </div>
+                </div>
+
+                {/* Поставщик */}
+                <div className="grid gap-3 rounded-xl border border-border bg-muted/30 p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-sm font-medium">Поставщик</div>
+                    <label
+                      className={cn(
+                        "inline-flex items-center gap-2 text-xs font-medium",
+                        product?.consignment_operation_id
+                          ? "cursor-not-allowed text-emerald-600"
+                          : "cursor-pointer text-primary",
+                      )}
+                      title={
+                        product?.consignment_operation_id
+                          ? "Операция уже записана и не может быть отменена"
+                          : "Операция будет записана после нажатия «Сохранить»"
+                      }
+                    >
+                      <input
+                        type="checkbox"
+                        checked={consignmentChecked}
+                        disabled={saving || Boolean(product?.consignment_operation_id)}
+                        onChange={(e) => setConsignmentChecked(e.target.checked)}
+                        className="h-4 w-4 rounded border-border accent-primary"
+                      />
+                      <span className="inline-flex items-center gap-1">
+                        {product?.consignment_operation_id && <CheckCircle2 className="h-3.5 w-3.5" />}
+                        Взято на реализацию
+                      </span>
+                    </label>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="grid gap-2">
+                      <Label htmlFor="p-supplier-name">Имя / компания</Label>
+                      <Input
+                        id="p-supplier-name"
+                        placeholder="Иванов И.И."
+                        value={form.supplier_name ?? ""}
+                        onChange={(e) => setField("supplier_name", e.target.value)}
+                      />
+                    </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="p-supplier-phone">Телефон</Label>
+                      <Input
+                        id="p-supplier-phone"
+                        placeholder="+996 700 000 000"
+                        value={form.supplier_phone ?? ""}
+                        onChange={(e) => setField("supplier_phone", e.target.value)}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Фотографии */}
+                <div>
+                  <ProductImages images={form.images} onChange={(next) => setField("images", next)} />
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
         <DialogFooter className="gap-2 sm:justify-between">

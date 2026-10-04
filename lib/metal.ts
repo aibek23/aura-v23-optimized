@@ -14,7 +14,7 @@ export const METAL_CONDITIONS: { value: MetalCondition; label: string }[] = [
 ]
 
 /** Базовые металлы без пробы. */
-export const METAL_BASES = ["Золото", "Белое золото", "Серебро", "Платина"] as const
+export const METAL_BASES = ["Золото", "Серебро", "Платина"] as const
 
 /** Популярные пробы. Остальные пользователь добавляет вручную. */
 export const DEFAULT_PURITIES = ["375", "585", "750", "999", "925"] as const

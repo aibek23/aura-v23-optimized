@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { cn } from "@/lib/utils"
-import { Plus, X } from "lucide-react"
+import { ChevronDown, ChevronUp, Plus, X } from "lucide-react"
 import {
   DEFAULT_PURITIES,
   METAL_BASES,
@@ -35,6 +35,8 @@ export function MetalPicker({
 }) {
   const [purities, setPurities] = useState<string[]>([...DEFAULT_PURITIES])
   const [manual, setManual] = useState("")
+  // Состояние для сворачивания блока своей пробы (по умолчанию false — закрыт)
+  const [customPurityOpen, setCustomPurityOpen] = useState(false)
 
   useEffect(() => setPurities(readPurities()), [])
 
@@ -55,7 +57,7 @@ export function MetalPicker({
 
   return (
     <div className="grid gap-3 rounded-xl border border-border bg-muted/30 p-3">
-      <div className="grid gap-2">
+      {/* <div className="grid gap-2">
         <Label>Состояние изделия</Label>
         <div className="grid grid-cols-2 gap-1.5">
           {METAL_CONDITIONS.map((c) => (
@@ -74,9 +76,9 @@ export function MetalPicker({
             </button>
           ))}
         </div>
-      </div>
+      </div> */}
 
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid grid-cols-2 gap-3">
         <div className="grid gap-2">
           <Label>Металл</Label>
           <Select value={base} onValueChange={(v) => emit({ base: v ?? base })}>
@@ -111,48 +113,66 @@ export function MetalPicker({
         </div>
       </div>
 
-      <div className="grid gap-1.5">
-        <Label className="text-xs text-muted-foreground">Своя проба (сохраняется в справочник)</Label>
-        <div className="flex gap-2">
-          <Input
-            value={manual}
-            placeholder="например 916"
-            onChange={(e) => setManual(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault()
-                saveManual()
-              }
-            }}
-          />
-          <Button type="button" variant="outline" size="icon" onClick={saveManual} aria-label="Добавить пробу">
-            <Plus className="size-4" />
-          </Button>
-        </div>
-        <div className="flex flex-wrap gap-1.5">
-          {purities
-            .filter((p) => !(DEFAULT_PURITIES as readonly string[]).includes(p))
-            .map((p) => (
-              <span
-                key={p}
-                className="inline-flex items-center gap-1 rounded-full border border-border py-0.5 pl-2.5 pr-1 text-[11px]"
-              >
-                {p}
-                <button
-                  type="button"
-                  aria-label={`Удалить пробу ${p}`}
-                  onClick={() => {
-                    const next = removePurity(p)
-                    setPurities(next)
-                    if (purity === p) emit({ purity: "" })
-                  }}
-                  className="rounded-full p-0.5 text-muted-foreground/70 hover:bg-destructive/10 hover:text-destructive"
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              </span>
-            ))}
-        </div>
+      {/* Компактный сворачиваемый блок для своей пробы (дефолтно закрыт) */}
+      <div className="rounded-lg border border-border/60 bg-muted/20 overflow-hidden">
+        <button
+          type="button"
+          onClick={() => setCustomPurityOpen(!customPurityOpen)}
+          className="flex w-full items-center justify-between px-3 py-2 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted/40 transition-colors"
+        >
+          <span>Добавить свою пробу</span>
+          {customPurityOpen ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+        </button>
+
+        {customPurityOpen && (
+          <div className="grid gap-2 p-3 pt-1 border-t border-border/50">
+            <div className="flex gap-2">
+              <Input
+                value={manual}
+                placeholder="например 916"
+                className="h-8 text-xs"
+                onChange={(e) => setManual(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault()
+                    saveManual()
+                  }
+                }}
+              />
+              <Button type="button" variant="outline" size="sm" className="h-8 px-2.5" onClick={saveManual} aria-label="Добавить пробу">
+                <Plus className="size-3.5 mr-1" />
+                Добавить
+              </Button>
+            </div>
+            
+            {purities.filter((p) => !(DEFAULT_PURITIES as readonly string[]).includes(p)).length > 0 && (
+              <div className="flex flex-wrap gap-1.5 pt-1">
+                {purities
+                  .filter((p) => !(DEFAULT_PURITIES as readonly string[]).includes(p))
+                  .map((p) => (
+                    <span
+                      key={p}
+                      className="inline-flex items-center gap-1 rounded-full border border-border py-0.5 pl-2.5 pr-1 text-[11px] bg-background"
+                    >
+                      {p}
+                      <button
+                        type="button"
+                        aria-label={`Удалить пробу ${p}`}
+                        onClick={() => {
+                          const next = removePurity(p)
+                          setPurities(next)
+                          if (purity === p) emit({ purity: "" })
+                        }}
+                        className="rounded-full p-0.5 text-muted-foreground/70 hover:bg-destructive/10 hover:text-destructive"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </span>
+                  ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <p className="text-[11px] text-muted-foreground">
