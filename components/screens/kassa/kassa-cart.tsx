@@ -359,68 +359,70 @@ export function KassaCart({
                     </div>
                   )}
 
-                  <div className="grid grid-cols-1 gap-1.5 bg-muted/30 p-1.5 rounded-lg border border-border/30 text-[10px]">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-muted-foreground font-medium flex items-center gap-1">
-                        <Tag className="h-3 w-3 text-primary" /> Своя цена:
-                      </span>
+                    {/* Блок «Своя цена» и «Скидка» (увеличен инпут и цифры для Своя цена) */}
+                <div className="grid grid-cols-1 gap-2 bg-muted/40 p-2 rounded-xl border border-border/40">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-medium text-foreground flex items-center gap-1.5">
+                      <Tag className="h-3.5 w-3.5 text-primary" /> Своя цена:
+                    </span>
+                    <Input
+                      type="number"
+                      min={0}
+                      inputMode="decimal"
+                      placeholder={formatSom(i.price)}
+                      value={customPriceInputValue}
+                      onChange={(e) => handleCustomPriceInputChange(i, e.target.value)}
+                      onBlur={() => {
+                        setCustomPriceInputs((prev) => {
+                          const next = { ...prev }
+                          delete next[i.lineId]
+                          return next
+                        })
+                      }}
+                      className="h-9 w-32 text-center px-2 text-sm font-mono font-bold text-primary bg-background border-primary/40 focus:border-primary shadow-sm placeholder:text-muted-foreground placeholder:opacity-50"
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between gap-2 pt-1.5 border-t border-border/20 text-[10px]">
+                    <span className="text-muted-foreground font-medium">Скидка:</span>
+                    <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1">
+                        <Input
+                          type="number"
+                          min={0}
+                          placeholder="0"
+                          value={i.discountSom || ""}
+                          onChange={(e) => {
+                            const val = Math.max(0, Math.round(parseFloat(e.target.value) || 0))
+                            changeItemDiscountSom(i.lineId, val)
+                            if (i.price > 0) {
+                              changeItemDiscountPercent(i.lineId, (val / i.price) * 100)
+                            }
+                        }}
+                        className="h-6 w-16 text-center px-1 text-[11px] font-mono bg-background"
+                      />
+                      <span className="text-[10px] text-muted-foreground">с</span>
+                    </div>
+                    <div className="flex items-center gap-1">
                       <Input
                         type="number"
                         min={0}
-                        inputMode="decimal"
-                        placeholder={formatSom(i.price)}
-                        value={customPriceInputValue}
-                        onChange={(e) => handleCustomPriceInputChange(i, e.target.value)}
-                        onBlur={() => {
-                          setCustomPriceInputs((prev) => {
-                            const next = { ...prev }
-                            delete next[i.lineId]
-                            return next
-                          })
+                        max={100}
+                        placeholder="0"
+                        value={i.discountPercent ? Math.round(i.discountPercent * 100) / 100 : ""}
+                        onChange={(e) => {
+                          const val = Math.min(100, Math.max(0, parseFloat(e.target.value) || 0))
+                          changeItemDiscountPercent(i.lineId, val)
+                          changeItemDiscountSom(i.lineId, Math.round((i.price * val) / 100))
                         }}
-                        className="h-6 w-24 text-center px-1 text-[11px] font-mono font-semibold text-primary bg-background border-primary/30 focus:border-primary placeholder:text-muted-foreground placeholder:opacity-60"
+                        className="h-6 w-12 text-center px-1 text-[11px] font-mono bg-background"
                       />
-                    </div>
-
-                    <div className="flex items-center justify-between gap-2 pt-1 border-t border-border/20">
-                      <span className="text-muted-foreground font-medium">Скидка:</span>
-                      <div className="flex items-center gap-2">
-                        <div className="flex items-center gap-1">
-                          <Input
-                            type="number"
-                            min={0}
-                            placeholder="0"
-                            value={i.discountSom || ""}
-                            onChange={(e) => {
-                              const val = Math.max(0, Math.round(parseFloat(e.target.value) || 0))
-                              changeItemDiscountSom(i.lineId, val)
-                              if (i.price > 0) {
-                                changeItemDiscountPercent(i.lineId, (val / i.price) * 100)
-                              }
-                            }}
-                            className="h-6 w-16 text-center px-1 text-[11px] font-mono bg-background"
-                          />
-                          <span className="text-[10px] text-muted-foreground">с</span>
-                        </div>
-                        <div className="flex items-center gap-1">
-                          <Input
-                            type="number"
-                            min={0}
-                            max={100}
-                            placeholder="0"
-                            value={i.discountPercent ? Math.round(i.discountPercent * 100) / 100 : ""}
-                            onChange={(e) => {
-                              const val = Math.min(100, Math.max(0, parseFloat(e.target.value) || 0))
-                              changeItemDiscountPercent(i.lineId, val)
-                              changeItemDiscountSom(i.lineId, Math.round((i.price * val) / 100))
-                            }}
-                            className="h-6 w-12 text-center px-1 text-[11px] font-mono bg-background"
-                          />
-                          <span className="text-[10px] text-muted-foreground">%</span>
-                        </div>
-                      </div>
+                      <span className="text-[10px] text-muted-foreground">%</span>
                     </div>
                   </div>
+                </div>
+                </div>
+        
                 </div>
               )
             })

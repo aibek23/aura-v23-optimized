@@ -20,6 +20,7 @@ async function buildHorizontalLayout(
   sizeLine: string,
   priceLine: string,
   skuValue: string,
+  onBaseReady?: () => void,
 ): Promise<void> {
   const colLeft = Math.round(W * 0.63)
   const qrSize  = Math.min(Math.round(W * 0.32), H - 16)
@@ -52,6 +53,10 @@ async function buildHorizontalLayout(
     data: { role: "sku" },
   })
 
+  canvas.add(metal, weightText, sizeText, priceLabel, price, skuText)
+  onBaseReady?.()
+  canvas.requestRenderAll()
+
   const qrDataUrl = await safeQrDataUrl(data)
   if (!canvas.lowerCanvasEl) return
   const qrImg = qrDataUrl ? await FabricImage.fromURL(qrDataUrl) : null
@@ -65,8 +70,8 @@ async function buildHorizontalLayout(
   }
 
   if (!canvas.lowerCanvasEl) return
-  canvas.add(metal, weightText, sizeText, priceLabel, price, skuText)
   if (qrImg) canvas.add(qrImg)
+  canvas.requestRenderAll()
 }
 
 async function buildVerticalLayout(
@@ -79,6 +84,7 @@ async function buildVerticalLayout(
   sizeLine: string,
   priceLine: string,
   skuValue: string,
+  onBaseReady?: () => void,
 ): Promise<void> {
   const qrSize = Math.min(Math.round(W * 0.55), Math.round(H * 0.22))
 
@@ -110,6 +116,10 @@ async function buildVerticalLayout(
     data: { role: "sku" },
   })
 
+  canvas.add(metal, weightText, sizeText, priceLabel, price, skuText)
+  onBaseReady?.()
+  canvas.requestRenderAll()
+
   const qrDataUrl = await safeQrDataUrl(data)
   if (!canvas.lowerCanvasEl) return
   const qrImg = qrDataUrl ? await FabricImage.fromURL(qrDataUrl) : null
@@ -123,14 +133,15 @@ async function buildVerticalLayout(
   }
 
   if (!canvas.lowerCanvasEl) return
-  canvas.add(metal, weightText, sizeText, priceLabel, price, skuText)
   if (qrImg) canvas.add(qrImg)
+  canvas.requestRenderAll()
 }
 
 export async function buildDefaultLayout(
   canvas: Canvas,
   data: Product,
   sizeDef: LabelSizeDef,
+  onBaseReady?: () => void,
 ): Promise<void> {
   if (!canvas.lowerCanvasEl) return
   canvas.clear()
@@ -141,11 +152,15 @@ export async function buildDefaultLayout(
   const skuValue   = data.sku || "NO-SKU"
 
   if (body.w >= body.h) {
-    await buildHorizontalLayout(canvas, data, body.w, body.h, metalLine, weightLine, sizeLine, priceLine, skuValue)
+    await buildHorizontalLayout(
+      canvas, data, body.w, body.h, metalLine, weightLine, sizeLine, priceLine, skuValue, onBaseReady,
+    )
   } else {
-    await buildVerticalLayout(canvas, data, body.w, body.h, metalLine, weightLine, sizeLine, priceLine, skuValue)
+    await buildVerticalLayout(
+      canvas, data, body.w, body.h, metalLine, weightLine, sizeLine, priceLine, skuValue, onBaseReady,
+    )
   }
-  canvas.renderAll()
+  canvas.requestRenderAll()
 }
 
 export async function refreshLiveData(canvas: Canvas, data: Product): Promise<void> {

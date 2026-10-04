@@ -31,6 +31,7 @@ export interface TransformSnapshot {
 }
 
 interface UseCanvasRepaintParams {
+  enabled?:        boolean
   fabricRef:       React.RefObject<FabricCanvas | null>
   containerRef:    React.RefObject<HTMLDivElement | null>
   staticCanvasRef: React.RefObject<HTMLCanvasElement | null>
@@ -45,6 +46,7 @@ interface UseCanvasRepaintParams {
 }
 
 export function useCanvasRepaint({
+  enabled = true,
   fabricRef, containerRef, staticCanvasRef,
   rulerHRef, rulerVRef, guidesCanvasRef,
   transformRef, sizeDef, sizeKey, rotation = 0, manualGuides = [],
@@ -239,6 +241,7 @@ export function useCanvasRepaint({
   }, [drawStatic, drawRulers, drawEdgeIndicators])
 
   useEffect(() => {
+    if (!enabled) return
     const fabric = fabricRef.current
     if (!fabric) return
 
@@ -265,7 +268,7 @@ export function useCanvasRepaint({
       fabric.off("selection:cleared", onSelectionCleared)
       if (rafRef.current !== null) cancelAnimationFrame(rafRef.current)
     }
-  }, [fabricRef, sizeKey, scheduleFullRepaint, clearGuides, drawRulers])
+  }, [enabled, fabricRef, sizeKey, scheduleFullRepaint, clearGuides, drawRulers])
 
   useEffect(() => {
     const redrawAll = () => scheduleFullRepaint()
@@ -278,15 +281,12 @@ export function useCanvasRepaint({
       ro.observe(containerRef.current)
     }
     window.addEventListener("resize", redrawAll)
-    const t1 = window.setTimeout(redrawAll, 60)
-    const t2 = window.setTimeout(redrawAll, 300)
+    scheduleFullRepaint()
 
     return () => {
       observer.disconnect()
       ro?.disconnect()
       window.removeEventListener("resize", redrawAll)
-      window.clearTimeout(t1)
-      window.clearTimeout(t2)
     }
   }, [containerRef, scheduleFullRepaint])
 

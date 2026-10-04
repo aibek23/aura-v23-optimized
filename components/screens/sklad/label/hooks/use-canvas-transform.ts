@@ -4,6 +4,7 @@ import type { Canvas as FabricCanvas } from "fabric"
 import { ZOOM_MIN, ZOOM_MAX, ZOOM_DEFAULT, RULER_SIZE } from "../constants"
 import type { PanState } from "./use-canvas-pan"
 import type { TransformSnapshot } from "./use-canvas-repaint"
+import { getCanvasOverscan } from "./use-fabric-canvas"
 
 export function useCanvasTransform(
   fabricRef: React.RefObject<FabricCanvas | null>,
@@ -59,7 +60,15 @@ export function useCanvasTransform(
     const tx = cx - a * stageW / 2 - c * stageH / 2 + a * offsetX + c * offsetY
     const ty = cy - b * stageW / 2 - d * stageH / 2 + b * offsetX + d * offsetY
 
-    canvas.setViewportTransform([a, b, c, d, tx, ty])
+    const overscan = getCanvasOverscan()
+    const wrapper = canvas.lowerCanvasEl.parentElement
+    if (wrapper) {
+      wrapper.style.left = `${pan.x - overscan.x}px`
+      wrapper.style.top = `${pan.y - overscan.y}px`
+    }
+    // Move the drawing surface along with the hand, rather than panning
+    // its bitmap outside the fixed Fabric canvas and clipping its contents.
+    canvas.setViewportTransform([a, b, c, d, tx - pan.x + overscan.x, ty - pan.y + overscan.y])
     canvas.requestRenderAll()
   }, [fabricRef, pan.x, pan.y, zoom, totalW, totalH, rotation, sizeKey, offsetX, offsetY])
 

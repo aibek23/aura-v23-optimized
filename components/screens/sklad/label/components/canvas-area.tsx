@@ -203,6 +203,7 @@ export interface CanvasAreaProps {
   isPanMode: boolean
   onPanStart:    (clientX: number, clientY: number) => void
   onBgClick:     () => void
+  showCanvasControls?: boolean
   onZoomTo?:     (z: number) => void
   onZoomReset?:  () => void
   onTogglePan?:  () => void
@@ -220,6 +221,7 @@ export const CanvasArea = memo(function CanvasArea({
   sizeDef, rotation = 0, zoom, pan, offsetX, offsetY,
   totalW, totalH, stageW, stageH,
   isPanMode, onPanStart, onBgClick,
+  showCanvasControls = true,
   onZoomTo, onZoomReset, onTogglePan, onActivatePan, onDeactivatePan,
   onRulerPointerDown, onRulerPointerMove, onRulerPointerUp,
 }: CanvasAreaProps) {
@@ -358,7 +360,7 @@ export const CanvasArea = memo(function CanvasArea({
       />
 
       {/* ── Слой 5 (z=20): zoom/pan оверлей ── */}
-      {onZoomTo && onZoomReset && onTogglePan && (
+      {showCanvasControls && onZoomTo && onZoomReset && onTogglePan && (
         <ZoomCorner
           zoom={zoom}
           isPanMode={isPanMode}

@@ -199,30 +199,91 @@ export function useLabelActions(
   }, [fabricRef, category, sizeKey, product, sizeDef, offsetX, offsetY])
 
   const loadTemplate = useCallback(async (canvas: FabricCanvas) => {
-    // Сначала читаем локальный кэш. При наличии шаблона запрос в Supabase
-    // не нужен: это убирает задержку при каждом открытии окна печати.
-    let raw = getLocalTemplate(category, sizeKey)
-    if (!raw) {
-      try {
-        raw = await getLabelTemplate(category, sizeKey)
-        // Сохраняем ответ сразу после получения, до построения холста.
-        if (raw) saveLocalTemplate(category, raw, sizeKey)
-      } catch (error) {
-        console.warn("[label] Не удалось загрузить шаблон из БД:", error)
-      }
-    }
+    // Локальный шаблон применяется до асинхронной генерации QR, поэтому
+    // сохранённая компоновка видна сразу, не ожидая БД или декодирования QR.
+    const raw = getLocalTemplate(category, sizeKey)
     const saved = parseTemplate(raw)
     if (!canvas.lowerCanvasEl) return
-    await buildDefaultLayout(canvas, product, sizeDef)
-    if (!canvas.lowerCanvasEl) return
+    let userEdited = false
+    let trackingStarted = false
+    const markEdited = (...args: unknown[]) => {
+      const event = args[0] as { target?: { data?: { role?: string } } } | undefined
+      if (event?.target?.data?.role === "qr") return
+      userEdited = true
+    }
+    const trackedEvents = [
+      "object:modified", "object:added", "object:removed",
+      "object:moving", "object:scaling", "object:rotating",
+      "selection:created", "selection:updated", "text:changed",
+    ] as const
+    const startTrackingUserEdits = () => {
+      if (trackingStarted) return
+      trackedEvents.forEach((event) => canvas.on(event, markEdited))
+      trackingStarted = true
+    }
+    const stopTrackingUserEdits = () => {
+      if (!trackingStarted) return
+      trackedEvents.forEach((event) => canvas.off(event, markEdited))
+      trackingStarted = false
+    }
+    try {
+      await buildDefaultLayout(
+        canvas,
+        product,
+        sizeDef,
+        saved
+          ? () => {
+              if (!canvas.lowerCanvasEl) return
+              applyTemplate(canvas, saved)
+              applyBgRect(canvas, sizeDef, saved.bg ?? null)
+            }
+          : !raw
+            ? startTrackingUserEdits
+            : undefined,
+      )
+    } catch (error) {
+      stopTrackingUserEdits()
+      throw error
+    }
+    if (!canvas.lowerCanvasEl) {
+      stopTrackingUserEdits()
+      return
+    }
     if (saved) {
+      // Повторное применение нужно для сохранённых координат QR: сам объект
+      // добавляется после асинхронного создания изображения.
       applyTemplate(canvas, saved)
-      await refreshLiveData(canvas, product)
       applyBgRect(canvas, sizeDef, saved.bg ?? null)
     }
-    canvas.setViewportTransform([1, 0, 0, 1, offsetX, offsetY])
     canvas.renderAll()
-  }, [category, sizeKey, product, sizeDef, offsetX, offsetY])
+
+    // При отсутствии локального кэша сначала показываем рабочий стандартный
+    // макет, а шаблон из БД загружаем в фоне. Если пользователь уже начал
+    // редактирование, поздний ответ не должен перезаписать его изменения.
+    if (!raw) {
+      void getLabelTemplate(category, sizeKey)
+        .then((remoteRaw) => {
+          if (
+            !remoteRaw ||
+            userEdited ||
+            fabricRef.current !== canvas ||
+            !canvas.lowerCanvasEl
+          ) return
+          const remote = parseTemplate(remoteRaw)
+          if (!remote) return
+          applyTemplate(canvas, remote)
+          applyBgRect(canvas, sizeDef, remote.bg ?? null)
+          canvas.requestRenderAll()
+          saveLocalTemplate(category, remoteRaw, sizeKey)
+        })
+        .catch((error) => {
+          console.warn("[label] Не удалось загрузить шаблон из БД:", error)
+        })
+        .finally(() => {
+          stopTrackingUserEdits()
+        })
+    }
+  }, [fabricRef, category, sizeKey, product, sizeDef])
 
   // ── Загрузка SVG-рамки из файловой системы ───────────────────────────────
   const loadSvgFrame = useCallback(async (svgText: string, filename: string) => {

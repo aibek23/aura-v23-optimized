@@ -1,18 +1,18 @@
 "use client"
 import React, {
-  useRef, useState, useMemo, useCallback, useEffect,
+  useRef, useState, useMemo, useCallback, useEffect, useLayoutEffect,
 } from "react"
-import { Download, X, ChevronUp, ChevronDown } from "lucide-react"
+import { Download, X, ChevronDown, Printer } from "lucide-react"
 import { canvasToLabelDataUrl, getLabelSizeDef, DEFAULT_SIZE_KEY, LABEL_SIZES, NIIMBOT_MODEL } from "@/lib/niimbot"
 import type { JewelryLabelSizeKey } from "@/lib/niimbot"
 import type { LabelEditorProps } from "./types"
-import { RULER_SIZE, ZOOM_DEFAULT } from "./constants"
+import { RULER_SIZE, ZOOM_DEFAULT, ZOOM_MIN } from "./constants"
 import type { BorderStyleKey } from "./constants"
 import { getSvgLayout } from "./components/label-background"
 import { computeStageOrigin, makeTrigCache, screenToLabelPx } from "./utils/geometry"
 import type { ManualGuide } from "./utils/guides-draw"
 
-import { useFabricCanvas }    from "./hooks/use-fabric-canvas"
+import { useFabricCanvas, getCanvasOverscan } from "./hooks/use-fabric-canvas"
 import { useCanvasPan }       from "./hooks/use-canvas-pan"
 import { useCanvasTransform } from "./hooks/use-canvas-transform"
 import { usePinchZoom }       from "./hooks/use-pinch-zoom"
@@ -26,7 +26,7 @@ import { cropPrintArea }      from "./canvas/print"
 import { CanvasArea }         from "./components/canvas-area"
 import { LabelEditorToolbar } from "./components/toolbar"
 
-const STAGE_PAD    = 240
+const STAGE_PAD    = 32
 const SIZE_STORAGE = "sklad:label-size"
 
 function getStoredSizeKey(fallback: JewelryLabelSizeKey, storageKey: string): JewelryLabelSizeKey {
@@ -58,6 +58,8 @@ export function LabelEditor({
   const sizeDef = useMemo(() => getLabelSizeDef(sizeKey), [sizeKey])
   const nativeWidth = Math.round(sizeDef.w_px * printerProfile.dpi / 203)
   const fitsPrinthead = nativeWidth <= printerProfile.printheadPx
+  const printerName =
+    (printerProfile as { displayName?: string }).displayName ?? printerProfile.key
   const canPrint = fitsPrinthead && printerProfile.supportsDirectBluetooth !== false
 
   const { stageW, stageH, offsetX, offsetY } = useMemo(() => {
@@ -135,21 +137,47 @@ export function LabelEditor({
       bus.on("object:modified", onTE)
       bus.on("selection:cleared", onTE)
       setLoaded(false)
+      const applyCurrentViewport = () => {
+        if (fabricRef.current !== canvas || !canvas.lowerCanvasEl) return
+        const current = transformRef.current
+        const stageW = current.totalW - RULER_SIZE
+        const stageH = current.totalH - RULER_SIZE
+        const angle = (current.rotation * Math.PI) / 180
+        const cos = Math.cos(angle)
+        const sin = Math.sin(angle)
+        const a = current.zoom * cos
+        const b = current.zoom * sin
+        const c = -current.zoom * sin
+        const d = current.zoom * cos
+        const cx = stageW / 2 + current.pan.x
+        const cy = stageH / 2 + current.pan.y
+        const tx = cx - a * stageW / 2 - c * stageH / 2 + a * current.offsetX + c * current.offsetY
+        const ty = cy - b * stageW / 2 - d * stageH / 2 + b * current.offsetX + d * current.offsetY
+        const overscan = getCanvasOverscan()
+        const wrapper = canvas.lowerCanvasEl.parentElement
+        if (wrapper) {
+          wrapper.style.left = `${current.pan.x - overscan.x}px`
+          wrapper.style.top = `${current.pan.y - overscan.y}px`
+        }
+        canvas.setViewportTransform([a, b, c, d, tx - current.pan.x + overscan.x, ty - current.pan.y + overscan.y])
+        canvas.requestRenderAll()
+      }
+      applyCurrentViewport()
       try {
         if (actionsRef.current?.loadTemplate) {
           await actionsRef.current.loadTemplate(canvas)
         }
+        applyCurrentViewport()
       } catch (err) {
         console.error("[LabelEditor] Failed to load template:", err)
       } finally {
-        setLoaded(true)
+        if (fabricRef.current === canvas) setLoaded(true)
       }
       return () => {
         bus.off("object:scaling",  onTS)
         bus.off("object:rotating", onTS)
         bus.off("object:modified", onTE)
         bus.off("selection:cleared", onTE)
-        setLoaded(false)
       }
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [sizeKey]),
@@ -177,6 +205,30 @@ export function LabelEditor({
     fabricRef, pan, offsetX, offsetY, totalW, totalH, rotation, sizeKey,
   )
   useEffect(() => { zoomRefProxy.current = zoomRef.current }, [zoom, zoomRef])
+
+  // Подбираем масштаб после появления реальной области холста, чтобы на первом
+  // кадре вся этикетка помещалась между компактными панелями, а не за краем сцены.
+  useLayoutEffect(() => {
+    const viewport = viewportRef.current
+    if (!viewport) return
+    const fitViewport = () => {
+      const { width, height } = viewport.getBoundingClientRect()
+      if (width <= 0 || height <= 0) return false
+      const fit = Math.min(
+        1,
+        (width - RULER_SIZE * 2) / stageW,
+        (height - RULER_SIZE * 2) / stageH,
+      )
+      zoomTo(Math.max(ZOOM_MIN, fit))
+      return true
+    }
+    if (fitViewport() || typeof ResizeObserver === "undefined") return
+    const observer = new ResizeObserver(() => {
+      if (fitViewport()) observer.disconnect()
+    })
+    observer.observe(viewport)
+    return () => observer.disconnect()
+  }, [sizeKey, stageW, stageH, zoomTo])
 
   // При смене формата этикетки сбрасываем сдвиг и ручные направляющие:
   // старые координаты относятся к другому размеру и сбивают линейку.
@@ -246,6 +298,7 @@ export function LabelEditor({
 
   // ── Перерисовка линеек / направляющих ────────────────────────────────────
   useCanvasRepaint({
+    enabled: loaded,
     fabricRef, containerRef, staticCanvasRef,
     rulerHRef, rulerVRef, guidesCanvasRef: guidesRef,
     transformRef, sizeDef, sizeKey,
@@ -443,81 +496,40 @@ export function LabelEditor({
         </div>
       )}
 
-      {/* ── ВЕРХНЯЯ ПАНЕЛЬ (ПОЛНАЯ ИЛИ СВЁРНУТАЯ ДЛЯ УВЕЛИЧЕНИЯ РАБОЧЕЙ ЗОНЫ) ── */}
-      {!collapsed && !topCollapsed && (
-        <div className="z-20 border-b bg-background/90 backdrop-blur-md shrink-0">
-          <div className="flex items-center justify-between px-3 py-2">
-            <span className="text-sm font-semibold truncate max-w-[50vw] leading-tight">
-              Этикетка · <span className="text-primary font-mono">{sizeDef.label}</span>
-            </span>
-            <div className="flex shrink-0 items-center gap-1.5">
-              <button
-                type="button"
-                onClick={() => setTopCollapsed(true)}
-                className="inline-flex items-center gap-1 rounded-lg border border-border/80 bg-background/80 px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors shrink-0"
-                title="Свернуть верхнюю панель для увеличения рабочей области"
-              >
-                <ChevronUp className="h-3.5 w-3.5" />
-                <span className="text-[11px] hidden xs:inline">Свернуть</span>
-              </button>
-              <button
-                type="button"
-                onClick={handleExportPng}
-                disabled={!loaded || !fitsPrinthead}
-                className="inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs hover:bg-muted disabled:opacity-50"
-                title={fitsPrinthead ? `Скачать PNG · ${printerProfile.dpi} dpi` : "Ширина макета превышает ширину печатающей головки"}
-              >
-                <Download className="h-3.5 w-3.5" aria-hidden="true" />
-                <span className="hidden xs:inline">PNG</span>
-              </button>
-              {onClose && (
-                <button
-                  type="button"
-                  onClick={onClose}
-                  className="rounded-full p-1.5 hover:bg-muted transition-colors shrink-0"
-                  aria-label="Закрыть"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              )}
-            </div>
-          </div>
-          <LabelEditorToolbar zone="header" {...toolbarCommon} />
-        </div>
-      )}
-
-      {/* Компактный режим верхней панели: только статус и кнопка разворачивания */}
-      {!collapsed && topCollapsed && (
-        <div className="z-20 border-b bg-background/95 backdrop-blur-md shrink-0 px-3 py-1.5 flex items-center justify-between">
-          <div className="flex min-w-0 items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setTopCollapsed(false)}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-border/80 bg-background px-2.5 py-1 text-xs font-medium text-foreground hover:border-primary/50 hover:bg-muted transition-colors"
-              title="Развернуть верхнюю панель инструментов"
+      {/* Компактная верхняя строка: формат, статус, экспорт и закрытие. */}
+      {!collapsed && (
+        <div className="relative z-20 shrink-0 border-b bg-background/95 backdrop-blur-md">
+          <div className="flex min-h-10 items-center gap-1 px-2 py-1">
+            <span
+              className="min-w-0 max-w-[28vw] truncate text-[11px] font-semibold leading-tight sm:max-w-[200px]"
+              title="Активный принтер"
             >
-              <ChevronDown className="h-3.5 w-3.5 text-primary shrink-0" />
-              <span className="truncate text-[11px]">
-                Этикетка · <strong className="text-primary font-mono">{sizeDef.label}</strong>
-              </span>
-            </button>
-          </div>
-          <div className="flex shrink-0 items-center gap-1.5">
+              <Printer className="mr-1 inline h-3.5 w-3.5 text-primary" aria-hidden="true" />
+              {printerName}
+            </span>
+            <LabelEditorToolbar zone="header" {...toolbarCommon} />
+            <span className="flex-1" />
+            <span
+              className="max-w-[22vw] shrink truncate text-[10px] text-muted-foreground sm:max-w-[180px]"
+              aria-live="polite"
+            >
+              {printStatus || (loaded ? "Готово" : "Загрузка…")}
+            </span>
             <button
               type="button"
               onClick={handleExportPng}
               disabled={!loaded || !fitsPrinthead}
-              className="inline-flex items-center gap-1 rounded border px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
-              title="Скачать PNG"
+              className="inline-flex h-8 shrink-0 items-center gap-1 rounded-md border px-2 text-[10px] hover:bg-muted disabled:opacity-50"
+              title={fitsPrinthead ? `Скачать PNG · ${printerProfile.dpi} dpi` : "Ширина макета превышает ширину печатающей головки"}
             >
-              <Download className="h-3 w-3" />
+              <Download className="h-3.5 w-3.5" aria-hidden="true" />
               <span className="hidden xs:inline">PNG</span>
             </button>
             {onClose && (
               <button
                 type="button"
                 onClick={onClose}
-                className="rounded-full p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full hover:bg-muted transition-colors"
                 aria-label="Закрыть"
               >
                 <X className="h-4 w-4" />
@@ -538,7 +550,7 @@ export function LabelEditor({
           >
             <ChevronDown className="h-3.5 w-3.5 text-primary" />
             <span className="text-[11px]">
-              Этикетка · <strong className="text-primary font-mono">{sizeDef.label}</strong>
+              {printerName} · <strong className="text-primary font-mono">{sizeDef.label}</strong>
             </span>
           </button>
           <div className="pointer-events-auto flex items-center gap-1">
@@ -566,7 +578,7 @@ export function LabelEditor({
       )}
 
       {/* ── ОБЛАСТЬ ХОЛСТА ── */}
-      <div className="relative flex-1 w-full overflow-hidden z-0">
+      <div className="relative z-0 flex min-h-0 w-full flex-1 overflow-hidden">
         <CanvasArea
           viewportRef={viewportRef}
           stageLayerRef={stageLayerRef}
@@ -586,6 +598,7 @@ export function LabelEditor({
           stageW={stageW}
           stageH={stageH}
           isPanMode={isPanMode}
+          showCanvasControls={collapsed}
           onPanStart={handlePanStart}
           onBgClick={handleBgClick}
           onZoomTo={zoomTo}
