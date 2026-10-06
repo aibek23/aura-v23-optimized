@@ -1,7 +1,7 @@
 "use client"
 
 import { Button } from "@/components/ui/button"
-import { PackageSearch, Plus, Check, X, Clock } from "lucide-react"
+import { PackageSearch, Plus, Check, X } from "lucide-react"
 import { formatDate, formatSom, formatWeight } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import type { Product } from "@/lib/types"
@@ -22,7 +22,6 @@ interface KassaSearchProps {
   addToCart: (p: Product) => void
   onToggleCart?: (p: Product) => void
   minQuery: number
-  recent?: Product[]
   isAdmin: boolean
 }
 
@@ -157,12 +156,10 @@ export function KassaSearch({
   addToCart,
   onToggleCart,
   minQuery,
-  recent = [],
   isAdmin,
 }: KassaSearchProps) {
   const isSearching = isSearchReady(query, minQuery)
   const isTooShort = query.trim().length > 0 && query.trim().length < minQuery && !isSearchReady(query, minQuery)
-  const showRecent = query.trim().length === 0 && recent.length > 0
 
   const handleToggle = onToggleCart || addToCart
 
@@ -185,31 +182,10 @@ export function KassaSearch({
 
       {/* Основной список результатов */}
       <div className="relative w-full">
-        {query.trim().length === 0 && recent.length === 0 && (
+        {query.trim().length === 0 && (
           <div className="rounded-xl border border-dashed border-border/60 py-8 text-center bg-card/30">
             <PackageSearch className="mx-auto h-7 w-7 text-muted-foreground/40 mb-1.5" />
             <p className="text-xs text-muted-foreground">Введите артикул или название товара</p>
-          </div>
-        )}
-
-        {showRecent && (
-          <div className="space-y-2">
-            <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground px-1">
-              <Clock className="h-3.5 w-3.5" />
-              Недавно добавленные
-            </div>
-            <div className="flex flex-col gap-2">
-              {recent.map((p) => (
-                <ProductRow
-                  key={p.id}
-                  p={p}
-                  inCart={qtyInCart(p.id)}
-                  isLoss={p.sale_price < p.purchase_price}
-                  isAdmin={isAdmin}
-                  onToggleCart={handleToggle}
-                />
-              ))}
-            </div>
           </div>
         )}
 

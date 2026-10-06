@@ -2,6 +2,11 @@
 const nextConfig = {
   allowedDevOrigins: ["127.0.0.1", "**.replit.dev"],
 
+  // Strip console.* from production bundles (keep console.error for real failures).
+  compiler: {
+    removeConsole: { exclude: ["error"] },
+  },
+
   images: {
     unoptimized: true,
   },

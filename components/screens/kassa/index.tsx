@@ -219,16 +219,6 @@ export function KassaScreen({
     return () => clearTimeout(id)
   }, [query])
 
-  // Три последних добавленных изделия — для пустого состояния поиска.
-  const recentProducts = useMemo(
-    () =>
-      [...products]
-        .filter((p) => p.status === "in_stock" && !p.is_hidden)
-        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-        .slice(0, 3),
-    [products],
-  )
-
   const qtyInCart = (id: string) => cart.filter((i) => i.product_id === id).length
 
   const results = useMemo(() => {
@@ -496,7 +486,6 @@ export function KassaScreen({
             addToCart={addToCart}
             onToggleCart={toggleCartProduct}
             minQuery={MIN_QUERY}
-            recent={recentProducts}
             isAdmin={isAdmin}
           />
         </div>

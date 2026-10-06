@@ -7,6 +7,7 @@ import { formatSom } from "@/lib/format"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { operationLabel } from "./types"
+import { supplierIdentityKey } from "@/lib/supplier-identity"
 
 interface HistorySheetProps {
   open: boolean
@@ -41,8 +42,8 @@ export function HistorySheet({
 
   const filtered = operations.filter(
     (op) =>
-      op.supplier_name === supplierName &&
-      (op.supplier_phone ?? null) === supplierPhone,
+      supplierIdentityKey(op.supplier_name, op.supplier_phone) ===
+      supplierIdentityKey(supplierName, supplierPhone),
   )
 
   return (

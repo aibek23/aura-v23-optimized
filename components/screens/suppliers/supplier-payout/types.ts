@@ -1,6 +1,7 @@
 // ─── Типы, интерфейсы и вспомогательные функции ────────────────────────────
 
 import type { SupplierDebtData } from "@/app/actions/suppliers"
+import { supplierIdentityKey } from "@/lib/supplier-identity"
 
 // Активная форма внутри карточки поставщика
 export type ActiveForm = "pay" | "debt" | null
@@ -31,7 +32,7 @@ export interface SearchMatch {
  * Уникальный ключ поставщика по имени и телефону.
  */
 export function supplierKey(name: string, phone: string | null): string {
-  return `${name}\u0000${phone ?? ""}`
+  return supplierIdentityKey(name, phone)
 }
 
 /**

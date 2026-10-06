@@ -8,6 +8,7 @@ import type {
   SupplierDebtSummary,
   CashSource,
 } from "@/lib/types"
+import { supplierIdentityKey } from "@/lib/supplier-identity"
 
 async function requireProfile() {
   const { supabase, user, profile, shopId } = await getRequestCrmContext()
@@ -70,12 +71,17 @@ export async function getSupplierDebtData(): Promise<SupplierDebtData> {
   const operations = (data as unknown as SupplierDebtOperation[]) ?? []
   const map = new Map<string, SupplierDebtSummary>()
   for (const operation of operations) {
-    const key = `${operation.supplier_name}\u0000${operation.supplier_phone ?? ""}`
-    if (!map.has(key)) {
+    const key = supplierIdentityKey(operation.supplier_name, operation.supplier_phone)
+    const existing = map.get(key)
+    const amountInCents = Math.round(Number(operation.amount) * 100)
+    const signedAmount = (operation.operation_type === "payment" ? -amountInCents : amountInCents) / 100
+    if (existing) {
+      existing.balance = Math.round((existing.balance + signedAmount) * 100) / 100
+    } else {
       map.set(key, {
         supplier_name: operation.supplier_name,
         supplier_phone: operation.supplier_phone,
-        balance: Number(operation.balance_after),
+        balance: signedAmount,
         last_operation_at: operation.created_at,
       })
     }

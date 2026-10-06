@@ -6,6 +6,7 @@ import type { Product, Sale, SupplierDebtSummary } from "@/lib/types"
 import { SupplierPayoutPanel } from "../suppliers/supplier-payout/index"
 import { ProductSearch } from "@/components/product-search"
 import { matchesSupplier } from "@/lib/product-search"
+import { supplierIdentityKey } from "@/lib/supplier-identity"
 
 const NO_SUPPLIER_KEY = "__no_supplier__"
 
@@ -17,10 +18,6 @@ type SupplierGroup = {
   totalWeight: number
   totalQuantity: number
   byMetal: Record<string, { quantity: number; weight: number }>
-}
-
-function supplierKey(name: string, phone: string | null) {
-  return `${name}\u0000${phone ?? ""}`
 }
 
 export function SuppliersScreen({
@@ -39,7 +36,7 @@ export function SuppliersScreen({
     for (const product of products) {
       const name = product.supplier_name?.trim() || "Без поставщика"
       const phone = name === "Без поставщика" ? null : product.supplier_phone?.trim() || null
-      const key = name === "Без поставщика" ? NO_SUPPLIER_KEY : supplierKey(name, phone)
+      const key = name === "Без поставщика" ? NO_SUPPLIER_KEY : supplierIdentityKey(name, phone)
       let group = map.get(key)
       if (!group) {
         group = { key, name, phone, items: [], totalWeight: 0, totalQuantity: 0, byMetal: {} }
@@ -63,7 +60,7 @@ export function SuppliersScreen({
   const supplierData = useMemo<SupplierDebtData>(() => {
     const byKey = new Map<string, SupplierDebtSummary>()
     for (const supplier of supplierDebts.suppliers) {
-      byKey.set(supplierKey(supplier.supplier_name, supplier.supplier_phone), supplier)
+      byKey.set(supplierIdentityKey(supplier.supplier_name, supplier.supplier_phone), supplier)
     }
 
     for (const group of groups) {
@@ -122,7 +119,7 @@ export function SuppliersScreen({
       matchesSupplier(
         supplier.supplier_name,
         supplier.supplier_phone,
-        productsBySupplier.get(supplierKey(supplier.supplier_name, supplier.supplier_phone)) ?? [],
+        productsBySupplier.get(supplierIdentityKey(supplier.supplier_name, supplier.supplier_phone)) ?? [],
         query,
       ),
     )
