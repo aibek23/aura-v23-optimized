@@ -81,7 +81,7 @@ export default async function QrProductPage({ params }: { params: Promise<Params
             <h1 className="mt-2 font-serif text-3xl text-balance">{product.name}</h1>
           </div>
 
-          <p className="font-mono text-2xl font-semibold text-primary">
+          <p className="min-w-0 break-words font-mono text-xl font-semibold leading-tight text-primary [overflow-wrap:anywhere] sm:text-2xl">
             {formatSom(product.sale_price)}
           </p>
 

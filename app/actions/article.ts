@@ -1,34 +1,13 @@
 "use server"
 
-import { createClient } from "@/lib/supabase/server"
-import { getActiveShopId } from "@/lib/supabase/current-shop"
+import type { createClient } from "@/lib/supabase/server"
+import { requireApprovedContext } from "@/lib/supabase/request-context"
 import type { GeneratedArticle } from "@/lib/article"
 
 type SupabaseClient = Awaited<ReturnType<typeof createClient>>
 
 /** Проверка авторизации и подтверждённого профиля. */
-async function requireProfile() {
-  const supabase = await createClient()
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-
-  if (!user) {
-    throw new Error("Требуется вход в систему")
-  }
-
-  const { data: profile } = await supabase.from("profiles").select("*").eq("id", user.id).single()
-
-  if (!profile || profile.status !== "approved") {
-    throw new Error("Аккаунт не подтверждён")
-  }
-
-  const fallbackShopId =
-    profile.role === "super_admin" ? profile.impersonated_shop_id ?? profile.shop_id : profile.shop_id
-  const shopId = await getActiveShopId(supabase, fallbackShopId ?? null)
-  return { supabase, user, profile, shopId }
-}
+const requireProfile = requireApprovedContext
 
 /** Нормализует ответ RPC: функция возвращает колонки out_article/out_prefix/... */
 function normalizeArticle(row: Record<string, unknown>): GeneratedArticle {

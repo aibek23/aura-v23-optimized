@@ -20,6 +20,8 @@ export type ShopBillingRow = {
   frozen_at: string | null
   member_count: number
   created_at: string | null
+  /** Cards created after product-unit metering was enabled; null until its migration is applied. */
+  product_units_used: number | null
 }
 
 export type UpdateShopBillingInput = {
@@ -50,9 +52,22 @@ async function requireSuperAdmin() {
 
 export async function getSuperAdminShops(): Promise<ShopBillingRow[]> {
   const { supabase } = await requireSuperAdmin()
-  const { data, error } = await supabase.rpc("superadmin_list_shops")
+  const [{ data, error }, { data: unitRows, error: unitError }] = await Promise.all([
+    supabase.rpc("superadmin_list_shops"),
+    supabase.rpc("superadmin_list_product_units"),
+  ])
   if (error) throw new Error(`Не удалось загрузить список магазинов: ${error.message}`)
-  return (data as ShopBillingRow[]) ?? []
+  if (unitError) console.warn("[superadmin] Product-unit usage is not available:", unitError.code)
+  const unitsByShop = new Map<string, number>(
+    (unitRows ?? []).map((row: { shop_id: string; units_used: number | string }) => [
+      row.shop_id,
+      Number(row.units_used) || 0,
+    ]),
+  )
+  return ((data as Omit<ShopBillingRow, "product_units_used">[]) ?? []).map((shop) => ({
+    ...shop,
+    product_units_used: unitError ? null : unitsByShop.get(shop.shop_id) ?? 0,
+  }))
 }
 
 // ---------------------------------------------------------------------------

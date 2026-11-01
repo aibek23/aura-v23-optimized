@@ -8,6 +8,7 @@ import { LABEL_SIZES } from "@/lib/niimbot"
 // ── Пропсы редактора ──────────────────────────────────────────────────────────
 export interface LabelEditorProps {
   product:        Product
+  canSeePurchasePrice?: boolean
   autoPrint?:     boolean
   initialSizeKey?: JewelryLabelSizeKey
   printerProfile?: import("@/lib/niimbot").PrinterProfile
@@ -15,6 +16,7 @@ export interface LabelEditorProps {
   density?:        number
   onSizeChange?:   (key: JewelryLabelSizeKey) => void
   onClose?:       () => void
+  backgroundControlsHost?: HTMLElement | null
 }
 
 // ── Элемент шаблона ───────────────────────────────────────────────────────────
@@ -42,6 +44,7 @@ export interface TemplateItem {
   text?:       string
   autoFit?:    boolean
   fitRatio?:   number
+  format?:     import("./data/live-format").LiveFormat
   // rect-specific
   stroke?:      string
   strokeWidth?: number

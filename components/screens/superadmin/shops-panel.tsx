@@ -388,6 +388,7 @@ export function SuperAdminShopsScreen({ initialShops }: { initialShops: ShopBill
               <th className="px-4 py-3 text-left font-medium">Статус</th>
               <th className="px-4 py-3 text-left font-medium">Оплачено до</th>
               <th className="px-4 py-3 text-center font-medium">Персонал</th>
+              <th className="px-4 py-3 text-center font-medium">Новые товары</th>
               <th className="px-4 py-3 text-center font-medium">Автоблок</th>
               <th className="px-4 py-3 text-right font-medium">Действия</th>
             </tr>
@@ -395,7 +396,7 @@ export function SuperAdminShopsScreen({ initialShops }: { initialShops: ShopBill
           <tbody>
             {filtered.length === 0 ? (
               <tr>
-                <td colSpan={6} className="py-12 text-center text-sm text-muted-foreground">
+                <td colSpan={7} className="py-12 text-center text-sm text-muted-foreground">
                   Магазины не найдены
                 </td>
               </tr>
@@ -432,6 +433,10 @@ export function SuperAdminShopsScreen({ initialShops }: { initialShops: ShopBill
                         <Users className="h-3 w-3" />
                         {shop.member_count}
                       </span>
+                    </td>
+                    <td className="px-4 py-3 text-center font-mono text-xs tabular-nums text-muted-foreground"
+                      title="Сколько новых карточек добавлено с момента запуска счётчика">
+                      {shop.product_units_used === null ? "—" : shop.product_units_used.toLocaleString("ru-RU")}
                     </td>
                     <td className="px-4 py-3 text-center">
                       <span className={cn("text-xs font-medium", shop.auto_block ? "text-primary" : "text-muted-foreground")}>
@@ -530,6 +535,12 @@ export function SuperAdminShopsScreen({ initialShops }: { initialShops: ShopBill
                     <span className="text-muted-foreground">Автоблок: </span>
                     <span className={shop.auto_block ? "text-primary font-medium" : "text-muted-foreground"}>
                       {shop.auto_block ? "Вкл" : "Выкл"}
+                    </span>
+                  </div>
+                  <div className="col-span-2">
+                    <span className="text-muted-foreground">Новые карточки после запуска: </span>
+                    <span className="font-mono tabular-nums font-medium">
+                      {shop.product_units_used === null ? "—" : shop.product_units_used.toLocaleString("ru-RU")}
                     </span>
                   </div>
                 </div>

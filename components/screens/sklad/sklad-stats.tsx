@@ -8,10 +8,9 @@ import { purityFromMetal } from "@/lib/purity"
 interface SkladStatsProps {
   products: Product[]
   canSeePurchasePrice: boolean
-  isAdmin: boolean
 }
 
-export function SkladStats({ products, canSeePurchasePrice, isAdmin }: SkladStatsProps) {
+export function SkladStats({ products, canSeePurchasePrice }: SkladStatsProps) {
   const stats = useMemo(() => {
     let count = 0
     let weight = 0

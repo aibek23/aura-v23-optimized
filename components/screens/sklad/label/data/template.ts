@@ -7,6 +7,7 @@ import type { LabelSizeDef } from "@/lib/niimbot"
 import { TEMPLATE_VERSION, LIVE_ROLES } from "../constants"
 import { r2, getRole } from "../types"
 import type { TemplateItem, LabelTemplate } from "../types"
+import { reapplyLiveFormat, isFormattable, getTbData, hasFormat } from "./live-format"
 import { createTextbox, fitFontToBox, isAutoFit, getFitRatio, refitTextbox, setBoxHeight } from "../canvas/text-fit"
 
 export function serializeLayout(
@@ -44,6 +45,7 @@ export function serializeLayout(
       item.fill       = typeof tb.fill === "string" ? tb.fill : "#000000"
       item.autoFit    = isAutoFit(tb)
       item.fitRatio   = r2(getFitRatio(tb), 1)
+      if (isFormattable(tb) && hasFormat(getTbData(tb).format)) item.format = getTbData(tb).format
       if (role.startsWith("custom-")) item.text = String(tb.text ?? "").slice(0, 200)
     }
 
@@ -108,7 +110,7 @@ export function applyTemplate(canvas: Canvas, tpl: LabelTemplate): void {
         lineHeight: item.lineHeight ?? 1.16,
         fill: item.fill ?? "#000000", angle: item.angle ?? 0,
         scaleX: item.scaleX ?? 1, scaleY: 1,
-        data: { role: item.role, autoFit: item.autoFit !== false, fitRatio: item.fitRatio ?? 1 },
+        data: { role: item.role, autoFit: item.autoFit !== false, fitRatio: item.fitRatio ?? 1, format: item.format },
       })
       if (item.height && item.height > 2) setBoxHeight(tb, item.height)
       refitTextbox(tb)
@@ -140,6 +142,8 @@ export function applyItemToObject(obj: FabricObject, item: TemplateItem): void {
     data.autoFit  = item.autoFit !== false
     data.fitRatio = item.fitRatio ?? 1
     ;(tb as unknown as { data?: Record<string, unknown> }).data = data
+    data.format = item.format
+    reapplyLiveFormat(tb)
 
     tb.set({
       scaleY: 1, padding: 0,

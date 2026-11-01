@@ -18,6 +18,7 @@ function saleSplit(sale: Sale): { cash: number; electronic: number } {
     if (cash + electronic <= 0) return { cash: total, electronic: 0 }
     return { cash, electronic }
   }
+  if (sale.payment_method === "credit") return { cash: 0, electronic: 0 }
   if (ELECTRONIC_METHODS.includes(sale.payment_method)) return { cash: 0, electronic: total }
   return { cash: total, electronic: 0 }
 }

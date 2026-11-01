@@ -3,25 +3,25 @@
 import { createClient } from "@/lib/supabase/server"
 import { revalidatePath } from "next/cache"
 import type { Profile } from "@/lib/types"
-import { getRequestCrmContext } from "@/lib/supabase/request-context"
+import {
+  requireAdminContext,
+  requireApprovedContext,
+  requireSuperAdminContext,
+} from "@/lib/supabase/request-context"
 
 async function requireProfile() {
-  const { supabase, user, profile, shopId } = await getRequestCrmContext()
-  if (!user) throw new Error("Unauthorized")
-  if (!profile || profile.status !== "approved") throw new Error("Not approved")
-  return { supabase, user, profile: profile as Profile, shopId }
+  const ctx = await requireApprovedContext()
+  return { ...ctx, profile: ctx.profile as Profile }
 }
 
 async function requireAdmin() {
-  const ctx = await requireProfile()
-  if (ctx.profile.role !== "admin" && ctx.profile.role !== "super_admin") throw new Error("Forbidden")
-  return ctx
+  const ctx = await requireAdminContext()
+  return { ...ctx, profile: ctx.profile as Profile }
 }
 
 async function requireSuperAdmin() {
-  const ctx = await requireProfile()
-  if (ctx.profile.role !== "super_admin") throw new Error("Forbidden")
-  return ctx
+  const ctx = await requireSuperAdminContext()
+  return { ...ctx, profile: ctx.profile as Profile }
 }
 
 export type CabinetData = {

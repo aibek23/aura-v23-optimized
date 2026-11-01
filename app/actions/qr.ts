@@ -1,6 +1,6 @@
 "use server"
 
-import { createClient } from "@/lib/supabase/server"
+import { getRequestCrmContext } from "@/lib/supabase/request-context"
 
 export type QrShopCheck =
   | { ok: true; shopSeqId: number | null; shopName: string | null }
@@ -19,24 +19,10 @@ export type QrShopCheck =
  * чужого магазина не запрашиваем — никаких дополнительных функций в БД не нужно.
  */
 export async function checkQrShop(shopSeqId: number): Promise<QrShopCheck> {
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  // Текущий магазин (учитывает имперсонацию super_admin через current_shop_id()).
+  const { supabase, user, shopId } = await getRequestCrmContext()
   if (!user) return { ok: false, reason: "unauthorized" }
 
-  // Текущий магазин (учитывает имперсонацию super_admin через current_shop_id()).
-  const { data: shopIdData } = await supabase.rpc("current_shop_id")
-  let shopId = typeof shopIdData === "string" ? shopIdData : null
-
-  if (!shopId) {
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("shop_id")
-      .eq("id", user.id)
-      .maybeSingle()
-    shopId = (profile as { shop_id: string | null } | null)?.shop_id ?? null
-  }
   if (!shopId) return { ok: true, shopSeqId: null, shopName: null }
 
   const { data: own, error } = await supabase

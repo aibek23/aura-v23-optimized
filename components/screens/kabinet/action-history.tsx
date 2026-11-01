@@ -2,10 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
-import { CheckCircle2, History, Loader2, RefreshCw, RotateCcw } from "lucide-react"
+import { CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, History, Loader2, RefreshCw, RotateCcw } from "lucide-react"
 import { toast } from "sonner"
-import { getActionHistory, undoAction } from "@/app/actions/action-history"
-import { ACTION_HISTORY_LIMIT, isRemovalEntity, requiresAdminUndo, type ActionHistoryItem, type UndoActionResult } from "@/lib/action-history"
+import { getActionHistoryPage, undoAction } from "@/app/actions/action-history"
+import { ACTION_HISTORY_LIMIT, ACTION_HISTORY_PAGE_SIZE, isRemovalEntity, requiresAdminUndo, type ActionHistoryItem, type UndoActionResult } from "@/lib/action-history"
 import { getOutboxPendingCount } from "@/lib/local-db/outbox"
 import { getLocalDB } from "@/lib/local-db/db"
 import { captureUndoBaseline, type UndoLocalBaseline } from "@/lib/local-db/undo-cache"
@@ -34,35 +34,59 @@ export function ActionHistory({
 }) {
   const router = useRouter()
   const [rows, setRows] = useState<ActionHistoryItem[]>([])
-  const [loading, setLoading] = useState(true)
+  const [expanded, setExpanded] = useState(false)
+  const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [online, setOnline] = useState(true)
+  const [page, setPage] = useState(0)
+  const [hasMore, setHasMore] = useState(false)
   const [selected, setSelected] = useState<ActionHistoryItem | null>(null)
   const [saving, setSaving] = useState(false)
   const requestId = useRef(0)
   const savingRef = useRef(false)
+  const loadingRef = useRef(false)
+  const expandedRef = useRef(false)
+  const pageRef = useRef(0)
+  const hasLoadedRef = useRef(false)
 
-  const load = useCallback(async () => {
+  const loadPage = useCallback(async (targetPage: number) => {
+    if (loadingRef.current) return
     const id = ++requestId.current
+    loadingRef.current = true
     setLoading(true)
     setError(null)
     try {
       if (!navigator.onLine) throw new Error("Для загрузки истории нужен интернет.")
-      const history = await getActionHistory()
-      if (id === requestId.current) setRows(history)
+      const result = await getActionHistoryPage(targetPage)
+      if (id === requestId.current) {
+        setRows(result.items)
+        setHasMore(result.hasMore)
+        setPage(targetPage)
+        pageRef.current = targetPage
+        hasLoadedRef.current = true
+      }
     } catch (e) {
       if (id === requestId.current) setError(e instanceof Error ? e.message : "Не удалось загрузить историю")
     } finally {
-      if (id === requestId.current) setLoading(false)
+      if (id === requestId.current) {
+        loadingRef.current = false
+        setLoading(false)
+      }
     }
   }, [])
 
+  const toggleExpanded = () => {
+    const next = !expandedRef.current
+    expandedRef.current = next
+    setExpanded(next)
+    if (next && !hasLoadedRef.current) void loadPage(0)
+  }
+
   useEffect(() => {
     setOnline(navigator.onLine)
-    void load()
     const connected = () => {
       setOnline(true)
-      if (!savingRef.current) void load()
+      if (expandedRef.current && !savingRef.current) void loadPage(pageRef.current)
     }
     const disconnected = () => setOnline(false)
     window.addEventListener("online", connected)
@@ -72,7 +96,7 @@ export function ActionHistory({
       window.removeEventListener("online", connected)
       window.removeEventListener("offline", disconnected)
     }
-  }, [load])
+  }, [loadPage])
 
   const undo = async () => {
     if (!selected || savingRef.current) return
@@ -103,7 +127,7 @@ export function ActionHistory({
         }
       }
       router.refresh()
-      await load()
+      await loadPage(pageRef.current)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Не удалось отменить действие")
     } finally {
@@ -116,79 +140,126 @@ export function ActionHistory({
     <>
       <Card>
         <CardHeader className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <CardTitle className="flex items-center gap-2">
-              <History className="h-4 w-4 text-primary" /> История действий
+          <div className="min-w-0 flex-1">
+            <CardTitle className="text-base">
+              <button
+                type="button"
+                aria-expanded={expanded}
+                aria-controls="action-history-content"
+                onClick={toggleExpanded}
+                className="flex w-full items-center gap-2 rounded-sm text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                {expanded
+                  ? <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                  : <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />}
+                <History className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
+                <span>История действий</span>
+              </button>
             </CardTitle>
             <p className="mt-1 text-xs text-muted-foreground">
               Последние {ACTION_HISTORY_LIMIT} действий магазина: товары, цены, продажи и касса · время Бишкека
             </p>
           </div>
-          <Button variant="outline" size="sm" disabled={loading || saving || !online} onClick={() => void load()}>
-            {loading ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-            Обновить
-          </Button>
-        </CardHeader>
-        <CardContent>
-          <p className="mb-4 text-xs text-muted-foreground">
-            Офлайн-действия появляются после синхронизации. Можно отменить правку карточки или курса,
-            добавление товара, продажу (товары вернутся на склад, деньги уйдут из кассы) и кассовую операцию.
-          </p>
-          {!online && (
-            <p role="status" className="mb-3 rounded-lg border border-border bg-muted/40 p-3 text-sm">
-              Нет подключения. Отмена доступна только онлайн.
-            </p>
+          {expanded && (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={loading || saving || !online}
+              onClick={() => void loadPage(pageRef.current)}
+            >
+              {loading ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+              Обновить
+            </Button>
           )}
-          {error && <p role="alert" className="mb-3 rounded-lg bg-destructive/10 p-3 text-sm text-destructive">{error}</p>}
-          <div className="max-h-[32rem] overflow-y-auto rounded-lg border border-border" aria-busy={loading}>
-            <Table className="min-w-[660px]">
-              <TableHeader>
-                <TableRow className="bg-muted/40">
-                  <TableHead className="px-3">Время</TableHead>
-                  <TableHead>Сотрудник</TableHead>
-                  <TableHead>Описание действия</TableHead>
-                  <TableHead className="px-3">Статус</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={4} className="h-28 text-center text-muted-foreground">
-                      {loading ? "Загрузка истории…" : error ? "История недоступна" : "Изменений пока нет"}
-                    </TableCell>
-                  </TableRow>
-                ) : rows.map((row) => (
-                  <TableRow key={row.id} className={row.status === "undone" ? "bg-muted/20" : undefined}>
-                    <TableCell className="px-3 align-top font-mono text-xs">
-                      <time dateTime={row.created_at}>{formatTime(row.created_at)}</time>
-                    </TableCell>
-                    <TableCell className="max-w-40 whitespace-normal align-top">{row.employee_name}</TableCell>
-                    <TableCell className="min-w-64 max-w-lg whitespace-normal align-top">
-                      {row.description}
-                    </TableCell>
-                    <TableCell className="px-3 align-top">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Badge variant="secondary" className={row.status === "undone" ? "text-muted-foreground" : "bg-primary/10 text-primary"}>
-                          {row.status === "undone" ? <><CheckCircle2 className="mr-1 h-3 w-3" />Отменено</> : "Выполнено"}
-                        </Badge>
-                        {row.status === "active" && (
-                          <Button variant="outline" size="xs"
-                            disabled={saving || loading || !online || (requiresAdminUndo(row.entity_type) && !canUndoRates)}
-                            title={requiresAdminUndo(row.entity_type) && !canUndoRates ? "Это действие может отменить только администратор" : undefined}
-                            aria-label={`Отменить: ${row.description}`}
-                            onClick={() => setSelected(row)}>
-                            <RotateCcw /> Отменить
-                          </Button>
-                        )}
-                      </div>
-                      {row.undone_at && <div className="mt-1 text-[10px] text-muted-foreground">{formatTime(row.undone_at)}</div>}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-          {rows.length > 0 && <p className="mt-2 text-xs text-muted-foreground">Записей: {rows.length} / {ACTION_HISTORY_LIMIT}</p>}
+        </CardHeader>
+        <CardContent id="action-history-content" hidden={!expanded}>
+          {expanded && (
+            <>
+              <p className="mb-4 text-xs text-muted-foreground">
+                Офлайн-действия появляются после синхронизации. Можно отменить правку карточки или курса,
+                добавление товара, продажу (товары вернутся на склад, деньги уйдут из кассы) и кассовую операцию.
+              </p>
+              {!online && (
+                <p role="status" className="mb-3 rounded-lg border border-border bg-muted/40 p-3 text-sm">
+                  Нет подключения. Отмена доступна только онлайн.
+                </p>
+              )}
+              {error && <p role="alert" className="mb-3 rounded-lg bg-destructive/10 p-3 text-sm text-destructive">{error}</p>}
+              <div className="max-h-[32rem] overflow-y-auto rounded-lg border border-border" aria-busy={loading}>
+                <Table className="min-w-[660px]">
+                  <TableHeader>
+                    <TableRow className="bg-muted/40">
+                      <TableHead className="px-3">Время</TableHead>
+                      <TableHead>Сотрудник</TableHead>
+                      <TableHead>Описание действия</TableHead>
+                      <TableHead className="px-3">Статус</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {rows.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={4} className="h-28 text-center text-muted-foreground">
+                          {loading ? "Загрузка истории…" : error ? "История недоступна" : "Изменений пока нет"}
+                        </TableCell>
+                      </TableRow>
+                    ) : rows.map((row) => (
+                      <TableRow key={row.id} className={row.status === "undone" ? "bg-muted/20" : undefined}>
+                        <TableCell className="px-3 align-top font-mono text-xs">
+                          <time dateTime={row.created_at}>{formatTime(row.created_at)}</time>
+                        </TableCell>
+                        <TableCell className="max-w-40 whitespace-normal align-top">{row.employee_name}</TableCell>
+                        <TableCell className="min-w-64 max-w-lg whitespace-normal align-top">
+                          {row.description}
+                        </TableCell>
+                        <TableCell className="px-3 align-top">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Badge variant="secondary" className={row.status === "undone" ? "text-muted-foreground" : "bg-primary/10 text-primary"}>
+                              {row.status === "undone" ? <><CheckCircle2 className="mr-1 h-3 w-3" />Отменено</> : "Выполнено"}
+                            </Badge>
+                            {row.status === "active" && (
+                              <Button variant="outline" size="xs"
+                                disabled={saving || loading || !online || (requiresAdminUndo(row.entity_type) && !canUndoRates)}
+                                title={requiresAdminUndo(row.entity_type) && !canUndoRates ? "Это действие может отменить только администратор" : undefined}
+                                aria-label={`Отменить: ${row.description}`}
+                                onClick={() => setSelected(row)}>
+                                <RotateCcw /> Отменить
+                              </Button>
+                            )}
+                          </div>
+                          {row.undone_at && <div className="mt-1 text-[10px] text-muted-foreground">{formatTime(row.undone_at)}</div>}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+              {(rows.length > 0 || page > 0) && (
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                  <p className="text-xs text-muted-foreground">
+                    Страница {page + 1} · записей на странице: {rows.length} · максимум {ACTION_HISTORY_LIMIT}
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={loading || !online || page === 0}
+                      onClick={() => void loadPage(page - 1)}
+                    >
+                      <ChevronLeft /> Назад
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={loading || !online || !hasMore}
+                      onClick={() => void loadPage(page + 1)}
+                    >
+                      Далее <ChevronRight />
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
         </CardContent>
       </Card>
       <Dialog open={Boolean(selected)} onOpenChange={(open) => { if (!open && !savingRef.current) setSelected(null) }}>

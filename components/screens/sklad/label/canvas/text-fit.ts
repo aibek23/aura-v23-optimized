@@ -108,6 +108,7 @@ export function createTextbox(text: string, options: Record<string, unknown>): T
   const opts = { ...TEXT_DEFAULTS, ...options } as Record<string, unknown>
   const data = { autoFit: true, fitRatio: FIT_RATIO_DEFAULT, ...(opts.data as object ?? {}) }
   opts.data  = data
+  if (["sku", "price"].includes((data as TextMeta).role ?? "")) opts.editable = false
   const tb   = new Textbox(text, opts)
   fitTextboxHeight(tb)
   if (isAutoFit(tb)) fitFontToBox(tb)

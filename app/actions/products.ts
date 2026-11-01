@@ -1,7 +1,7 @@
 "use server"
 
 import { createClient } from "@/lib/supabase/server"
-import { getRequestCrmContext } from "@/lib/supabase/request-context"
+import { requireApprovedContext } from "@/lib/supabase/request-context"
 import { revalidatePath } from "next/cache"
 import type { Product } from "@/lib/types"
 
@@ -39,12 +39,7 @@ const PRODUCT_COLUMNS = [
   "created_at",
 ].join(", ")
 
-async function requireProfile() {
-  const { supabase, user, profile, shopId } = await getRequestCrmContext()
-  if (!user) throw new Error("Требуется вход в систему")
-  if (!profile || profile.status !== "approved") throw new Error("Аккаунт не подтверждён")
-  return { supabase, user, profile, shopId }
-}
+const requireProfile = requireApprovedContext
 
 /**
  * Возвращает АКТИВНЫЙ shop_id так, как его видят RLS-политики.
@@ -134,12 +129,14 @@ export type ProductPage = {
 export async function getProductsPage(
   input: { limit?: number; offset?: number } = {},
 ): Promise<ProductPage> {
-  const { supabase } = await requireProfile()
+  const { supabase, shopId } = await requireProfile()
   const limit = Math.min(Math.max(Math.floor(input.limit ?? 50), 1), 100)
   const offset = Math.max(Math.floor(input.offset ?? 0), 0)
+  if (!shopId) return { items: [], offset, limit, hasMore: false }
   const { data, error } = await supabase
     .from("products")
     .select(PRODUCT_COLUMNS)
+    .eq("shop_id", shopId)
     .is("deleted_at", null)
     .order("created_at", { ascending: false })
     .range(offset, offset + limit)
@@ -154,6 +151,28 @@ export async function getProductsPage(
   }
 }
 
+
+/** Exact, case-insensitive SKU lookup across the active shop, including older catalog pages. */
+export async function findProductBySku(rawSku: string): Promise<Product | null> {
+  const sku = String(rawSku ?? "").trim().toUpperCase()
+  if (!/^[A-Z]{2}\d{1,8}$/.test(sku)) return null
+
+  const { supabase, shopId } = await requireProfile()
+  if (!shopId) return null
+  const { data, error } = await supabase
+    .from("products")
+    .select(PRODUCT_COLUMNS)
+    .eq("shop_id", shopId)
+    .ilike("sku", sku)
+    .is("deleted_at", null)
+    .limit(1)
+    .maybeSingle()
+
+  if (error) throw error
+  if (!data) return null
+  const [product] = await withShopSeqId(supabase, [data as unknown as Product])
+  return product ?? null
+}
 
 export type ProductInput = {
   name: string

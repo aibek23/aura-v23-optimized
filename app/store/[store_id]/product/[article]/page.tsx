@@ -47,7 +47,9 @@ export default async function ProductPage({ params }: { params: Promise<Params> 
             <p className="text-sm text-muted-foreground">{product.shop_name ?? "Ювелирный магазин"}</p>
             <h1 className="mt-2 font-serif text-3xl text-balance">{product.name}</h1>
           </div>
-          <p className="font-mono text-2xl font-semibold text-primary">{formatSom(product.sale_price)}</p>
+          <p className="min-w-0 break-words font-mono text-xl font-semibold leading-tight text-primary [overflow-wrap:anywhere] sm:text-2xl">
+            {formatSom(product.sale_price)}
+          </p>
           <dl className="grid grid-cols-2 gap-3 text-sm">
             <div><dt className="text-muted-foreground">Металл</dt><dd>{product.metal ?? "—"}</dd></div>
             <div><dt className="text-muted-foreground">Проба</dt><dd>{purityFromMetal(product.metal) || "—"}</dd></div>

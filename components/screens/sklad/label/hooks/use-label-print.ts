@@ -16,6 +16,13 @@ function getPrintErrorMessage(error: unknown): string {
       ? String(error.name)
       : ""
 
+  if (name === "DejenPrintError") return message
+
+  // iOS Bluetooth browsers (Bluefy) report bare CoreBluetooth codes like "2".
+  if (/^-?\d+$/.test(message.trim())) {
+    return `Связь с принтером прервалась (код ${message.trim()}). Выключите и включите принтер, затем повторите печать.`
+  }
+
   if (
     name === "NotFoundError" ||
     /user cancelled the requestdevice(?:\(\))? chooser|no device selected|device selection.*cancel/i.test(message)
@@ -63,7 +70,9 @@ export function useLabelPrint(
         onProgress: (msg) => setStatus(String(msg)),
       })
       printSucceeded = true
-      toast.success("Печать успешно завершена")
+      toast.success(printerProfile.driver === "dejen"
+        ? "Данные переданы Dejen. Проверьте напечатанную этикетку."
+        : "Печать успешно завершена")
     } catch (err) {
       const name =
         typeof err === "object" && err !== null && "name" in err

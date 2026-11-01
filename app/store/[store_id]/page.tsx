@@ -1,6 +1,8 @@
 import Link from "next/link"
 import type { Metadata } from "next"
+import { notFound } from "next/navigation"
 import { getPublicShopProducts } from "@/app/actions/store"
+import { isPublicShopEnabled } from "@/app/actions/shops"
 import { formatSom, formatWeight } from "@/lib/format"
 import { AuraMark } from "@/components/brand/aura-mark"
 
@@ -10,6 +12,9 @@ export const revalidate = 300
 
 export async function generateMetadata({ params }: { params: Promise<Params> }): Promise<Metadata> {
   const { store_id } = await params
+  if (!(await isPublicShopEnabled(store_id))) {
+    return { title: "Витрина не найдена", robots: { index: false, follow: false } }
+  }
   const products = await getPublicShopProducts(store_id, 1)
   const shop = products[0]?.shop_name ?? "Ювелирный магазин"
   const title = `${shop} — витрина на Aura`
@@ -24,6 +29,7 @@ export async function generateMetadata({ params }: { params: Promise<Params> }):
 
 export default async function StorePage({ params }: { params: Promise<Params> }) {
   const { store_id } = await params
+  if (!(await isPublicShopEnabled(store_id))) notFound()
   const products = await getPublicShopProducts(store_id, 24)
   const shop = products[0]?.shop_name ?? "Ювелирный магазин"
 
@@ -68,7 +74,7 @@ export default async function StorePage({ params }: { params: Promise<Params> })
                     <div className="text-xs text-muted-foreground">
                       {p.metal ?? "—"} · {formatWeight(p.weight)}
                     </div>
-                    <div className="mt-1 font-mono text-sm font-semibold text-primary">
+                    <div className="mt-1 min-w-0 break-words font-mono text-sm font-semibold text-primary [overflow-wrap:anywhere]">
                       {formatSom(p.sale_price)}
                     </div>
                   </div>

@@ -2,14 +2,9 @@
 
 import { revalidatePath } from "next/cache"
 import type { MetalRate } from "@/lib/types"
-import { getRequestCrmContext } from "@/lib/supabase/request-context"
+import { requireApprovedContext } from "@/lib/supabase/request-context"
 
-async function requireProfile() {
-  const { supabase, user, profile, shopId } = await getRequestCrmContext()
-  if (!user) throw new Error("Требуется вход в систему")
-  if (!profile || profile.status !== "approved") throw new Error("Аккаунт не подтверждён")
-  return { supabase, user, profile, shopId }
-}
+const requireProfile = requireApprovedContext
 
 /** Курсы металлов магазина. Пустой список — используются значения по умолчанию. */
 export async function getMetalRates(): Promise<MetalRate[]> {

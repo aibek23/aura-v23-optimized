@@ -176,6 +176,8 @@ export function ProductGeneralInfo({
               type="button"
               variant="outline"
               size="icon"
+              aria-label="Сгенерировать новый артикул"
+              title="Создать новый артикул товара"
               disabled={skuLoading}
               onClick={onRefreshArticle}
               className="text-muted-foreground"

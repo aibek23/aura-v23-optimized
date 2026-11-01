@@ -4,6 +4,7 @@ import { memo, useMemo, useState, useTransition, useEffect, useRef, useCallback 
 import dynamic from "next/dynamic"
 import type { Customer, Product, Profile, Role, Sale, SaleReturn } from "@/lib/types"
 import { AppHeader } from "@/components/app-header"
+import { SiteHelp } from "@/components/site-help"
 import { AppNav, SCREEN_PATHS, type ScreenId } from "@/components/app-nav"
 import { KassaScreen } from "@/components/screens/kassa/index"
 import { CashPanel } from "@/components/screens/kassa/cash-panel"
@@ -116,6 +117,7 @@ export function Dashboard({
   clients = [],
   superAdminShops,
   impersonatedShop,
+  publicStorefrontState = { enabled: true, canToggle: false },
 }: {
   /** Текущий экран определяется URL-роутом, а не внутренним состоянием. */
   screen: ScreenId
@@ -132,6 +134,7 @@ export function Dashboard({
   clients?: Customer[]
   superAdminShops?: ShopBillingRow[]
   impersonatedShop?: { shop_id: string; shop_name: string | null }
+  publicStorefrontState?: { enabled: boolean; canToggle: boolean }
 }) {
   const router = useRouter()
   const [activeScreen, setActiveScreen] = useState<ScreenId>(screen)
@@ -139,6 +142,11 @@ export function Dashboard({
   const [showExitModal, setShowExitModal] = useState(false)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [siteHelpOpener, setSiteHelpOpener] = useState<(() => void) | null>(null)
+  const registerSiteHelpOpener = useCallback((openHelp: () => void) => {
+    setSiteHelpOpener(() => openHelp)
+  }, [])
+  const openSiteHelp = useCallback(() => siteHelpOpener?.(), [siteHelpOpener])
 
   // Счётчик нажатий «Назад» с главного экрана (0 или 1)
   const backCountRef = useRef(0)
@@ -355,6 +363,7 @@ export function Dashboard({
   isSuperAdmin={isSuperAdmin}
   onNavigate={handleScreenChange}
   onOpenCabinet={() => handleScreenChange("kabinet")} 
+  onOpenHelp={openSiteHelp}
   mobileOpen={mobileNavOpen}
   onClose={() => setMobileNavOpen(false)}
   collapsed={sidebarCollapsed}
@@ -399,7 +408,15 @@ export function Dashboard({
           />
         )}
         {activeScreen === "vitrina" && (
-          <VitrinaScreen products={currentProducts} canSeePurchasePrice={canSeePurchasePrice} isAdmin={isAdmin} />
+          <VitrinaScreen
+            products={currentProducts}
+            canSeePurchasePrice={canSeePurchasePrice}
+            isAdmin={isAdmin}
+            isShopAdmin={profile.role === "admin" && !isImpersonating}
+            storeId={profile.shop_id ?? ""}
+            publicEnabled={publicStorefrontState.enabled}
+            canManagePublicStorefront={publicStorefrontState.canToggle}
+          />
         )}
         {activeScreen === "sklad" && (
           <SkladScreen
@@ -454,6 +471,7 @@ export function Dashboard({
         )}
         </main>
       </div>
+      <SiteHelp screen={activeScreen} onNavigate={handleScreenChange} isAdmin={isAdmin} isSuperAdmin={isSuperAdmin} onRegisterOpenHelp={registerSiteHelpOpener} />
     </div>
   )
 }

@@ -11,9 +11,20 @@ import { CameraCapture } from "@/components/screens/sklad/add-edit-Product/camer
 
 const BUCKET = "product-images"
 
-async function uploadOne(file: Blob) {
-  const supabase = createClient()
-  const name = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.webp`
+async function requireCurrentShopId(supabase: ReturnType<typeof createClient>) {
+  const { data, error } = await supabase.rpc("current_shop_id")
+  if (error || typeof data !== "string" || !data) {
+    throw new Error("Не удалось определить магазин для загрузки фотографии")
+  }
+  return data
+}
+
+async function uploadOne(
+  supabase: ReturnType<typeof createClient>,
+  shopId: string,
+  file: Blob,
+) {
+  const name = `${shopId}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.webp`
   const { error } = await supabase.storage.from(BUCKET).upload(name, file, {
     contentType: "image/webp",
     cacheControl: "31536000",
@@ -40,10 +51,12 @@ export function ProductImages({
     setBusy(true)
     const urls: string[] = []
     try {
+      const supabase = createClient()
+      const shopId = await requireCurrentShopId(supabase)
       for (const file of Array.from(files)) {
         if (!file.type.startsWith("image/")) continue
         const compressed = await compressToWebp(file)
-        urls.push(await uploadOne(compressed))
+        urls.push(await uploadOne(supabase, shopId, compressed))
       }
       if (urls.length) {
         onChange([...images, ...urls])
@@ -63,8 +76,10 @@ export function ProductImages({
   const addBlob = async (blob: Blob) => {
     setBusy(true)
     try {
+      const supabase = createClient()
+      const shopId = await requireCurrentShopId(supabase)
       const compressed = await compressToWebp(blob)
-      const url = await uploadOne(compressed)
+      const url = await uploadOne(supabase, shopId, compressed)
       onChange([...images, url])
       toast.success(`Фото добавлено (${humanSize(compressed.size)})`)
     } catch (e) {

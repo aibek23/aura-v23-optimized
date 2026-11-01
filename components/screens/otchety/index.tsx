@@ -25,11 +25,10 @@ import {
   DEFAULT_SCRAP_PRICES,
   addDays,
   buildCategoryRows,
-  buildHeatGrid,
-  buildPeakHints,
   buildPurityRows,
   buildSeries,
   categoryOf,
+   returnCategoryOf,
   resolveRange,
   previousRange,
   summarise,
@@ -167,21 +166,13 @@ export function OtchetyScreen({
 
   const categories = useMemo(() => {
     const set = new Set<string>()
-    for (const s of inRange)
+    for (const s of inRange.filter((sale) => !sale.deleted_at && sale.sync_status !== "pending" && sale.sync_status !== "rejected"))
       for (const item of s.items ?? [])
         set.add(categoryOf(item, productById))
+    for (const r of returnsInRange.filter((refund) => !refund.deleted_at))
+      set.add(returnCategoryOf(r, productById))
     return [...set].sort()
-  }, [inRange, productById])
-
-  const heat = useMemo(
-    () => buildHeatGrid(inRange, heatCategory, productById, returnsInRange),
-    [inRange, heatCategory, productById, returnsInRange],
-  )
-
-  const peakHints = useMemo(
-    () => buildPeakHints(inRange, productById),
-    [inRange, productById],
-  )
+  }, [inRange, returnsInRange, productById])
 
   const series = useMemo(() => buildSeries(inRange, returnsInRange), [inRange, returnsInRange])
 
@@ -264,8 +255,11 @@ export function OtchetyScreen({
       />
 
       <HeatmapSection
-        heat={heat}
-        peakHints={peakHints}
+        key={`${range.from.getTime()}:${range.to.getTime()}:${heatCategory}`}
+        sales={inRange}
+        returns={returnsInRange}
+        productById={productById}
+        range={range}
         categories={categories}
         heatCategory={heatCategory}
         setHeatCategory={setHeatCategory}

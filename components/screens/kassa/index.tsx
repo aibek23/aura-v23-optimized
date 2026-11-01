@@ -7,7 +7,7 @@ import { formatSom } from "@/lib/format"
 import { buildRateMap, scrapRateOf } from "@/lib/rates"
 import { round, toNumber } from "@/hooks/useCalculator"
 import { checkout } from "@/app/actions/sales"
-import type { SalesHistoryProps } from "@/components/sales-history"
+import type { SalesHistoryProps } from "@/components/sales-history/index"
 import { CashPanel } from "@/components/screens/kassa/cash-panel"
 import type { CashData } from "@/app/actions/cash"
 import { Button } from "@/components/ui/button"
@@ -33,7 +33,7 @@ const MIN_QUERY = 3
 const LOCAL_STORAGE_KEY = "kassa_cart_state_v2"
 
 const LazySalesHistory = dynamic(
-  () => import("@/components/sales-history").then((mod) => mod.SalesHistory),
+  () => import("@/components/sales-history/index").then((mod) => mod.SalesHistory),
   {
     ssr: false,
     loading: () => (
@@ -82,6 +82,15 @@ function DeferredSalesHistory(props: SalesHistoryProps) {
   )
 }
 
+function dateAfterDays(days: number) {
+  const date = new Date()
+  date.setDate(date.getDate() + days)
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, "0")
+  const day = String(date.getDate()).padStart(2, "0")
+  return year + "-" + month + "-" + day
+}
+
 export function KassaScreen({
   products,
   profile,
@@ -116,10 +125,12 @@ export function KassaScreen({
   const [cart, setCart] = useState<ExtendedSaleItem[]>([])
   const [bonusUsed, setBonusUsed] = useState("")
   const [payment, setPayment] = useState("cash")
+  const [creditDueDate, setCreditDueDate] = useState(() => dateAfterDays(30))
   const [payCash, setPayCash] = useState("")
   const [payElectronic, setPayElectronic] = useState("")
   const [customerName, setCustomerName] = useState("")
   const [customerPhone, setCustomerPhone] = useState("")
+  const [customerId, setCustomerId] = useState<string | null>(null)
   
   const [submitting, setSubmitting] = useState(false)
   const checkoutAttempt = useRef<ClientOperationAttempt | null>(null)
@@ -150,7 +161,9 @@ export function KassaScreen({
       setBonusUsed("")
       setCustomerName("")
       setCustomerPhone("")
+      setCustomerId(null)
       setPayment("cash")
+      setCreditDueDate(dateAfterDays(30))
       setIsLoaded(true)
       return
     }
@@ -167,6 +180,7 @@ export function KassaScreen({
         if (parsed.payment !== undefined) setPayment(parsed.payment)
         if (parsed.customerName !== undefined) setCustomerName(parsed.customerName)
         if (parsed.customerPhone !== undefined) setCustomerPhone(parsed.customerPhone)
+        if (parsed.customerId !== undefined) setCustomerId(parsed.customerId)
       }
     } catch (e) {
       console.error("[kassa] Error reading localStorage:", e)
@@ -180,12 +194,12 @@ export function KassaScreen({
     try {
       localStorage.setItem(
         cartStorageKey,
-        JSON.stringify({ cart, bonusUsed, payment, customerName, customerPhone })
+        JSON.stringify({ cart, bonusUsed, payment, customerName, customerPhone, customerId })
       )
     } catch (e) {
       console.error("[kassa] Error saving to localStorage:", e)
     }
-  }, [cart, bonusUsed, payment, customerName, customerPhone, isLoaded, onlineOnly, cartStorageKey])
+  }, [cart, bonusUsed, payment, customerName, customerPhone, customerId, isLoaded, onlineOnly, cartStorageKey])
 
   useEffect(() => {
     const mql = window.matchMedia("(max-width: 767px)")
@@ -349,7 +363,9 @@ export function KassaScreen({
     setBonusUsed("")
     setCustomerName("")
     setCustomerPhone("")
+    setCustomerId(null)
     setPayment("cash")
+    setCreditDueDate(dateAfterDays(30))
     setQuery("")
     if (!onlineOnly) localStorage.removeItem(cartStorageKey)
     toast.info("Чек полностью сброшен")
@@ -402,13 +418,15 @@ export function KassaScreen({
         discount: totalDiscountAmount,
         bonus_used: bonusNum,
         payment_method: payment,
+        credit_due_date: payment === "credit" ? creditDueDate : undefined,
         amount_cash: payment === "mixed" ? Number(payCash) || 0 : undefined,
         amount_electronic: payment === "mixed" ? Number(payElectronic) || 0 : undefined,
         customer_name: customerName,
         customer_phone: customerPhone,
+        customer_id: customerId,
       }
 
-      if (onLocalCheckout) {
+      if (onLocalCheckout && payment !== "credit") {
         const res = await onLocalCheckout(checkoutPayload)
         toast.success(`Продажа записана локально: ${formatSom(res.sale?.final_price || total)}`, {
           description: "Ожидает подтверждения сервера. При конфликте с другой продажей приложение сообщит об этом.",
@@ -436,6 +454,18 @@ export function KassaScreen({
 
   const submit = () => {
     if (cart.length === 0) return
+    if (payment === "credit" && !customerId) {
+      toast.error("Для продажи в долг выберите клиента из списка")
+      return
+    }
+    if (payment === "credit" && creditDueDate < dateAfterDays(0)) {
+      toast.error("Срок оплаты не может быть в прошлом")
+      return
+    }
+    if (payment === "credit" && !navigator.onLine) {
+      toast.error("Продажа в долг требует подключения к интернету")
+      return
+    }
     // Смешанная оплата: две суммы должны закрывать чек.
     if (payment === "mixed") {
       const paid = (Number(payCash) || 0) + (Number(payElectronic) || 0)
@@ -510,10 +540,14 @@ export function KassaScreen({
             setCustomerName={setCustomerName}
             customerPhone={customerPhone}
             setCustomerPhone={setCustomerPhone}
+            customerId={customerId}
+            setCustomerId={setCustomerId}
             showBonus={showBonus}
             bonusUsed={bonusUsed}
             setBonusUsed={setBonusUsed}
             payment={payment}
+            creditDueDate={creditDueDate}
+            setCreditDueDate={setCreditDueDate}
             payCash={payCash}
             setPayCash={setPayCash}
             payElectronic={payElectronic}

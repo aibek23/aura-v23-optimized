@@ -9,6 +9,8 @@ import { getBodyPx } from "../components/label-background"
 import { createTextbox, refitTextbox } from "./text-fit"
 import { buildJewelryText } from "../data/jewelry-text"
 import { safeQrDataUrl } from "../data/qr"
+import { setLiveText, setLivePrice } from "../data/live-format"
+import { getPriceValues } from "../data/price"
 
 async function buildHorizontalLayout(
   canvas: Canvas,
@@ -54,6 +56,7 @@ async function buildHorizontalLayout(
   })
 
   canvas.add(metal, weightText, sizeText, priceLabel, price, skuText)
+  setLivePrice(price, getPriceValues(data))
   onBaseReady?.()
   canvas.requestRenderAll()
 
@@ -117,6 +120,7 @@ async function buildVerticalLayout(
   })
 
   canvas.add(metal, weightText, sizeText, priceLabel, price, skuText)
+  setLivePrice(price, getPriceValues(data))
   onBaseReady?.()
   canvas.requestRenderAll()
 
@@ -172,12 +176,12 @@ export async function refreshLiveData(canvas: Canvas, data: Product): Promise<vo
     if (!role || obj.type !== "textbox") continue
     const tb = obj as InstanceType<typeof Textbox>
     switch (role) {
-      case "metal":       tb.set({ text: metalLine }); break
-      case "weight":      tb.set({ text: `Вес: ${weightLine}` }); break
-      case "size":        tb.set({ text: `Разм: ${sizeLine}` }); break
-      case "price-label": tb.set({ text: "Цена:" }); break
-      case "price":       tb.set({ text: priceLine }); break
-      case "sku":         tb.set({ text: skuValue }); break
+      case "metal":       setLiveText(tb, metalLine); break
+      case "weight":      setLiveText(tb, `Вес: ${weightLine}`); break
+      case "size":        setLiveText(tb, `Разм: ${sizeLine}`); break
+      case "price-label": setLiveText(tb, "Цена:"); break
+      case "price":       setLivePrice(tb, getPriceValues(data)); break
+      case "sku":         setLiveText(tb, skuValue); break
     }
     refitTextbox(tb)
   }

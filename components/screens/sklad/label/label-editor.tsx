@@ -2,11 +2,12 @@
 import React, {
   useRef, useState, useMemo, useCallback, useEffect, useLayoutEffect,
 } from "react"
-import { Download, X, ChevronDown, Printer } from "lucide-react"
+import { X } from "lucide-react"
+import { createPortal } from "react-dom"
 import { canvasToLabelDataUrl, getLabelSizeDef, DEFAULT_SIZE_KEY, LABEL_SIZES, NIIMBOT_MODEL } from "@/lib/niimbot"
 import type { JewelryLabelSizeKey } from "@/lib/niimbot"
 import type { LabelEditorProps } from "./types"
-import { RULER_SIZE, ZOOM_DEFAULT, ZOOM_MIN } from "./constants"
+import { RULER_SIZE, ZOOM_DEFAULT, ZOOM_MAX, ZOOM_MIN } from "./constants"
 import type { BorderStyleKey } from "./constants"
 import { getSvgLayout } from "./components/label-background"
 import { computeStageOrigin, makeTrigCache, screenToLabelPx } from "./utils/geometry"
@@ -24,10 +25,33 @@ import { useLabelPrint }      from "./hooks/use-label-print"
 import { cropPrintArea }      from "./canvas/print"
 
 import { CanvasArea }         from "./components/canvas-area"
-import { LabelEditorToolbar } from "./components/toolbar"
+import { LiveFormatPanel }    from "./components/live-format-panel"
+import { LabelEditorToolbar, LabelBackgroundControls } from "./components/toolbar"
 
 const STAGE_PAD    = 32
 const SIZE_STORAGE = "sklad:label-size"
+const BACKGROUND_CALIBRATION_STORAGE = "sklad:label-background-calibration"
+
+type BackgroundCalibration = { offsetXmm: number; offsetYmm: number; widthPercent: number; heightPercent: number }
+const DEFAULT_BACKGROUND_CALIBRATION: BackgroundCalibration = { offsetXmm: 0, offsetYmm: 0, widthPercent: 100, heightPercent: 100 }
+
+function readBackgroundCalibration(storageKey: string): BackgroundCalibration {
+  try {
+    const raw = localStorage.getItem(storageKey)
+    if (!raw) return DEFAULT_BACKGROUND_CALIBRATION
+    const value = JSON.parse(raw) as Partial<BackgroundCalibration>
+    const bounded = (n: unknown, min: number, max: number, fallback: number) =>
+      typeof n === "number" && Number.isFinite(n) ? Math.max(min, Math.min(max, n)) : fallback
+    return {
+      offsetXmm: bounded(value.offsetXmm, -20, 20, 0),
+      offsetYmm: bounded(value.offsetYmm, -20, 20, 0),
+      widthPercent: bounded(value.widthPercent, 50, 150, 100),
+      heightPercent: bounded(value.heightPercent, 50, 150, 100),
+    }
+  } catch {
+    return DEFAULT_BACKGROUND_CALIBRATION
+  }
+}
 
 function getStoredSizeKey(fallback: JewelryLabelSizeKey, storageKey: string): JewelryLabelSizeKey {
   try {
@@ -38,9 +62,16 @@ function getStoredSizeKey(fallback: JewelryLabelSizeKey, storageKey: string): Je
 }
 
 export function LabelEditor({
-  product, autoPrint, initialSizeKey, printerProfile = NIIMBOT_MODEL,
-  copies = 1, density, onSizeChange, onClose,
+  product: originalProduct, canSeePurchasePrice = false, autoPrint, initialSizeKey, printerProfile = NIIMBOT_MODEL,
+  copies = 1, density, onSizeChange, onClose, backgroundControlsHost,
 }: LabelEditorProps) {
+  const product = useMemo(() => canSeePurchasePrice ? originalProduct : {
+    ...originalProduct,
+    purchase_price: Number.NaN,
+    price_per_gram_purchase: null,
+    purchase_price_visible: null,
+    price_per_gram_purchase_visible: null,
+  }, [originalProduct, canSeePurchasePrice])
   const sizeStorageKey = `${SIZE_STORAGE}:${printerProfile.key}`
   const [sizeKey, setSizeKey] = useState<JewelryLabelSizeKey>(
     () => getStoredSizeKey(initialSizeKey ?? printerProfile.defaultLabelKey ?? DEFAULT_SIZE_KEY, sizeStorageKey),
@@ -49,6 +80,30 @@ export function LabelEditor({
   // rotation хранит накопленный поворот в градусах (0 | 90 | 180 | 270)
   const [rotation, setRotation] = useState(0)
   const category = product.category ?? "Прочее"
+  const backgroundCalibrationStorageKey = `${BACKGROUND_CALIBRATION_STORAGE}:${sizeKey}`
+  const [backgroundCalibration, setBackgroundCalibration] = useState<BackgroundCalibration>(DEFAULT_BACKGROUND_CALIBRATION)
+  const [backgroundCalibrationLoadedFor, setBackgroundCalibrationLoadedFor] = useState("")
+  const [backgroundCalibrationOpen, setBackgroundCalibrationOpen] = useState(false)
+
+  useEffect(() => {
+    setBackgroundCalibration(readBackgroundCalibration(backgroundCalibrationStorageKey))
+    setBackgroundCalibrationLoadedFor(backgroundCalibrationStorageKey)
+  }, [backgroundCalibrationStorageKey])
+
+  useEffect(() => {
+    if (backgroundCalibrationLoadedFor !== backgroundCalibrationStorageKey) return
+    try {
+      localStorage.setItem(backgroundCalibrationStorageKey, JSON.stringify(backgroundCalibration))
+    } catch { /* ignore */ }
+  }, [backgroundCalibration, backgroundCalibrationLoadedFor, backgroundCalibrationStorageKey])
+
+  const updateBackgroundCalibration = useCallback((key: keyof BackgroundCalibration, value: number) => {
+    if (!Number.isFinite(value)) return
+    const min = key === "offsetXmm" || key === "offsetYmm" ? -20 : 50
+    const max = key === "offsetXmm" || key === "offsetYmm" ? 20 : 150
+    const boundedValue = Math.max(min, Math.min(max, value))
+    setBackgroundCalibration((current) => ({ ...current, [key]: boundedValue }))
+  }, [])
 
   useEffect(() => {
     try { localStorage.setItem(sizeStorageKey, sizeKey) } catch { /* ignore */ }
@@ -58,8 +113,6 @@ export function LabelEditor({
   const sizeDef = useMemo(() => getLabelSizeDef(sizeKey), [sizeKey])
   const nativeWidth = Math.round(sizeDef.w_px * printerProfile.dpi / 203)
   const fitsPrinthead = nativeWidth <= printerProfile.printheadPx
-  const printerName =
-    (printerProfile as { displayName?: string }).displayName ?? printerProfile.key
   const canPrint = fitsPrinthead && printerProfile.supportsDirectBluetooth !== false
 
   const { stageW, stageH, offsetX, offsetY } = useMemo(() => {
@@ -105,8 +158,6 @@ export function LabelEditor({
   const [isPrinting,    setIsPrinting]    = useState(false)
   const [printStatus,   setPrintStatus]   = useState("")
   const [loaded,      setLoaded]      = useState(false)
-  const [collapsed,   setCollapsed]   = useState(false)
-  const [topCollapsed, setTopCollapsed] = useState(false)
 
   const isTransformingRef = useRef(false)
   const isPanModeForPan   = useRef(false)
@@ -201,10 +252,32 @@ export function LabelEditor({
   }, [isPanMode, activatePanMode, deactivatePanMode])
 
   // ── Zoom + transform ──────────────────────────────────────────────────────
-  const { zoom, zoomRef, zoomTo, zoomReset, transformRef } = useCanvasTransform(
+  const { zoom, zoomRef, zoomTo, transformRef } = useCanvasTransform(
     fabricRef, pan, offsetX, offsetY, totalW, totalH, rotation, sizeKey,
   )
   useEffect(() => { zoomRefProxy.current = zoomRef.current }, [zoom, zoomRef])
+
+  // Zoom around the printable body so the long tail cannot pull the text off-screen.
+  const zoomToPrintArea = useCallback((requestedZoom: number) => {
+    const nextZoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, requestedZoom))
+    const stageW = totalW - RULER_SIZE
+    const stageH = totalH - RULER_SIZE
+    const dx = offsetX + sizeDef.w_px / 2 - stageW / 2
+    const dy = offsetY + sizeDef.h_px / 2 - stageH / 2
+    const angle = (rotation * Math.PI) / 180
+    const cos = Math.cos(angle)
+    const sin = Math.sin(angle)
+    const rotatedX = dx * cos - dy * sin
+    const rotatedY = dx * sin + dy * cos
+    const rect = viewportRef.current?.getBoundingClientRect()
+    const centerX = rect ? RULER_SIZE + (rect.width - RULER_SIZE) / 2 : RULER_SIZE + stageW / 2
+    const centerY = rect ? RULER_SIZE + (rect.height - RULER_SIZE) / 2 : RULER_SIZE + stageH / 2
+    setPan({
+      x: centerX - (RULER_SIZE + stageW / 2) - rotatedX * nextZoom,
+      y: centerY - (RULER_SIZE + stageH / 2) - rotatedY * nextZoom,
+    })
+    zoomTo(nextZoom)
+  }, [offsetX, offsetY, rotation, sizeDef, totalW, totalH, viewportRef, setPan, zoomTo])
 
   // Подбираем масштаб после появления реальной области холста, чтобы на первом
   // кадре вся этикетка помещалась между компактными панелями, а не за краем сцены.
@@ -413,9 +486,8 @@ export function LabelEditor({
   }, [actions])
 
   const handleZoomReset = useCallback(() => {
-    zoomReset()
-    setPan({ x: 0, y: 0 })
-  }, [zoomReset, setPan])
+    zoomToPrintArea(ZOOM_DEFAULT)
+  }, [zoomToPrintArea])
 
   const handlePanStart = useCallback((_cx: number, _cy: number) => {}, [])
 
@@ -466,7 +538,7 @@ export function LabelEditor({
       setLineHeight(lh)
       actions.handleLineHeightChange(lh)
     },
-    onZoomTo:         zoomTo,
+    onZoomTo:         zoomToPrintArea,
     onZoomReset:      handleZoomReset,
     onTogglePanMode:  handleTogglePan,
     onRotateCanvas:   handleRotateCanvas,
@@ -475,6 +547,16 @@ export function LabelEditor({
     onScaleDown:      handleScaleDown,
     onLoadSvgFrame:   actions.loadSvgFrame,
     onSaveToFile:     actions.saveToFile,
+    backgroundCalibration,
+    backgroundCalibrationOpen,
+    onToggleBackgroundCalibration: backgroundControlsHost === undefined
+      ? () => setBackgroundCalibrationOpen((open) => !open)
+      : undefined,
+    onUpdateBackgroundCalibration: updateBackgroundCalibration,
+    onResetBackgroundCalibration: () => setBackgroundCalibration(DEFAULT_BACKGROUND_CALIBRATION),
+    onExportPng: handleExportPng,
+    canExportPng: loaded && fitsPrinthead,
+    exportPngTitle: fitsPrinthead ? `Скачать PNG · ${printerProfile.dpi} dpi` : "Ширина макета превышает ширину печатающей головки",
   }
 
   // ── Рендер ────────────────────────────────────────────────────────────────
@@ -496,35 +578,37 @@ export function LabelEditor({
         </div>
       )}
 
-      {/* Компактная верхняя строка: формат, статус, экспорт и закрытие. */}
-      {!collapsed && (
+      {backgroundControlsHost && createPortal(
+        <div className="px-3 py-2">
+          <LabelBackgroundControls
+            backgroundCalibration={backgroundCalibration}
+            backgroundCalibrationOpen={backgroundCalibrationOpen}
+            onToggleBackgroundCalibration={() => setBackgroundCalibrationOpen((open) => !open)}
+            onUpdateBackgroundCalibration={updateBackgroundCalibration}
+            onResetBackgroundCalibration={() => setBackgroundCalibration(DEFAULT_BACKGROUND_CALIBRATION)}
+          />
+        </div>,
+        backgroundControlsHost,
+      )}
+
+      {/* Компактная верхняя строка: формат, статус и закрытие. */}
         <div className="relative z-20 shrink-0 border-b bg-background/95 backdrop-blur-md">
-          <div className="flex min-h-10 items-center gap-1 px-2 py-1">
-            <span
-              className="min-w-0 max-w-[28vw] truncate text-[11px] font-semibold leading-tight sm:max-w-[200px]"
-              title="Активный принтер"
-            >
-              <Printer className="mr-1 inline h-3.5 w-3.5 text-primary" aria-hidden="true" />
-              {printerName}
-            </span>
-            <LabelEditorToolbar zone="header" {...toolbarCommon} />
-            <span className="flex-1" />
-            <span
-              className="max-w-[22vw] shrink truncate text-[10px] text-muted-foreground sm:max-w-[180px]"
-              aria-live="polite"
-            >
-              {printStatus || (loaded ? "Готово" : "Загрузка…")}
-            </span>
-            <button
-              type="button"
-              onClick={handleExportPng}
-              disabled={!loaded || !fitsPrinthead}
-              className="inline-flex h-8 shrink-0 items-center gap-1 rounded-md border px-2 text-[10px] hover:bg-muted disabled:opacity-50"
-              title={fitsPrinthead ? `Скачать PNG · ${printerProfile.dpi} dpi` : "Ширина макета превышает ширину печатающей головки"}
-            >
-              <Download className="h-3.5 w-3.5" aria-hidden="true" />
-              <span className="hidden xs:inline">PNG</span>
-            </button>
+          <div className="grid min-h-10 grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-1 px-2 py-1 sm:flex">
+            <div className="min-w-0 [&>div]:max-w-full sm:[&>div]:max-w-none">
+              <LabelEditorToolbar zone="header" {...toolbarCommon} />
+            </div>
+            <span className="hidden flex-1 sm:block" />
+            {(printStatus || !loaded) && (
+              <span
+                className={(loaded ? "hidden sm:block " : "") + "min-w-0 truncate text-[10px] text-muted-foreground sm:max-w-[180px]"}
+                aria-live="polite"
+              >
+                {printStatus || "Загрузка…"}
+              </span>
+            )}
+            {loaded && (
+              <LiveFormatPanel fabricRef={fabricRef} ready={loaded} canSeePurchasePrice={canSeePurchasePrice} />
+            )}
             {onClose && (
               <button
                 type="button"
@@ -537,45 +621,8 @@ export function LabelEditor({
             )}
           </div>
         </div>
-      )}
 
-      {/* Свёрнутый режим (и верх и низ свернуты): плавающие кнопки управления */}
-      {collapsed && (
-        <div className="absolute top-2 left-3 right-3 z-30 pointer-events-none flex items-center justify-between">
-          <button
-            type="button"
-            onClick={() => { setCollapsed(false); setTopCollapsed(false); }}
-            className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full border border-border/80 bg-background/90 px-3 py-1 text-xs font-medium shadow-md backdrop-blur-md hover:bg-background hover:border-primary/50 transition-colors"
-            title="Развернуть панели настроек"
-          >
-            <ChevronDown className="h-3.5 w-3.5 text-primary" />
-            <span className="text-[11px]">
-              {printerName} · <strong className="text-primary font-mono">{sizeDef.label}</strong>
-            </span>
-          </button>
-          <div className="pointer-events-auto flex items-center gap-1">
-            <button
-              type="button"
-              onClick={handleExportPng}
-              disabled={!loaded || !fitsPrinthead}
-              className="rounded-full border border-border/80 bg-background/90 p-1.5 text-muted-foreground shadow-md backdrop-blur-md hover:text-foreground"
-              title="Скачать PNG"
-            >
-              <Download className="h-3.5 w-3.5" />
-            </button>
-            {onClose && (
-              <button
-                type="button"
-                onClick={onClose}
-                className="rounded-full border border-border/80 bg-background/90 p-1.5 text-muted-foreground shadow-md backdrop-blur-md hover:text-foreground"
-                aria-label="Закрыть"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            )}
-          </div>
-        </div>
-      )}
+
 
       {/* ── ОБЛАСТЬ ХОЛСТА ── */}
       <div className="relative z-0 flex min-h-0 w-full flex-1 overflow-hidden">
@@ -589,6 +636,10 @@ export function LabelEditor({
           guidesRef={guidesRef}
           sizeDef={sizeDef}
           rotation={rotation}
+          backgroundOffsetXmm={backgroundCalibration.offsetXmm}
+          backgroundOffsetYmm={backgroundCalibration.offsetYmm}
+          backgroundScaleX={backgroundCalibration.widthPercent / 100}
+          backgroundScaleY={backgroundCalibration.heightPercent / 100}
           zoom={zoom}
           pan={pan}
           offsetX={offsetX}
@@ -598,10 +649,10 @@ export function LabelEditor({
           stageW={stageW}
           stageH={stageH}
           isPanMode={isPanMode}
-          showCanvasControls={collapsed}
+          showCanvasControls
           onPanStart={handlePanStart}
           onBgClick={handleBgClick}
-          onZoomTo={zoomTo}
+          onZoomTo={zoomToPrintArea}
           onZoomReset={handleZoomReset}
           onTogglePan={handleTogglePan}
           onActivatePan={activatePanMode}
@@ -616,8 +667,6 @@ export function LabelEditor({
       <div className="shrink-0" style={{ zIndex: 9990, position: "relative" }}>
         <LabelEditorToolbar
           zone="bottom"
-          collapsed={collapsed}
-          onToggleCollapse={() => setCollapsed((v) => !v)}
           {...toolbarCommon}
         />
       </div>

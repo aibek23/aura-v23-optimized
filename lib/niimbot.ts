@@ -1,3 +1,7 @@
+import { connectDejen, printDejenRaster, type DejenPrinterInfo, type DejenModelName } from "./dejen"
+import { dejenPageWidthPx } from "./dejen-protocol.mjs"
+import { isStaleBluetoothLinkError } from "./printer-errors"
+
 /**
  * Ювелирные форматы бирок.
  * Размеры в мм: T<ширина>*<высота>+<хвостик> или T<ш>*<в>-<прямоугольник>.
@@ -10,25 +14,41 @@ export type JewelryLabelSizeKey =
   | "T50x30_rect"  // T50*30-230 — прямоугольная бирка
   | "T12x30_d11"
   | "T12x50_d110"
+  | "T25x30_horizontal"
+  | "T30x25_horizontal"
 
 // ---------------------------------------------------------------------------
 // Профили Niimbot. B21, D11 и B3S используют совместимый протокол b1,
 // но требуют проверки на конкретном устройстве.
 // ---------------------------------------------------------------------------
-export type PrinterProfile = NiimbotModel & {
+type CommonPrinterProfile = {
   key: string
   displayName: string
   printheadPx: number
-  supportedIds: number[]
   /** Profile appears in the bundled driver's documented model table; this is not a physical test result. */
   driverDocumented: boolean
   supportsDirectBluetooth?: boolean
+  /** Horizontal print placement correction in millimeters; negative moves content left. */
+  printOffsetXmm?: number
   defaultLabelKey: JewelryLabelSizeKey
 }
 
+export type NiimbotPrinterProfile = NiimbotModel & CommonPrinterProfile & { driver?: "niimbot"; supportedIds: number[] }
+export type DejenPrinterProfile = CommonPrinterProfile & {
+  driver: "dejen"
+  modelName: DejenModelName
+  dpi: 300
+  density: number
+  maxWidthMm: number
+  /** Printable page width; content is placed at the left edge of this page. */
+  printableWidthMm?: number
+}
+export type PrinterProfile = NiimbotPrinterProfile | DejenPrinterProfile
+type IdentifiedPrinter = { profile: PrinterProfile; printer: NiimbotPrinterInfo | DejenPrinterInfo }
+
 const makeProfile = (
-  profile: Omit<PrinterProfile, "label_type" | "speed"> & Partial<Pick<PrinterProfile, "label_type" | "speed">>,
-): PrinterProfile => ({ label_type: 1, speed: 1, ...profile })
+  profile: Omit<NiimbotPrinterProfile, "label_type" | "speed"> & Partial<Pick<NiimbotPrinterProfile, "label_type" | "speed">>,
+): NiimbotPrinterProfile => ({ label_type: 1, speed: 1, ...profile })
 
 export const PRINTER_PROFILES: PrinterProfile[] = [
   makeProfile({ key: "b1", displayName: "Niimbot B1", label: "Niimbot B1", id: 4096, supportedIds: [4096], dpi: 203, protocol: "v4", task: "b1", density: 3, name_prefixes: ["B1"], printheadPx: 384, driverDocumented: true, defaultLabelKey: "T25x30_45" }),
@@ -36,11 +56,15 @@ export const PRINTER_PROFILES: PrinterProfile[] = [
   makeProfile({ key: "d11", displayName: "Niimbot D11", label: "Niimbot D11", id: 512, supportedIds: [512], dpi: 203, protocol: "v4", task: "b1", density: 3, name_prefixes: ["D11"], printheadPx: 96, driverDocumented: false, defaultLabelKey: "T12x30_d11" }),
   makeProfile({ key: "d11h", displayName: "Niimbot D11_H", label: "Niimbot D11_H", id: 528, supportedIds: [528], dpi: 300, protocol: "v4", task: "v4", density: 3, name_prefixes: ["D11"], printheadPx: 144, driverDocumented: true, defaultLabelKey: "T12x30_d11" }),
   makeProfile({ key: "d110", displayName: "Niimbot D110", label: "Niimbot D110", id: 2304, supportedIds: [2304, 2305], dpi: 203, protocol: "v4", task: "b1", density: 3, name_prefixes: ["D110"], printheadPx: 96, driverDocumented: true, defaultLabelKey: "T12x50_d110" }),
-  makeProfile({ key: "b3s", displayName: "Niimbot B3S", label: "Niimbot B3S", id: 256, supportedIds: [256, 260, 262], dpi: 203, protocol: "v4", task: "b1", density: 3, name_prefixes: ["B3S"], printheadPx: 576, driverDocumented: false, supportsDirectBluetooth: false, defaultLabelKey: "T50x30_rect" }),
+  makeProfile({ key: "b3s", displayName: "Niimbot B3S", label: "Niimbot B3S", id: 256, supportedIds: [256, 260, 262], dpi: 203, protocol: "v4", task: "b1", density: 3, name_prefixes: ["B3S"], printheadPx: 576, driverDocumented: false, supportsDirectBluetooth: true, printOffsetXmm: 0, defaultLabelKey: "T30x25_horizontal" }),
   makeProfile({ key: "b1pro", displayName: "Niimbot B1 Pro", label: "Niimbot B1 Pro", id: 4097, supportedIds: [4097], dpi: 300, protocol: "v4", task: "v4", density: 3, name_prefixes: ["B1"], printheadPx: 584, driverDocumented: true, defaultLabelKey: "T25x30_45" }),
   makeProfile({ key: "b2pro", displayName: "Niimbot B2 Pro", label: "Niimbot B2 Pro", id: 6912, supportedIds: [6912], dpi: 300, protocol: "v4", task: "v4", density: 3, name_prefixes: ["B2"], printheadPx: 576, driverDocumented: true, defaultLabelKey: "T25x30_45" }),
   makeProfile({ key: "m2h", displayName: "Niimbot M2-H", label: "Niimbot M2-H", id: 4608, supportedIds: [4608], dpi: 300, protocol: "v4", task: "b1", density: 3, name_prefixes: ["M2"], printheadPx: 567, driverDocumented: true, defaultLabelKey: "T25x30_45" }),
   makeProfile({ key: "n1", displayName: "Niimbot N1", label: "Niimbot N1", id: 3586, supportedIds: [3586], dpi: 203, protocol: "v4", task: "b1", density: 3, name_prefixes: ["N1"], printheadPx: 96, driverDocumented: true, defaultLabelKey: "T12x50_d110" }),
+  // Conservative 300-dpi canvas limits from the advertised printable widths.
+  // The BLE driver requires the actual DPI/head-width reply before printing.
+  { driver: "dejen", key: "dejen-dp30p", modelName: "DP30P", displayName: "Dejen DP30P", dpi: 300, density: 3, printheadPx: 945, maxWidthMm: 80, printableWidthMm: 72, driverDocumented: false, supportsDirectBluetooth: true, defaultLabelKey: "T30x25_horizontal" },
+  { driver: "dejen", key: "dejen-dp27p", modelName: "DP27P", displayName: "Dejen DP27P", dpi: 300, density: 3, printheadPx: 567, maxWidthMm: 48, driverDocumented: false, supportsDirectBluetooth: true, defaultLabelKey: "T25x30_45" },
 ]
 
 export const NIIMBOT_MODEL: PrinterProfile = PRINTER_PROFILES[0]
@@ -68,6 +92,7 @@ type BluetoothDeviceLike = {
   gatt?: {
     connected: boolean
     connect: () => Promise<unknown>
+    disconnect?: () => void
   } | null
   addEventListener?: (type: string, listener: () => void) => void
   removeEventListener?: (type: string, listener: () => void) => void
@@ -93,6 +118,14 @@ let activePrinterDevice: BluetoothDeviceLike | null = null
 let disconnectListener: (() => void) | null = null
 let monitorStarted = false
 let operationQueue: Promise<unknown> = Promise.resolve()
+/**
+ * True when the BLE link was dropped or re-opened outside the Niimbot driver.
+ * The driver keeps its GATT characteristic between prints; iOS Web Bluetooth
+ * browsers (Bluefy) invalidate those handles on reconnect and then reject every
+ * write with a bare CoreBluetooth code such as "2" (invalid handle). The next
+ * print must rebuild the driver session from the remembered device first.
+ */
+let niimbotLinkStale = false
 const printerStateListeners = new Set<(snapshot: PrinterConnectionSnapshot) => void>()
 
 function readStoredPrinterModel(): string {
@@ -155,6 +188,16 @@ export function subscribeToPrinterConnection(listener: (snapshot: PrinterConnect
 
 export function savePrinterModelKey(key: string) {
   const profile = getPrinterProfile(key)
+  const previous = getPrinterProfile(readStoredPrinterModel())
+  const resetDevice = previous.key !== profile.key && (previous.driver === "dejen" || profile.driver === "dejen")
+  if (resetDevice) {
+    const old = activePrinterDevice
+    if (old && disconnectListener) old.removeEventListener?.("gattserverdisconnected", disconnectListener)
+    activePrinterDevice = null
+    disconnectListener = null
+    try { old?.gatt?.disconnect?.() } catch { /* Already disconnected. */ }
+    clearSavedPrinterDevice()
+  }
   try {
     window.localStorage.setItem(PRINTER_MODEL_STORAGE_KEY, profile.key)
   } catch {
@@ -224,6 +267,7 @@ function watchPrinterDevice(device: BluetoothDeviceLike) {
 
   activePrinterDevice = device
   disconnectListener = () => {
+    niimbotLinkStale = true
     if (readStoredDeviceId() !== device.id) return
     publishPrinterSnapshot({ status: "disconnected", error: null })
     retryPrinterConnection(device, 0)
@@ -240,6 +284,7 @@ function retryPrinterConnection(device: BluetoothDeviceLike, attempt: number) {
       publishPrinterSnapshot({ status: "connecting", error: null })
       try {
         await device.gatt.connect()
+        niimbotLinkStale = true
         publishPrinterSnapshot({ status: "connected", error: null })
       } catch {
         publishPrinterSnapshot({ status: "disconnected", error: null })
@@ -281,6 +326,7 @@ async function restoreRememberedPrinter() {
   publishPrinterSnapshot({ status: "connecting", error: null })
   try {
     await device.gatt?.connect()
+    niimbotLinkStale = true
     publishPrinterSnapshot({ status: device.gatt?.connected ? "connected" : "disconnected", error: null })
   } catch {
     publishPrinterSnapshot({ status: "disconnected", error: null })
@@ -304,6 +350,63 @@ export function startPrinterConnectionMonitor() {
       void enqueuePrinterOperation(restoreRememberedPrinter).catch(() => undefined)
     }
   })
+}
+
+/**
+ * Resolve the saved printer without opening the browser chooser.
+ * Prefers the live device object from this page (works even where getDevices()
+ * is missing, e.g. some iOS Bluetooth browsers), then the permitted-device list
+ * by id, then by advertised name (iOS can hand out a new id for the same printer).
+ */
+async function findRememberedDevice(
+  bluetooth: BluetoothAccessLike,
+  deviceId: string,
+): Promise<BluetoothDeviceLike | null> {
+  if (activePrinterDevice?.id === deviceId) return activePrinterDevice
+  if (!bluetooth.getDevices) return null
+  const devices = await bluetooth.getDevices().catch(() => [] as BluetoothDeviceLike[])
+  const byId = devices.find((item) => item.id === deviceId)
+  if (byId) return byId
+  const name = readStoredDeviceName()
+  if (!name) return null
+  const byName = devices.filter((item) => item.name === name)
+  return byName.length === 1 ? byName[0] : null
+}
+
+function hasGetDevices(): boolean {
+  if (typeof navigator === "undefined") return false
+  const bluetooth = (navigator as Navigator & { bluetooth?: BluetoothAccessLike }).bluetooth
+  return typeof bluetooth?.getDevices === "function"
+}
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+
+function isAppleBluetoothBrowser(): boolean {
+  if (typeof navigator === "undefined") return false
+  const ua = navigator.userAgent || ""
+  return /Bluefy|iPhone|iPad|iPod/i.test(ua) || (/Macintosh/i.test(ua) && navigator.maxTouchPoints > 1)
+}
+
+/**
+ * Drop the driver's cached GATT session so the next call rediscovers fresh handles.
+ * `freshDevice` also discards this page's device object (only when getDevices()
+ * can hand out a new one), for browsers whose device wrapper itself goes stale.
+ */
+async function resetNiimbotLink(api: NiimbotApi, freshDevice = false) {
+  if (freshDevice && activePrinterDevice && hasGetDevices()) {
+    if (disconnectListener) activePrinterDevice.removeEventListener?.("gattserverdisconnected", disconnectListener)
+    disconnectListener = null
+    try { activePrinterDevice.gatt?.disconnect?.() } catch { /* Already disconnected. */ }
+    activePrinterDevice = null
+  }
+  try {
+    await api.disconnect()
+  } catch {
+    // The link may already be gone; the next connect starts from scratch anyway.
+  }
+  niimbotLinkStale = false
+  // CoreBluetooth needs a moment between disconnect and reconnect.
+  await sleep(isAppleBluetoothBrowser() ? 900 : 400)
 }
 
 async function withPrinterDeviceSelection<T>(
@@ -331,26 +434,12 @@ async function withPrinterDeviceSelection<T>(
     if (!deviceId) {
       // Printing is also the first-connect path: open the browser chooser from
       // the user's print click instead of requiring a separate settings dialog.
-      if (activePrinterDevice?.gatt?.connected) return activePrinterDevice
       return chooseAndRememberDevice(_options)
     }
 
-    if (!bluetooth.getDevices) {
-      const liveDevice = activePrinterDevice?.id === deviceId ? activePrinterDevice : null
-      if (liveDevice) return liveDevice
-      return chooseAndRememberDevice(_options)
-    }
-
-    const devices = await bluetooth.getDevices().catch(() => [])
-    const device = devices.find((item) => item.id === deviceId)
-    if (!device) {
-      if (activePrinterDevice?.id === deviceId && activePrinterDevice.gatt?.connected) {
-        watchPrinterDevice(activePrinterDevice)
-        return activePrinterDevice
-      }
-      return chooseAndRememberDevice(_options)
-    }
-
+    const device = await findRememberedDevice(bluetooth, deviceId)
+    if (!device) return chooseAndRememberDevice(_options)
+    if (device.id !== deviceId) savePrinterDevice(device, modelKey)
     watchPrinterDevice(device)
     return device
   }
@@ -375,6 +464,7 @@ async function withPrinterDeviceSelection<T>(
       if (!device.gatt?.connected) {
         try {
           await device.gatt?.connect()
+          niimbotLinkStale = true
         } catch {
           // Printing may have succeeded even if the printer powered down immediately afterwards.
         }
@@ -405,17 +495,34 @@ async function withPrinterDeviceSelection<T>(
 async function identifyPrinterOperation(
   profileKey: string,
   mode: BluetoothRequestMode,
-): Promise<{ profile: PrinterProfile; printer: NiimbotPrinterInfo }> {
+): Promise<IdentifiedPrinter> {
   const selected = getPrinterProfile(profileKey)
   if (selected.supportsDirectBluetooth === false) {
     throw new Error(`${selected.displayName} не поддерживается прямым Bluetooth-драйвером в этой версии. Подготовьте PNG и отправьте его через приложение Niimbot.`)
   }
 
+  if (selected.driver === "dejen") {
+    return withPrinterDeviceSelection(selected.key, mode, async () => {
+      const session = await connectDejen(selected.modelName)
+      savePrinterModelKey(selected.key)
+      publishPrinterSnapshot({ status: "connected", modelKey: selected.key, error: null })
+      return { profile: selected, printer: session.info }
+    })
+  }
   const api = await loadNiimbot()
   return withPrinterDeviceSelection(selected.key, mode, async () => {
-    const info = await api.identify(selected)
+    if (niimbotLinkStale) await resetNiimbotLink(api)
+    let info: NiimbotPrinterInfo
+    try {
+      info = await api.identify(selected)
+    } catch (error) {
+      if (!isStaleBluetoothLinkError(error)) throw error
+      await resetNiimbotLink(api)
+      info = await api.identify(selected)
+    }
+    niimbotLinkStale = false
     const printer = api.printer ?? info
-    const matches = PRINTER_PROFILES.filter((profile) => profile.supportedIds.includes(printer.modelId))
+    const matches = PRINTER_PROFILES.filter((profile): profile is NiimbotPrinterProfile => profile.driver !== "dejen" && profile.supportedIds.includes(printer.modelId))
     const profile = matches.find((item) => item.key === selected.key) ?? (matches.length === 1 ? matches[0] : undefined)
     if (!profile) {
       throw new Error(`Принтер ответил ID ${printer.modelId}, но модель неоднозначна или не входит в список. Выберите модель вручную.`)
@@ -427,20 +534,23 @@ async function identifyPrinterOperation(
   })
 }
 
-export function identifyPrinter(profileKey: string): Promise<{ profile: PrinterProfile; printer: NiimbotPrinterInfo }> {
+export function identifyPrinter(profileKey: string): Promise<IdentifiedPrinter> {
   return enqueuePrinterOperation(() => identifyPrinterOperation(profileKey, "choose"))
 }
 
-export function reconnectPrinter(profileKey: string): Promise<{ profile: PrinterProfile; printer: NiimbotPrinterInfo }> {
+export function reconnectPrinter(profileKey: string): Promise<IdentifiedPrinter> {
   return enqueuePrinterOperation(() => identifyPrinterOperation(profileKey, "remembered"))
 }
 
-export function changePrinterDevice(profileKey: string): Promise<{ profile: PrinterProfile; printer: NiimbotPrinterInfo }> {
+export function changePrinterDevice(profileKey: string): Promise<IdentifiedPrinter> {
   return enqueuePrinterOperation(async () => {
     clearSavedPrinterDevice()
     try {
-      const api = await loadNiimbot()
-      await api.disconnect()
+      if (getPrinterProfile(profileKey).driver === "dejen") activePrinterDevice?.gatt?.disconnect?.()
+      else {
+        const api = await loadNiimbot()
+        await api.disconnect()
+      }
     } catch {
       // Selecting another printer should still work if the old device is already gone.
     }
@@ -479,6 +589,18 @@ export const LABEL_SIZES: Record<JewelryLabelSizeKey, LabelSizeDef> = {
     w_px: 240,
     h_px: 200,
   },
+  T25x30_horizontal: {
+    key: "T25x30_horizontal",
+    label: "Горизонтальный T25*30+45",
+    w_px: 240,
+    h_px: 200,
+  },
+  T30x25_horizontal: {
+    key: "T30x25_horizontal",
+    label: "Горизонтальный T30*25+45",
+    w_px: 200,
+    h_px: 240,
+  },
   T50x30_rect: {
     key: "T50x30_rect",
     label: "T50*30-230",
@@ -498,6 +620,16 @@ export const LABEL_SIZES: Record<JewelryLabelSizeKey, LabelSizeDef> = {
     h_px: 400,
   },
 }
+
+/** Форматы, которые доступны в меню выбора макета. Старые и узкие варианты
+ * остаются в реестре для загрузки ранее сохранённых шаблонов и принтерных профилей. */
+export const LABEL_SIZE_SELECT_KEYS: JewelryLabelSizeKey[] = [
+  "T25x30_45",
+  "T30x25_45",
+  "T30x25_50",
+  "T25x30_horizontal",
+  "T30x25_horizontal",
+]
 
 /** Размер по умолчанию */
 export const DEFAULT_SIZE_KEY: JewelryLabelSizeKey = "T25x30_45"
@@ -539,6 +671,8 @@ export function canvasToLabelDataUrl(
    * и его координаты при этом не меняются (ось подачи также не меняется).
    */
   pageW: number = size.w_px,
+  /** Horizontal print correction in printer pixels; negative moves content left. */
+  offsetXpx = 0,
 ): string {
   const contentW = size.w_px
   const targetH = size.h_px
@@ -556,7 +690,9 @@ export function canvasToLabelDataUrl(
 
   // При отсутствии/неизвестной ширине рулона B1 печатает по всей головке.
   // Белые поля центрируют этикетку на ленте, не сдвигая элементы внутри макета.
-  const left = Math.floor((targetW - contentW) / 2)
+  const maxLeft = targetW - contentW
+  const centeredLeft = Math.floor(maxLeft / 2)
+  const left = Math.max(0, Math.min(maxLeft, centeredLeft + Math.round(offsetXpx)))
   outCtx.drawImage(source, left, 0, contentW, targetH)
 
   return out.toDataURL("image/png")
@@ -568,7 +704,7 @@ export function canvasToLabelDataUrl(
  * протокола 3 (см. docs/protocol-v4.md драйвера). task "v4": ширина этикетки.
  */
 export function getPageWidthPx(model: PrinterProfile, contentW: number): number {
-  if (model.task !== "b1") return contentW
+  if (model.driver === "dejen" || model.task !== "b1") return contentW
   const head = Math.floor(model.printheadPx / 8) * 8
   return Math.max(head, Math.ceil(contentW / 8) * 8)
 }
@@ -584,6 +720,29 @@ export async function printCanvas(
   const model = opts.model ?? NIIMBOT_MODEL
   if (model.supportsDirectBluetooth === false) {
     throw new Error(`${model.displayName}: прямое Bluetooth-подключение не поддерживается. Скачайте PNG и откройте его в приложении Niimbot.`)
+  }
+  if (model.driver === "dejen") {
+    const contentWidth = Math.round(sizeDef.w_px * model.dpi / 203)
+    const height = Math.round(sizeDef.h_px * model.dpi / 203)
+    const width = dejenPageWidthPx(contentWidth, model.dpi, model.printableWidthMm)
+    if (width > model.printheadPx) throw new Error("Печатная область шире печатающей головки " + model.displayName)
+    const buffer = document.createElement("canvas")
+    buffer.width = width
+    buffer.height = height
+    const context = buffer.getContext("2d", { willReadFrequently: true })
+    if (!context) throw new Error("Не удалось подготовить растр Dejen")
+    context.fillStyle = "#fff"
+    context.fillRect(0, 0, width, height)
+    // Preserve the label's physical size and anchor it to the page's left edge.
+    context.drawImage(source, 0, 0, contentWidth, height)
+    const rgba = context.getImageData(0, 0, width, height).data
+    await enqueuePrinterOperation(() => withPrinterDeviceSelection(model.key, "remembered", () =>
+      printDejenRaster(rgba, width, height, {
+        model: model.modelName, copies: opts.copies ?? 1, density: opts.density ?? model.density,
+        onProgress: opts.onProgress,
+      }),
+    ))
+    return
   }
   const api = await loadNiimbot()
   const scale = model.dpi / 203
@@ -608,52 +767,60 @@ export async function printCanvas(
   api.WRITE_MODE = model.task === "b1" ? "paced" : null
   api.PACE_MS = 10
 
-  const dataUrl = canvasToLabelDataUrl(source, contentSize, pageW)
+  const isHorizontalLabel = sizeDef.key === "T25x30_horizontal" || sizeDef.key === "T30x25_horizontal"
+  const centeredLeftPx = Math.floor(Math.max(0, pageW - contentW) / 2)
+  const alignLeftOffsetXpx = isHorizontalLabel ? -centeredLeftPx : 0
+  const printerOffsetXpx = Math.round((model.printOffsetXmm ?? 0) * model.dpi / 25.4)
+  const horizontalB3sMarginPx = isHorizontalLabel && model.key === "b3s"
+    ? Math.round(1.2 * model.dpi / 25.4)
+    : 0
+  const offsetXpx = alignLeftOffsetXpx + printerOffsetXpx + horizontalB3sMarginPx
+  const dataUrl = canvasToLabelDataUrl(source, contentSize, pageW, offsetXpx)
+
+  const baseWriteMode: NiimbotApi["WRITE_MODE"] = model.task === "b1" ? "paced" : null
+  const printOnce = () =>
+    api.printImage(dataUrl, {
+      model,
+      size: targetSize,
+      copies: Math.max(1, opts.copies ?? 1),
+      density: opts.density ?? model.density,
+      onProgress: (p: number | string) => {
+        if (typeof p === "number") {
+          opts.onProgress?.(`Печать: ${Math.round(p * 100)}%`)
+        } else {
+          opts.onProgress?.(String(p))
+        }
+      },
+    })
 
   await enqueuePrinterOperation(() =>
     withPrinterDeviceSelection(model.key, "remembered", async () => {
       opts.onProgress?.(`Подключение к ${model.displayName}...`)
+      // A link that dropped or was re-opened outside the driver leaves stale
+      // GATT handles; rebuild the session before sending the first byte.
+      if (niimbotLinkStale) await resetNiimbotLink(api)
 
-      try {
-        await api.printImage(dataUrl, {
-          model,
-          size: targetSize,
-          copies: Math.max(1, opts.copies ?? 1),
-          density: opts.density ?? model.density,
-          onProgress: (p: number | string) => {
-            if (typeof p === "number") {
-              opts.onProgress?.(`Печать: ${Math.round(p * 100)}%`)
-            } else {
-              opts.onProgress?.(String(p))
-            }
-          },
-        })
-      } catch (err) {
-        const errorMsg = (err as Error)?.message || ""
-
-        // Перехват переполнения буфера и переключение на медленный режим с подтверждением (acked)
-        if (
-          errorMsg.includes("GATT") ||
-          errorMsg.includes("buffer full") ||
-          errorMsg.includes("paced") ||
-          errorMsg.includes("unknown reason")
-        ) {
-          opts.onProgress?.("Переключение на медленный безопасный режим (acked)...")
-          await new Promise((resolve) => setTimeout(resolve, 400))
-
-          api.WRITE_MODE = "acked"
-
-          await api.printImage(dataUrl, {
-            model,
-            size: targetSize,
-            copies: Math.max(1, opts.copies ?? 1),
-            density: opts.density ?? model.density,
-            onProgress: (progress) => opts.onProgress?.(progress),
-          })
-        } else {
-          throw err
+      // Attempt 1: normal mode. Attempt 2: fresh BLE session (fixes iOS/Bluefy
+      // "2" = invalid handle). Attempt 3: fresh session + slow acked writes.
+      const attempts: Array<NiimbotApi["WRITE_MODE"]> = [baseWriteMode, baseWriteMode, "acked"]
+      let lastError: unknown = null
+      for (let index = 0; index < attempts.length; index++) {
+        api.WRITE_MODE = attempts[index]
+        try {
+          await printOnce()
+          niimbotLinkStale = false
+          return
+        } catch (error) {
+          lastError = error
+          if (!isStaleBluetoothLinkError(error) || index === attempts.length - 1) break
+          opts.onProgress?.(
+            index === 0 ? "Переподключение к принтеру..." : "Переключение на медленный безопасный режим...",
+          )
+          await resetNiimbotLink(api, index > 0)
         }
       }
+      api.WRITE_MODE = baseWriteMode
+      throw lastError
     }),
   )
 }
@@ -661,7 +828,7 @@ export async function printCanvas(
 export async function printPrinterTestLabel(profileKey: string) {
   if (typeof document === "undefined") throw new Error("Тестовая печать доступна только в браузере.")
   const profile = getPrinterProfile(profileKey)
-  const size = LABEL_SIZES.T12x30_d11
+  const size = profile.key === "b3s" || profile.driver === "dejen" ? LABEL_SIZES[profile.defaultLabelKey] : LABEL_SIZES.T12x30_d11
   if (profile.supportsDirectBluetooth === false) {
     throw new Error(`${profile.displayName}: прямое Bluetooth-подключение не поддерживается.`)
   }

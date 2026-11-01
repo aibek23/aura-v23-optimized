@@ -14,6 +14,7 @@ import { getClients } from "@/app/actions/clients"
 import { getSuperAdminShops, getImpersonatedShop } from "@/app/actions/superadmin"
 import type { ShopBillingRow } from "@/app/actions/superadmin"
 import { getSupplierDebtData } from "@/app/actions/suppliers"
+import { getOwnShopPublicState } from "@/app/actions/shops"
 
 /**
  * Общий серверный экран CRM. Каждый раздел имеет собственный URL
@@ -62,9 +63,9 @@ export async function CrmScreen({ screen }: { screen: ScreenId }) {
   // разделы без полного перехода страницы, поэтому каждый экран должен
   // оставаться доступным сразу после открытия CRM.
   // Оборачиваем в try/catch: если сессия устарела или профиль изменился между запросами — редиректим.
-  let products, sales, returns, cabinet, cash, rates, clients, supplierDebts, superAdminShops, impersonatedShop
+  let products, sales, returns, cabinet, cash, rates, clients, supplierDebts, superAdminShops, impersonatedShop, publicStorefrontState
   try {
-    ;[products, sales, returns, cabinet, cash, rates, clients, supplierDebts, superAdminShops, impersonatedShop] =
+    ;[products, sales, returns, cabinet, cash, rates, clients, supplierDebts, superAdminShops, impersonatedShop, publicStorefrontState] =
       await Promise.all([
         getProducts(),
         getSales(),
@@ -76,6 +77,7 @@ export async function CrmScreen({ screen }: { screen: ScreenId }) {
         getSupplierDebtData(),
         isSuperAdmin ? getSuperAdminShops() : Promise.resolve([] as ShopBillingRow[]),
         isSuperAdmin ? getImpersonatedShop() : Promise.resolve(null),
+        typed.role === "admin" ? getOwnShopPublicState() : Promise.resolve({ enabled: true, canToggle: false }),
       ])
   } catch (err) {
     const msg = err instanceof Error ? err.message : ""
@@ -106,6 +108,7 @@ export async function CrmScreen({ screen }: { screen: ScreenId }) {
       clients={clients!}
       superAdminShops={isSuperAdmin ? superAdminShops : undefined}
       impersonatedShop={impersonatedShop ?? undefined}
+      publicStorefrontState={publicStorefrontState}
     />
   )
 }

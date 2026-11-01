@@ -5,7 +5,7 @@ import dynamic from "next/dynamic"
 import type { Product, Sale } from "@/lib/types"
 import { DEFAULT_SIZE_KEY, getLabelSizeDef, getPrinterProfile, PRINTER_PROFILES, type JewelryLabelSizeKey } from "@/lib/niimbot"
 import { formatDate, formatSom, formatWeight } from "@/lib/format"
-import { deleteProduct, getShopSeqIdForLabel } from "@/app/actions/products"
+import { deleteProduct, findProductBySku, getShopSeqIdForLabel } from "@/app/actions/products"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import {
@@ -34,10 +34,28 @@ import { usePrinterConnection } from "./use-printer-connection"
 import { PrinterStatusIndicator } from "./printer-status-indicator"
 import { useDebouncedValue } from "@/hooks/use-debounced-value"
 
-// Загружаем LabelEditor строго на клиенте для корректного связывания пакетов Bluetooth
+// Загружаем LabelEditor строго на клиенте и начинаем подкачку при нажатии на печать.
+let labelEditorPreload: Promise<typeof import("./label/label-editor")> | null = null
+const preloadLabelEditor = () => {
+  if (!labelEditorPreload) {
+    labelEditorPreload = import("./label/label-editor").catch((error) => {
+      labelEditorPreload = null
+      throw error
+    })
+  }
+  return labelEditorPreload
+}
 const LabelEditor = dynamic(
-  () => import("./label/label-editor").then((mod) => mod.LabelEditor),
-  { ssr: false }
+  () => preloadLabelEditor().then((mod) => mod.LabelEditor),
+  {
+    ssr: false,
+    loading: () => (
+      <div role="status" className="flex h-full min-h-48 items-center justify-center gap-3 text-sm text-muted-foreground">
+        <span className="h-5 w-5 animate-spin rounded-full border-2 border-current border-t-transparent" />
+        Загружаю редактор этикеток…
+      </div>
+    ),
+  },
 )
 
 const PAGE_SIZE = 30
@@ -82,10 +100,14 @@ export function SkladScreen({
   const printerConnection = usePrinterConnection()
 
   const [labelProduct, setLabelProduct] = useState<Product | null>(null)
+  const [labelProductReady, setLabelProductReady] = useState(false)
+  const [labelLoadError, setLabelLoadError] = useState<string | null>(null)
+  const labelOpenRequestRef = useRef(0)
   const [labelDialogOpen, setLabelDialogOpen] = useState(false)
   const [labelAutoPrint, setLabelAutoPrint] = useState(false)
   const [labelSizeKey, setLabelSizeKey] = useState<JewelryLabelSizeKey>(DEFAULT_SIZE_KEY)
   const [isTopControlsCollapsed, setIsTopControlsCollapsed] = useState(true)
+  const [labelBackgroundControlsHost, setLabelBackgroundControlsHost] = useState<HTMLDivElement | null>(null)
   const labelReturnScrollY = useRef<number | null>(null)
   const [deletedProductIds, setDeletedProductIds] = useState<Set<string>>(() => new Set())
   const [virtualMode, setVirtualMode] = useState(false)
@@ -94,6 +116,7 @@ export function SkladScreen({
   const [editing, setEditing] = useState<Product | null>(null)
   const [query, setQuery] = useState("")
   const debouncedQuery = useDebouncedValue(query)
+  const [remoteSkuMatch, setRemoteSkuMatch] = useState<{ query: string; product: Product } | null>(null)
   const [page, setPage] = useState(1)
   const printerProfile = getPrinterProfile(printerConnection.modelKey)
   const nativeWidth = Math.round(getLabelSizeDef(labelSizeKey).w_px * printerProfile.dpi / 203)
@@ -114,7 +137,38 @@ export function SkladScreen({
     })
   }, [products, deletedProductIds])
 
-  const filtered = useMemo(() => filterProducts(visibleProducts, debouncedQuery), [visibleProducts, debouncedQuery])
+  const productsForSearch = useMemo(() => {
+    const skuQuery = debouncedQuery.trim().toUpperCase()
+    const remoteProduct = remoteSkuMatch?.query === skuQuery ? remoteSkuMatch.product : null
+    if (!remoteProduct || visibleProducts.some((product) => product.id === remoteProduct.id)) return visibleProducts
+    return [...visibleProducts, remoteProduct]
+  }, [visibleProducts, remoteSkuMatch, debouncedQuery])
+
+  useEffect(() => {
+    const skuQuery = debouncedQuery.trim().toUpperCase()
+    const isExactSku = /^[A-Z]{2}\d{1,8}$/.test(skuQuery)
+    const isLoadedLocally = visibleProducts.some((product) => String(product.sku ?? "").trim().toUpperCase() === skuQuery)
+    if (!isExactSku || isLoadedLocally) {
+      setRemoteSkuMatch(null)
+      return
+    }
+
+    let active = true
+    setRemoteSkuMatch(null)
+    void findProductBySku(skuQuery)
+      .then((product) => {
+        if (active && product) setRemoteSkuMatch({ query: skuQuery, product })
+      })
+      .catch((error) => {
+        if (active) console.warn("[inventory] SKU lookup failed:", error)
+      })
+
+    return () => {
+      active = false
+    }
+  }, [debouncedQuery, visibleProducts])
+
+  const filtered = useMemo(() => filterProducts(productsForSearch, debouncedQuery), [productsForSearch, debouncedQuery])
 
   const handleProductSaved = (savedProduct: Product, isNew: boolean) => {
     onProductSaved?.(savedProduct)
@@ -158,38 +212,56 @@ export function SkladScreen({
     return map
   }, [sales])
 
-  const openLabel = async (p: Product, autoPrint: boolean) => {
-    try {
-      // На каждом открытии сразу освобождаем максимум места под редактор этикетки.
-      setIsTopControlsCollapsed(true)
-      // В сценарии «товар → печать» сохраняем позицию до блокировки прокрутки диалогом.
-      if (!productDialogOpen || labelReturnScrollY.current === null) {
-        labelReturnScrollY.current = window.scrollY
-      }
-      const cachedSeqId = isValidShopSeqId(p.shop_seq_id)
-        ? p.shop_seq_id
-        : products.find((row) => row.shop_id === p.shop_id && isValidShopSeqId(row.shop_seq_id))?.shop_seq_id
-      const shopSeqId = isValidShopSeqId(cachedSeqId)
-        ? cachedSeqId
-        : await getShopSeqIdForLabel(p.shop_id)
-      setLabelProduct({ ...p, shop_seq_id: shopSeqId })
-      setLabelAutoPrint(autoPrint)
-      setLabelSizeKey(printerProfile.defaultLabelKey)
-      setLabelDialogOpen(true)
-      // Страница печати получает свою запись в истории: кнопка «Назад»
-      // (браузер, Android, жест на iOS) возвращает на склад, а не уходит со страницы.
-      if (typeof window !== "undefined" && !window.history.state?.auraLabel) {
-        const url = new URL(window.location.href)
-        url.searchParams.set("label", p.id)
-        window.history.pushState({ ...(window.history.state ?? {}), auraLabel: true }, "", url.toString())
-      }
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Не удалось подготовить QR-код для этикетки")
+  const loadLabelSequence = (product: Product, requestId: number) => {
+    setLabelLoadError(null)
+    void getShopSeqIdForLabel(product.shop_id)
+      .then((shopSeqId) => {
+        if (!isValidShopSeqId(shopSeqId)) {
+          throw new Error("Не удалось получить короткий номер магазина для QR-кода")
+        }
+        if (labelOpenRequestRef.current !== requestId) return
+        setLabelProduct((current) => current?.id === product.id
+          ? { ...current, shop_seq_id: shopSeqId }
+          : current)
+        setLabelProductReady(true)
+      })
+      .catch((error) => {
+        if (labelOpenRequestRef.current !== requestId) return
+        setLabelLoadError(error instanceof Error ? error.message : "Не удалось подготовить QR-код для этикетки")
+      })
+  }
+
+  const openLabel = (p: Product, autoPrint: boolean) => {
+    const requestId = ++labelOpenRequestRef.current
+    void preloadLabelEditor().catch(() => undefined)
+    // Open the print surface immediately; resolve the QR short ID in parallel.
+    setIsTopControlsCollapsed(true)
+    if (!productDialogOpen || labelReturnScrollY.current === null) {
+      labelReturnScrollY.current = window.scrollY
     }
+    const cachedSeqId = isValidShopSeqId(p.shop_seq_id)
+      ? p.shop_seq_id
+      : products.find((row) => row.shop_id === p.shop_id && isValidShopSeqId(row.shop_seq_id))?.shop_seq_id
+    const hasShopSeqId = isValidShopSeqId(cachedSeqId)
+    setLabelProduct(hasShopSeqId ? { ...p, shop_seq_id: cachedSeqId } : p)
+    setLabelProductReady(hasShopSeqId)
+    setLabelLoadError(null)
+    setLabelAutoPrint(autoPrint)
+    setLabelSizeKey(printerProfile.defaultLabelKey)
+    setLabelDialogOpen(true)
+    // The browser back button returns to the inventory instead of leaving it.
+    if (typeof window !== "undefined" && !window.history.state?.auraLabel) {
+      const url = new URL(window.location.href)
+      url.searchParams.set("label", p.id)
+      window.history.pushState({ ...(window.history.state ?? {}), auraLabel: true }, "", url.toString())
+    }
+    if (!hasShopSeqId) loadLabelSequence(p, requestId)
   }
 
   // Закрытие страницы печати: шаг назад по истории → возвращаемся на склад
   const closeLabel = useCallback(() => {
+    labelOpenRequestRef.current += 1
+    setLabelProductReady(false)
     if (typeof window !== "undefined" && window.history.state?.auraLabel) {
       window.history.back()
     } else {
@@ -199,7 +271,11 @@ export function SkladScreen({
 
   useEffect(() => {
     const onPop = () => {
-      if (!window.history.state?.auraLabel) setLabelDialogOpen(false)
+      if (!window.history.state?.auraLabel) {
+        labelOpenRequestRef.current += 1
+        setLabelProductReady(false)
+        setLabelDialogOpen(false)
+      }
     }
     window.addEventListener("popstate", onPop)
     // Если страницу обновили с ?label=..., убираем параметр — открыт склад
@@ -310,7 +386,6 @@ export function SkladScreen({
         <SkladStats
           products={products}
           canSeePurchasePrice={canSeePurchasePrice}
-          isAdmin={isAdmin}
         />
       )}
 
@@ -541,6 +616,8 @@ export function SkladScreen({
               variant="outline"
               size="icon"
               className="h-8 w-8"
+              aria-label="Предыдущая страница"
+              title="Показать предыдущую страницу товаров"
               disabled={currentPage === 1}
               onClick={() => setPage(Math.max(1, currentPage - 1))}
             >
@@ -557,6 +634,8 @@ export function SkladScreen({
                     variant={n === currentPage ? "default" : "outline"}
                     size="icon"
                     className="h-8 w-8 text-xs"
+                    aria-label={`Перейти на страницу ${n}`}
+                    title={`Перейти на страницу ${n}`}
                     onClick={() => setPage(n)}
                   >
                     {n}
@@ -567,6 +646,8 @@ export function SkladScreen({
               variant="outline"
               size="icon"
               className="h-8 w-8"
+              aria-label="Следующая страница"
+              title="Показать следующую страницу товаров"
               disabled={currentPage === totalPages}
               onClick={() => setPage(Math.min(totalPages, currentPage + 1))}
             >
@@ -624,24 +705,16 @@ export function SkladScreen({
               className={`h-8 gap-1.5 rounded-lg px-2.5 text-xs font-medium shrink-0 transition-colors ${
                 isTopControlsCollapsed ? "max-w-[48vw] sm:max-w-[16rem]" : ""
               }`}
-              title={isTopControlsCollapsed ? "Развернуть параметры принтера и изделия" : "Свернуть параметры для увеличения рабочей области"}
+              title={isTopControlsCollapsed ? "Развернуть настройки принтера и фона" : "Свернуть параметры для увеличения рабочей области"}
               aria-label={isTopControlsCollapsed
-                ? `Развернуть параметры этикетки ${labelProduct?.name ?? ""}`.trim()
+                ? `Развернуть параметры принтера ${printerProfile.displayName}`
                 : "Свернуть верхние параметры"}
             >
-              {isTopControlsCollapsed ? (
-                <span className="flex min-w-0 items-center gap-1.5">
-                  <ChevronDown className="h-3.5 w-3.5 text-primary" />
-                  <span className="truncate text-[11px] font-medium text-primary">
-                    {labelProduct?.name || "Этикетка"}
-                  </span>
-                </span>
-              ) : (
-                <>
-                  <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" />
-                  <span className="text-[11px] text-muted-foreground hidden xs:inline">Свернуть верх</span>
-                </>
-              )}
+              <span className="flex min-w-0 items-center gap-1.5">
+                <Printer className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden="true" />
+                <span className="truncate text-[11px] font-medium text-primary">{printerProfile.displayName}</span>
+                {isTopControlsCollapsed ? <ChevronDown className="h-3.5 w-3.5 shrink-0" /> : <ChevronUp className="h-3.5 w-3.5 shrink-0" />}
+              </span>
             </Button>
           </div>
           <div className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col">
@@ -666,6 +739,7 @@ export function SkladScreen({
               <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">{printerProfile.dpi} dpi</span>
             </div>
           )}
+          {!isTopControlsCollapsed && <div ref={setLabelBackgroundControlsHost} className="shrink-0 border-b bg-muted/10" />}
           {labelProduct && (printerProfile.supportsDirectBluetooth === false || !fitsPrinthead) && (
             <p role="status" className="shrink-0 border-b bg-amber-500/10 px-3 py-1.5 text-[11px] leading-4 text-amber-700 dark:text-amber-300">
               {!fitsPrinthead
@@ -688,6 +762,8 @@ export function SkladScreen({
                         key={`${image}:${index}`}
                         src={image}
                         alt={`${labelProduct.name} — фото ${index + 1}`}
+                        loading="lazy"
+                        decoding="async"
                         className="h-14 w-14 shrink-0 rounded-md border object-cover"
                       />
                     ))}
@@ -698,6 +774,8 @@ export function SkladScreen({
                     <img
                       src={labelProduct.image_url}
                       alt={labelProduct.name}
+                      loading="lazy"
+                      decoding="async"
                       className="h-14 w-14 rounded-md border object-cover"
                     />
                   </div>
@@ -742,14 +820,31 @@ export function SkladScreen({
               </div>
             </details>
           )}
-          {labelProduct && (
+          {labelProduct && !labelProductReady && (
+            <div role={labelLoadError ? "alert" : "status"} className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-6 text-center text-sm text-muted-foreground">
+              {labelLoadError ? (
+                <>
+                  <p>{labelLoadError}</p>
+                  <Button variant="outline" size="sm" onClick={() => loadLabelSequence(labelProduct, labelOpenRequestRef.current)}>Повторить</Button>
+                </>
+              ) : (
+                <>
+                  <span className="h-6 w-6 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                  Подготавливаю QR-код и открываю редактор…
+                </>
+              )}
+            </div>
+          )}
+          {labelProduct && labelProductReady && (
             <div className="min-h-0 flex-1">
               <LabelEditor
                 key={`${labelProduct.id}:${printerProfile.key}`}
                 product={labelProduct}
+                canSeePurchasePrice={canSeePurchasePrice}
                 autoPrint={labelAutoPrint}
                 initialSizeKey={labelSizeKey}
                 printerProfile={printerProfile}
+                backgroundControlsHost={labelBackgroundControlsHost}
                 onSizeChange={setLabelSizeKey}
                 onClose={closeLabel}
               />
@@ -793,6 +888,7 @@ function ActionButtons({
         variant="ghost"
         size="icon"
         className="h-8 w-8 text-blue-600 hover:bg-blue-50 hover:text-blue-700"
+        aria-label="Печать этикетки товара"
         title="Печать этикетки"
         onClick={() => onPrint(p)}
       >
@@ -802,6 +898,7 @@ function ActionButtons({
         variant="ghost"
         size="icon"
         className="h-8 w-8 text-muted-foreground hover:text-primary"
+        aria-label="Редактировать товар"
         title="Редактировать"
         onClick={() => onEdit(p)}
       >
@@ -812,6 +909,7 @@ function ActionButtons({
           variant="ghost"
           size="icon"
           className="h-8 w-8 text-muted-foreground hover:text-destructive"
+          aria-label="Удалить товар"
           onClick={() => onDelete(p)}
         >
           <Trash2 className="h-3.5 w-3.5" />

@@ -3,8 +3,8 @@
 // CanvasArea — СИНХРОНИЗИРОВАННЫЙ С Fabric ВРАЩАЮЩИЙСЯ SVG-ФОН
 // ---------------------------------------------------------------------------
 import React, { memo, useCallback, useRef, useLayoutEffect } from "react"
-import { Hand } from "lucide-react"
-import { RULER_SIZE } from "../constants"
+import { Hand, ZoomIn, ZoomOut } from "lucide-react"
+import { RULER_SIZE, ZOOM_MIN, ZOOM_MAX } from "../constants"
 import { LabelBackground, getSvgLayout } from "./label-background"
 import type { LabelSizeDef } from "@/lib/niimbot"
 
@@ -134,53 +134,25 @@ interface ZoomCornerProps {
 }
 
 const ZoomCorner = memo(function ZoomCorner({
-  zoom, isPanMode, onZoomReset, onTogglePan,
+  zoom, isPanMode, onZoomTo, onZoomReset, onTogglePan,
 }: ZoomCornerProps) {
   return (
-    <div
-      style={{
-        position: "absolute", right: 8, bottom: 8, zIndex: 20,
-        display: "flex", gap: 4,
-        pointerEvents: "auto",
-      }}
-    >
-      <button
-        type="button"
-        title={isPanMode ? "Режим выделения (Alt отпускает руку)" : "Рука (удерживайте Alt)"}
-        onClick={onTogglePan}
-        style={{
-          display: "flex", alignItems: "center", justifyContent: "center",
-          width: 30, height: 30, borderRadius: 8,
-          border: "1px solid",
-          borderColor: isPanMode ? "rgb(99,102,241)" : "rgba(0,0,0,0.15)",
-          background: isPanMode ? "rgb(99,102,241)" : "rgba(255,255,255,0.85)",
-          color: isPanMode ? "#fff" : "inherit",
-          backdropFilter: "blur(4px)", cursor: "pointer",
-        }}
-      >
-        <Hand style={{ width: 14, height: 14 }} />
+    <div className="pointer-events-auto absolute bottom-2 right-2 z-20 flex items-center gap-1 rounded-xl border border-border bg-background/90 p-1 shadow-md backdrop-blur-md">
+      <button type="button" onClick={onTogglePan} aria-pressed={isPanMode} title={isPanMode ? "Режим выделения" : "Рука — перемещение холста"} aria-label="Переключить перемещение холста" className={`flex h-8 w-8 items-center justify-center rounded-lg border transition-colors ${isPanMode ? "border-primary bg-primary text-primary-foreground" : "border-border bg-background hover:bg-muted"}`}>
+        <Hand className="h-4 w-4" />
       </button>
-
-      <button
-        type="button"
-        onClick={onZoomReset}
-        style={{ ...zoomBtnStyle, minWidth: 44, fontSize: 10, fontVariantNumeric: "tabular-nums" }}
-        title="Сбросить масштаб"
-      >
+      <button type="button" onClick={onZoomReset} title="Сбросить масштаб холста" aria-label="Сбросить масштаб холста" className="h-8 min-w-12 rounded-lg border border-border bg-background px-2 text-[11px] tabular-nums hover:bg-muted">
         {Math.round(zoom * 100)}%
+      </button>
+      <button type="button" onClick={() => onZoomTo(zoom / 1.15)} disabled={zoom <= ZOOM_MIN} title="Уменьшить масштаб холста" aria-label="Уменьшить масштаб холста" className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-background hover:bg-muted disabled:opacity-40">
+        <ZoomOut className="h-4 w-4" />
+      </button>
+      <button type="button" onClick={() => onZoomTo(zoom * 1.15)} disabled={zoom >= ZOOM_MAX} title="Увеличить масштаб холста" aria-label="Увеличить масштаб холста" className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-background hover:bg-muted disabled:opacity-40">
+        <ZoomIn className="h-4 w-4" />
       </button>
     </div>
   )
 })
-
-const zoomBtnStyle: React.CSSProperties = {
-  display: "flex", alignItems: "center", justifyContent: "center",
-  height: 30, minWidth: 30, borderRadius: 8,
-  border: "1px solid rgba(0,0,0,0.15)",
-  background: "rgba(255,255,255,0.85)",
-  backdropFilter: "blur(4px)", cursor: "pointer",
-  padding: "0 6px",
-}
 
 export interface CanvasAreaProps {
   viewportRef:     React.RefObject<HTMLDivElement | null>
@@ -192,6 +164,10 @@ export interface CanvasAreaProps {
   guidesRef:       React.RefObject<HTMLCanvasElement | null>
   sizeDef:   LabelSizeDef
   rotation?: number
+  backgroundOffsetXmm?: number
+  backgroundOffsetYmm?: number
+  backgroundScaleX?: number
+  backgroundScaleY?: number
   zoom:      number
   pan:       { x: number; y: number }
   offsetX:   number
@@ -218,7 +194,8 @@ export const CanvasArea = memo(function CanvasArea({
   viewportRef, stageLayerRef,
   staticCanvasRef, fabricCanvasRef,
   rulerHRef, rulerVRef, guidesRef,
-  sizeDef, rotation = 0, zoom, pan, offsetX, offsetY,
+  sizeDef, rotation = 0, backgroundOffsetXmm = 0, backgroundOffsetYmm = 0,
+  backgroundScaleX = 1, backgroundScaleY = 1, zoom, pan, offsetX, offsetY,
   totalW, totalH, stageW, stageH,
   isPanMode, onPanStart, onBgClick,
   showCanvasControls = true,
@@ -291,16 +268,19 @@ export const CanvasArea = memo(function CanvasArea({
   // Центр этикетки проходит через ту же матрицу, что и Fabric и guides.
   // Якорим фон по печатной области (корпусу бирки), а не по центру всей
   // высоты SVG: у длинной бирки хвост выходит за пределы области печати.
-  const svgCenterOffsetX = svgLayout.svgW / 2 - (svgLayout.canvasX + sizeDef.w_px / 2)
-  const svgCenterOffsetY = svgLayout.svgH / 2 - (svgLayout.canvasY + sizeDef.h_px / 2)
-  const backgroundDX = offsetX + sizeDef.w_px / 2 + svgCenterOffsetX - stageW / 2
-  const backgroundDY = offsetY + sizeDef.h_px / 2 + svgCenterOffsetY - stageH / 2
+  const svgCenterOffsetX = (svgLayout.svgW / 2 - (svgLayout.canvasX + sizeDef.w_px / 2)) * backgroundScaleX
+  const svgCenterOffsetY = (svgLayout.svgH / 2 - (svgLayout.canvasY + sizeDef.h_px / 2)) * backgroundScaleY
+  const backgroundOffsetX = backgroundOffsetXmm * svgLayout.pxPerMm
+  const backgroundOffsetY = backgroundOffsetYmm * svgLayout.pxPerMm
+  const backgroundDX = offsetX + sizeDef.w_px / 2 + svgCenterOffsetX + backgroundOffsetX - stageW / 2
+  const backgroundDY = offsetY + sizeDef.h_px / 2 + svgCenterOffsetY + backgroundOffsetY - stageH / 2
   const backgroundCenterX = stageCX + (backgroundDX * cos - backgroundDY * sin) * zoom
   const backgroundCenterY = stageCY + (backgroundDX * sin + backgroundDY * cos) * zoom
 
   return (
     <div
       ref={viewportRef}
+      className="dark:bg-zinc-700"
       onPointerDown={handlePointerDown}
       onClick={handleClick}
       style={{
@@ -326,7 +306,7 @@ export const CanvasArea = memo(function CanvasArea({
           zIndex: 1,
         }}
       >
-        <LabelBackground sizeDef={sizeDef} rotation={rotation} />
+        <LabelBackground sizeDef={sizeDef} rotation={rotation} scaleX={backgroundScaleX} scaleY={backgroundScaleY} />
       </div>
 
   {/* ── Слой 2 (z=2): Fabric canvas ── */}

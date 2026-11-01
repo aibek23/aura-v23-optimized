@@ -1,6 +1,7 @@
 import type { CashOperation, MetalRate, Product, Sale } from "@/lib/types"
 
 export const ACTION_HISTORY_LIMIT = 50
+export const ACTION_HISTORY_PAGE_SIZE = 10
 
 export type ActionEntityType = "product" | "metal_rate" | "product_create" | "sale" | "cash_operation"
 

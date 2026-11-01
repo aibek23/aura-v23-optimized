@@ -115,14 +115,14 @@ export function SyncIndicator() {
 
       {/* Detail Popover Panel */}
       {isOpen && (
-        <div className="absolute right-0 top-full mt-2 w-80 p-4 rounded-xl shadow-xl border border-border bg-popover text-popover-foreground z-50 animate-in fade-in-50 zoom-in-95">
+        <div className="fixed inset-x-3 top-[4.5rem] z-50 max-h-[calc(100dvh-5.5rem)] w-auto overflow-y-auto rounded-xl border border-border bg-popover p-4 text-popover-foreground shadow-xl animate-in fade-in-50 zoom-in-95 sm:absolute sm:inset-x-auto sm:right-0 sm:top-full sm:mt-2 sm:max-h-[calc(100dvh-6rem)] sm:w-80 sm:max-w-[calc(100vw-1.5rem)]">
           <div className="space-y-3 text-sm">
-            <div className="flex items-center justify-between pb-2 border-b border-border">
-              <div className="flex items-center gap-2">
-                <Database className="w-4 h-4 text-primary" />
-                <span className="font-semibold text-foreground">Синхронизация данных</span>
+            <div className="flex flex-wrap items-start justify-between gap-2 border-b border-border pb-2">
+              <div className="flex min-w-0 items-center gap-2">
+                <Database className="w-4 h-4 shrink-0 text-primary" />
+                <span className="min-w-0 font-semibold leading-snug text-foreground">Синхронизация данных</span>
               </div>
-              <div className="flex items-center gap-1.5">
+              <div className="ml-auto flex shrink-0 items-center gap-1.5">
                 <Badge
                   variant="outline"
                   className={
@@ -224,20 +224,20 @@ export function SyncIndicator() {
             )}
 
             {lastError && (
-              <div className="p-2 rounded bg-destructive/10 text-xs text-destructive flex items-start gap-1.5">
+              <div className="flex items-start gap-1.5 rounded bg-destructive/10 p-2 text-xs text-destructive">
                 <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                <span>{lastError}</span>
+                <span className="min-w-0 break-words">{lastError}</span>
               </div>
             )}
 
-            <div className="pt-2 flex items-center justify-between border-t border-border">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-2">
               <span className="text-[11px] text-muted-foreground">
                 Работает без интернета
               </span>
               <Button
                 size="sm"
                 variant="default"
-                className="h-7 text-xs px-2.5"
+                className="h-7 shrink-0 px-2.5 text-xs"
                 onClick={handleSyncNow}
                 disabled={status === "syncing"}
               >

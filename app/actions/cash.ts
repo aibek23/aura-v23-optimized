@@ -5,16 +5,18 @@ import type { CashOperation, CashReasonPreset, CashSource } from "@/lib/types"
 import { getRequestCrmContext } from "@/lib/supabase/request-context"
 import { resolveClientOperationId } from "@/lib/client-operation"
 
+// Local guard (not the shared helpers) so scripts/test-atomic-actions.mjs can
+// mock only getRequestCrmContext. Messages match the shared guards.
 async function requireProfile() {
   const { supabase, user, profile, shopId } = await getRequestCrmContext()
-  if (!user) throw new Error("Unauthorized")
-  if (!profile || profile.status !== "approved") throw new Error("Not approved")
+  if (!user) throw new Error("Требуется вход в систему")
+  if (!profile || profile.status !== "approved") throw new Error("Аккаунт не подтверждён")
   return { supabase, user, profile, shopId }
 }
 
 async function requireAdmin() {
   const ctx = await requireProfile()
-  if (ctx.profile.role !== "admin" && ctx.profile.role !== "super_admin") throw new Error("Forbidden")
+  if (ctx.profile.role !== "admin" && ctx.profile.role !== "super_admin") throw new Error("Недостаточно прав")
   return ctx
 }
 

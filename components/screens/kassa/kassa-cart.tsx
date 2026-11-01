@@ -16,10 +16,12 @@ import {
   Phone,
   Gift,
   CreditCard,
+  CalendarDays,
   Tag,
   ChevronDown
 } from "lucide-react"
 import { PAYMENT_METHODS, type Customer, type Product } from "@/lib/types"
+import { normalizeText } from "@/lib/product-search"
 import { formatSom, formatWeight } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import type { ExtendedSaleItem } from "./index"
@@ -43,11 +45,15 @@ interface KassaCartProps {
   setCustomerName: (name: string) => void
   customerPhone: string
   setCustomerPhone: (phone: string) => void
+  customerId: string | null
+  setCustomerId: (id: string | null) => void
   customers?: Customer[]
   showBonus: boolean
   bonusUsed: string
   setBonusUsed: (bonus: string) => void
   payment: string
+  creditDueDate: string
+  setCreditDueDate: (value: string) => void
   setPayment: (payment: string | null) => void
   payCash: string
   setPayCash: (v: string) => void
@@ -63,6 +69,19 @@ interface KassaCartProps {
   submitting: boolean
   submit: () => void
   handleReset: () => void
+}
+
+function todayDateInput() {
+  const parts = new Intl.DateTimeFormat("en", {
+    timeZone: "Asia/Bishkek", year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(new Date())
+  return ["year", "month", "day"].map((key) => parts.find((part) => part.type === key)?.value ?? "").join("-")
+}
+
+function displayDateInput(value: string) {
+  if (!value) return "Выберите дату"
+  const [year, month, day] = value.split("-")
+  return day + "." + month + "." + year
 }
 
 export function KassaCart({
@@ -84,11 +103,15 @@ export function KassaCart({
   setCustomerName,
   customerPhone,
   setCustomerPhone,
+  customerId,
+  setCustomerId,
   customers = [],
   showBonus,
   bonusUsed,
   setBonusUsed,
   payment,
+  creditDueDate,
+  setCreditDueDate,
   setPayment,
   payCash,
   setPayCash,
@@ -109,6 +132,9 @@ export function KassaCart({
   const autocompleteRef = useRef<HTMLDivElement>(null)
   // Блок клиента по умолчанию свёрнут при первом открытии
   const [isCustomerOpen, setIsCustomerOpen] = useState(false)
+  const [creditDateDialogOpen, setCreditDateDialogOpen] = useState(false)
+  const [creditDateDraft, setCreditDateDraft] = useState(creditDueDate)
+  const todayDate = todayDateInput()
 
   // Локальное состояние для плавного ввода "Своей цены" без багов ререндера
   const [customPriceInputs, setCustomPriceInputs] = useState<Record<string, string>>({})
@@ -120,28 +146,29 @@ export function KassaCart({
 
   // Оптимизация: мемоизация фильтрации клиентов
   const filteredCustomers = useMemo(() => {
-    const q = customerName.trim().toLowerCase()
-    if (q.length < 1) return []
-    return customers
-      .filter((c) =>
-        (c.name ?? "").toLowerCase().includes(q) ||
-        (c.phone ?? "").includes(q)
-      )
-      .slice(0, 8)
-  }, [customerName, customers])
+    const nameQuery = normalizeText(customerName)
+    const phoneQuery = normalizeText(customerPhone)
+    const hasQuery = nameQuery.length > 0 || phoneQuery.length > 0
+    const matches = !hasQuery
+      ? (payment === "credit" ? customers : [])
+      : customers.filter((c) =>
+          (nameQuery.length > 0 && normalizeText(c.name).includes(nameQuery)) ||
+          (phoneQuery.length > 0 && normalizeText(c.phone).includes(phoneQuery))
+        )
+    return matches.slice(0, 8)
+  }, [customerName, customerPhone, customers, payment])
 
-  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null)
+  const selectedCustomer = useMemo(
+    () => customers.find((customer) => customer.id === customerId) ?? null,
+    [customerId, customers],
+  )
 
   const handleSelectCustomer = (c: Customer) => {
+    setCustomerId(c.id)
     setCustomerName(c.name ?? "")
     setCustomerPhone(c.phone ?? "")
-    setSelectedCustomer(c)
     setShowSuggestions(false)
   }
-
-  useEffect(() => {
-    if (!customerName.trim()) setSelectedCustomer(null)
-  }, [customerName])
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -446,7 +473,7 @@ export function KassaCart({
                 <span className="text-xs font-semibold text-foreground">Клиент</span>
                 {customerName.trim() || customerPhone.trim() ? (
                   <span className="max-w-[150px] truncate rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">
-                    {customerName.trim() || customerPhone.trim()}
+                    {customerId ? "Выбран: " : "Поиск: "}{customerName.trim() || customerPhone.trim()}
                   </span>
                 ) : (
                   <span className="text-[10px] text-muted-foreground">(не указан)</span>
@@ -471,14 +498,14 @@ export function KassaCart({
                     <Input
                       placeholder="Имя клиента"
                       value={customerName}
-                      onChange={(e) => { setCustomerName(e.target.value); setShowSuggestions(true) }}
+                      onChange={(e) => { setCustomerId(null); setCustomerName(e.target.value); setShowSuggestions(true) }}
                       onFocus={() => setShowSuggestions(true)}
                       className="h-8 pl-8 text-xs bg-background"
                       autoComplete="off"
                     />
-                    {showSuggestions && filteredCustomers.length > 0 && (
-                      <div className="absolute left-0 right-0 top-full z-50 mt-1 overflow-hidden rounded-xl border border-border bg-card shadow-xl">
-                        {filteredCustomers.map((c) => (
+                    {showSuggestions && (
+                      <div className="mt-1 max-h-48 overflow-y-auto rounded-xl border border-border bg-card shadow-xl">
+                        {filteredCustomers.length > 0 ? filteredCustomers.map((c) => (
                           <button
                             key={c.id}
                             type="button"
@@ -495,7 +522,15 @@ export function KassaCart({
                               </span>
                             )}
                           </button>
-                        ))}
+                        )) : (
+                          <div className="px-3 py-2 text-[11px] text-muted-foreground">
+                            {customerName.trim() || customerPhone.trim()
+                              ? "Клиент не найден. Проверьте имя или телефон."
+                              : customers.length > 0
+                                ? "Введите имя или телефон для поиска."
+                                : "Клиентов пока нет — добавьте клиента в разделе «Клиенты»."}
+                          </div>
+                        )}
                       </div>
                     )}
                     {selectedCustomer && !showSuggestions && (selectedCustomer.purchase_count ?? 0) > 0 && (
@@ -514,7 +549,8 @@ export function KassaCart({
                     <Input 
                       placeholder="Телефон" 
                       value={customerPhone} 
-                      onChange={(e) => setCustomerPhone(e.target.value)} 
+                      onChange={(e) => { setCustomerId(null); setCustomerPhone(e.target.value); setShowSuggestions(true) }}
+                      onFocus={() => setShowSuggestions(true)}
                       className="h-8 pl-8 text-xs bg-background" 
                     />
                   </div>
@@ -546,12 +582,18 @@ export function KassaCart({
             <Label className="flex items-center gap-1 text-[10px] text-muted-foreground">
               <CreditCard className="h-3 w-3" /> Способ оплаты
             </Label>
-            <div className="grid grid-cols-3 gap-1.5">
+            <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
               {PAYMENT_METHODS.map((m) => (
                 <button
                   key={m.value}
                   type="button"
-                  onClick={() => setPayment(m.value)}
+                  onClick={() => {
+                    setPayment(m.value)
+                    if (m.value === "credit") {
+                      setIsCustomerOpen(true)
+                      if (!customerId) setShowSuggestions(true)
+                    }
+                  }}
                   className={cn(
                     "rounded-lg border px-2 py-2 text-[11px] font-medium transition-colors",
                     payment === m.value
@@ -563,6 +605,30 @@ export function KassaCart({
                 </button>
               ))}
             </div>
+
+            {payment === "credit" && (
+              <div className="space-y-2">
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-800 dark:text-amber-200">
+                  Сумма будет записана как долг, а не в кассу. Выберите зарегистрированного клиента; для оформления нужен интернет.
+                </div>
+                <div className="grid gap-1.5">
+                  <Label htmlFor="credit-due-date" className="text-xs font-medium">Срок возврата денег</Label>
+                  <Button
+                    id="credit-due-date"
+                    type="button"
+                    variant="outline"
+                    className="h-11 w-full min-w-0 justify-between bg-background text-sm"
+                    onClick={() => {
+                      setCreditDateDraft(creditDueDate)
+                      setCreditDateDialogOpen(true)
+                    }}
+                  >
+                    <span className="flex items-center gap-2"><CalendarDays className="h-4 w-4" />{displayDateInput(creditDueDate)}</span>
+                    <span className="text-xs text-muted-foreground">Изменить</span>
+                  </Button>
+                </div>
+              </div>
+            )}
 
             {payment === "mixed" && (
               <div className="grid grid-cols-2 gap-2 rounded-xl border border-border/50 bg-background/80 p-2">
@@ -659,7 +725,37 @@ export function KassaCart({
     </div>
   )
 
-  if (!isMobile) return cartPanel
+  // Keep the native date picker outside the scrollable receipt sheet so it cannot be clipped.
+  const creditDateDialog = (
+    <Dialog open={creditDateDialogOpen} onOpenChange={setCreditDateDialogOpen}>
+      <DialogContent className="w-[calc(100vw-2rem)] max-w-sm overflow-visible">
+        <DialogTitle>Срок возврата денег</DialogTitle>
+        <DialogDescription>Выберите дату, до которой клиент должен погасить долг.</DialogDescription>
+        <div className="space-y-4">
+          <Label htmlFor="credit-due-date-input">Дата возврата</Label>
+          <Input
+            id="credit-due-date-input"
+            type="date"
+            min={todayDate}
+            value={creditDateDraft}
+            onChange={(event) => setCreditDateDraft(event.target.value)}
+            className="h-12 w-full min-w-0 bg-background text-base [color-scheme:light] dark:[color-scheme:dark]"
+          />
+          <div className="flex gap-2">
+            <Button type="button" variant="outline" className="flex-1" onClick={() => setCreditDateDialogOpen(false)}>Отмена</Button>
+            <Button
+              type="button"
+              className="flex-1"
+              disabled={!creditDateDraft || creditDateDraft < todayDate}
+              onClick={() => { setCreditDueDate(creditDateDraft); setCreditDateDialogOpen(false) }}
+            >Готово</Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+
+  if (!isMobile) return <>{cartPanel}{creditDateDialog}</>
 
   return (
     <>
@@ -691,6 +787,7 @@ export function KassaCart({
           <DialogTitle className="sr-only">Чек</DialogTitle>
           <DialogDescription className="sr-only">Товары, скидки, оплата и итоговая сумма продажи</DialogDescription>
           {cartPanel}
+          {creditDateDialog}
         </DialogContent>
       </Dialog>
     </>

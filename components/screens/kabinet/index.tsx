@@ -14,6 +14,7 @@ import {
   touchPresence,
   type CabinetData,
 } from "@/app/actions/cabinet"
+import { getProductUnitUsageCount } from "@/app/actions/product-units"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -31,11 +32,12 @@ import {
 import { toast } from "sonner"
 import { useRouter } from "next/navigation"
 import { cn } from "@/lib/utils"
-import { BadgeCheck, Coins, Gift, LogOut, RotateCcw, Trash2, UserCheck, UserX, Users, Wifi } from "lucide-react"
+import { BadgeCheck, Coins, LogOut, Package, RotateCcw, Trash2, UserCheck, UserX, Users, Wifi } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { runLogoutCleanup } from "@/lib/local-db/logout-cleanup"
 import { ActionHistory } from "./action-history"
 import { InstallAppButton } from "@/components/install-app-button"
+import { CabinetProfileCard } from "./profile-card"
 import type { UndoActionResult } from "@/lib/action-history"
 import type { UndoLocalBaseline } from "@/lib/local-db/undo-cache"
 
@@ -308,37 +310,39 @@ function TeamSales({
           {rows.map((r) => (
             <div
               key={r.profile.id}
-              className="flex flex-wrap items-center gap-3 border-b border-border/60 py-3 last:border-0"
+              className="grid grid-cols-2 items-center gap-x-3 gap-y-3 border-b border-border/60 py-3 last:border-0 sm:grid-cols-[minmax(0,1fr)_auto_auto_auto] sm:gap-3"
             >
-              <Avatar className="h-9 w-9 border border-border">
-                <AvatarFallback className="bg-primary/15 text-xs text-primary">
-                  {initialsOf(r.profile.full_name)}
-                </AvatarFallback>
-              </Avatar>
+              <div className="col-span-2 flex min-w-0 items-center gap-3 sm:col-span-1">
+                <Avatar className="h-9 w-9 shrink-0 border border-border">
+                  <AvatarFallback className="bg-primary/15 text-xs text-primary">
+                    {initialsOf(r.profile.full_name)}
+                  </AvatarFallback>
+                </Avatar>
 
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="truncate text-sm font-medium">{r.profile.full_name ?? "Без имени"}</span>
-                  <Badge variant="secondary" className="text-[10px]">
-                    {roleLabel(r.profile.role)}
-                  </Badge>
-                  {r.profile.id === profile.id && (
-                    <span className="text-[10px] text-muted-foreground">это вы</span>
-                  )}
-                </div>
-                <div className="text-xs text-muted-foreground">
-                  чеков: {r.receipts} · штук: {r.units} · прибыль {formatSom(r.profit)}
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <span className="min-w-0 truncate text-sm font-medium">{r.profile.full_name ?? "Без имени"}</span>
+                    <Badge variant="secondary" className="shrink-0 text-[10px]">
+                      {roleLabel(r.profile.role)}
+                    </Badge>
+                    {r.profile.id === profile.id && (
+                      <span className="text-[10px] text-muted-foreground">это вы</span>
+                    )}
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    чеков: {r.receipts} · штук: {r.units} · прибыль {formatSom(r.profit)}
+                  </div>
                 </div>
               </div>
 
-              <div className="text-right">
+              <div className="min-w-0 rounded-lg border border-border/60 px-2 py-1.5 sm:border-0 sm:p-0 sm:text-right">
                 <div className="text-[11px] text-muted-foreground">Выручка</div>
-                <div className="font-mono text-sm font-semibold text-primary">{formatSom(r.revenue)}</div>
+                <div className="break-words font-mono text-sm font-semibold text-primary">{formatSom(r.revenue)}</div>
               </div>
 
-              <div className="text-right">
+              <div className="min-w-0 rounded-lg border border-border/60 px-2 py-1.5 text-right sm:border-0 sm:p-0">
                 <div className="text-[11px] text-muted-foreground">Бонусы</div>
-                <div className="font-mono text-sm font-semibold">{r.bonus.toFixed(0)}</div>
+                <div className="font-mono text-sm font-semibold tabular-nums">{r.bonus.toFixed(0)}</div>
               </div>
 
               <BonusPointsEditor
@@ -346,6 +350,7 @@ function TeamSales({
                 busy={busy}
                 onSetBonus={onSetBonus}
                 onResetBonus={onResetBonus}
+                className="col-span-2 min-w-0 sm:col-span-1"
               />
             </div>
           ))}
@@ -364,11 +369,13 @@ function BonusPointsEditor({
   busy,
   onSetBonus,
   onResetBonus,
+  className,
 }: {
   member: Profile
   busy: boolean
   onSetBonus: (id: string, points: number) => void
   onResetBonus: (id: string, name: string) => void
+  className?: string
 }) {
   const [points, setPoints] = useState(String(Number(member.bonus_points ?? 0).toFixed(0)))
 
@@ -377,19 +384,19 @@ function BonusPointsEditor({
   }, [member.bonus_points])
 
   return (
-    <div className="flex items-center gap-1.5">
+    <div className={cn("grid w-full grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-1.5 sm:flex sm:w-auto", className)}>
       <Input
         type="number"
         min={0}
         value={points}
         onChange={(e) => setPoints(e.target.value)}
-        className="h-8 w-20"
+        className="h-8 w-full min-w-0 sm:w-20"
         aria-label="Бонусные баллы"
       />
       <Button
         size="sm"
         variant="outline"
-        className="h-8 bg-transparent"
+        className="h-8 whitespace-nowrap bg-transparent"
         disabled={busy}
         onClick={() => onSetBonus(member.id, Number(points))}
       >
@@ -516,6 +523,10 @@ export function KabinetScreen({
   const router = useRouter()
   const [pending, start] = useTransition()
   const [defaultRate, setDefaultRate] = useState(String(data.defaultBonusRate))
+  const [productUnitUsage, setProductUnitUsage] = useState<{ shopId: string | null; count: number | null }>({
+    shopId: null,
+    count: null,
+  })
   const [logoutOpen, setLogoutOpen] = useState(false)
   const [loggingOut, setLoggingOut] = useState(false)
 
@@ -546,6 +557,16 @@ export function KabinetScreen({
 
   const isSuper = viewRole === "super_admin"
   const isAdmin = viewRole === "admin" || isSuper
+  const usageShopId = historyShopId ?? profile.shop_id ?? null
+
+  useEffect(() => {
+    if (!isAdmin || !usageShopId) return
+    let active = true
+    void getProductUnitUsageCount().then((count) => {
+      if (active) setProductUnitUsage({ shopId: usageShopId, count })
+    })
+    return () => { active = false }
+  }, [isAdmin, usageShopId])
 
   // Отметка присутствия для виджета «онлайн».
   useEffect(() => {
@@ -574,31 +595,29 @@ export function KabinetScreen({
   return (
     <div className="space-y-6">
       {/* Профиль */}
-      <Card>
-        <CardContent className="flex flex-wrap items-center gap-4 pt-6">
-          <Avatar className="h-14 w-14 border border-border">
-            <AvatarFallback className="bg-primary/15 text-base text-primary">
-              {initialsOf(profile.full_name)}
-            </AvatarFallback>
-          </Avatar>
-          <div className="min-w-0 flex-1">
-            <div className="font-serif text-xl">{profile.full_name ?? "Без имени"}</div>
-            <div className="truncate text-sm text-muted-foreground">{email}</div>
-            <Badge variant="secondary" className="mt-1 text-[10px]">
-              {roleLabel(profile.role)}
-            </Badge>
-          </div>
-          <div className="rounded-xl border border-border bg-muted/40 px-4 py-3 text-right">
-            <div className="flex items-center justify-end gap-1 text-xs text-muted-foreground">
-              <Gift className="h-3.5 w-3.5" /> Бонусные баллы
+      <CabinetProfileCard profile={profile} email={email} />
+
+      {/* Счётчик новых товарных карточек */}
+      {isAdmin && usageShopId && (
+        <Card>
+          <CardContent className="flex min-w-0 items-start gap-3 pt-4">
+            <Package className="mt-0.5 h-5 w-5 shrink-0 text-primary" aria-hidden="true" />
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                <span className="text-sm font-medium">Новые карточки товаров</span>
+                <span className="font-mono text-lg font-semibold tabular-nums" aria-live="polite">
+                  {productUnitUsage.shopId === usageShopId && productUnitUsage.count !== null
+                    ? productUnitUsage.count.toLocaleString("ru-RU")
+                    : "—"}
+                </span>
+              </div>
+              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                Одна единица — одна новая карточка с момента запуска. Продажа, удаление, редактирование и повторная синхронизация не меняют счётчик. Это учёт карточек, не объёма файлов; добавление товаров не блокируется.
+              </p>
             </div>
-            <div className="font-mono text-2xl font-semibold text-primary">
-              {Number(profile.bonus_points ?? 0).toFixed(0)}
-            </div>
-            <div className="text-[11px] text-muted-foreground">ставка {Number(profile.bonus_rate ?? 2)}% от прибыли</div>
-          </div>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      )}
 
       <ActionHistory
         key={historyShopId ?? profile.shop_id ?? "no-shop"}

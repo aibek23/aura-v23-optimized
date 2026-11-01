@@ -7,9 +7,13 @@ import { formatSom, formatWeight } from "@/lib/format"
 import { purityFromMetal } from "@/lib/purity"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { ChevronLeft, ChevronRight, Eye, EyeOff, Sparkles, X } from "lucide-react"
+import { Switch } from "@/components/ui/switch"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { ChevronLeft, ChevronRight, Copy, Download, Eye, EyeOff, QrCode, Sparkles, X } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { updateProduct } from "@/app/actions/products"
+import { setOwnShopPublicEnabled } from "@/app/actions/shops"
+import QRCode from "qrcode"
 import { toast } from "sonner"
 import { useRouter } from "next/navigation"
 import { ProductSearch } from "@/components/product-search"
@@ -32,15 +36,29 @@ export function VitrinaScreen({
   products,
   canSeePurchasePrice,
   isAdmin,
+  isShopAdmin,
+  storeId,
+  publicEnabled,
+  canManagePublicStorefront,
 }: {
   products: Product[]
   canSeePurchasePrice: boolean
   isAdmin: boolean
+  isShopAdmin: boolean
+  storeId: string
+  publicEnabled: boolean
+  canManagePublicStorefront: boolean
 }) {
   const router = useRouter()
   const [, startTransition] = useTransition()
   const [selected, setSelected] = useState<Product | null>(null)
   const [togglingId, setTogglingId] = useState<string | null>(null)
+  const [storefrontVisible, setStorefrontVisible] = useState(publicEnabled)
+  const [visibilityPending, setVisibilityPending] = useState(false)
+  const [storeQrOpen, setStoreQrOpen] = useState(false)
+  const [storeQrPending, setStoreQrPending] = useState(false)
+  const [storeQrUrl, setStoreQrUrl] = useState("")
+  const [storeQrDataUrl, setStoreQrDataUrl] = useState("")
   const [query, setQuery] = useState("")
   const debouncedQuery = useDebouncedValue(query)
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
@@ -59,6 +77,73 @@ export function VitrinaScreen({
   }, [products, debouncedQuery, category, statusFilter, isAdmin])
 
   const visibleProducts = filtered.slice(0, visibleCount)
+
+  useEffect(() => {
+    setStorefrontVisible(publicEnabled)
+  }, [publicEnabled])
+
+  const handleTogglePublicStorefront = async (enabled: boolean) => {
+    if (enabled === storefrontVisible || visibilityPending) return
+    if (
+      !enabled &&
+      !window.confirm(
+        "Отключить публичную витрину? Магазин исчезнет из каталога Aura, а публичные страницы и QR-ссылки перестанут открываться. Товары не удалятся.",
+      )
+    ) {
+      return
+    }
+
+    setVisibilityPending(true)
+    try {
+      await setOwnShopPublicEnabled(enabled)
+      setStorefrontVisible(enabled)
+      toast.success(enabled ? "Публичная витрина включена" : "Публичная витрина отключена")
+      startTransition(() => router.refresh())
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Не удалось изменить публичность витрины")
+    } finally {
+      setVisibilityPending(false)
+    }
+  }
+
+  const handleOpenStoreQr = async () => {
+    if (!storeId || !storefrontVisible || storeQrPending) return
+    setStoreQrOpen(true)
+    setStoreQrPending(true)
+    try {
+      const url = new URL("/store/" + encodeURIComponent(storeId), window.location.origin).toString()
+      const dataUrl = await QRCode.toDataURL(url, {
+        margin: 2,
+        width: 480,
+        errorCorrectionLevel: "M",
+      })
+      setStoreQrUrl(url)
+      setStoreQrDataUrl(dataUrl)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Не удалось сформировать QR-код витрины")
+      setStoreQrOpen(false)
+    } finally {
+      setStoreQrPending(false)
+    }
+  }
+
+  const handleCopyStoreUrl = async () => {
+    if (!storeQrUrl) return
+    try {
+      await navigator.clipboard.writeText(storeQrUrl)
+      toast.success("Ссылка на витрину скопирована")
+    } catch {
+      toast.error("Не удалось скопировать ссылку")
+    }
+  }
+
+  const handleDownloadStoreQr = () => {
+    if (!storeQrDataUrl) return
+    const link = document.createElement("a")
+    link.href = storeQrDataUrl
+    link.download = "aura-storefront-qr.png"
+    link.click()
+  }
 
   const handleToggleVisibility = async (p: Product) => {
     setTogglingId(p.id)
@@ -80,6 +165,44 @@ export function VitrinaScreen({
           <h1 className="font-serif text-2xl">Витрина</h1>
           <p className="text-sm text-muted-foreground">Каталог украшений магазина</p>
         </div>
+        {isShopAdmin && (
+          <div className="flex flex-col gap-3 rounded-xl border border-border bg-card p-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <p className="text-sm font-medium">Публичная витрина Aura</p>
+              <p className="text-xs text-muted-foreground">
+                {storefrontVisible
+                  ? "Магазин виден покупателям в каталоге Aura"
+                  : "Магазин скрыт, публичные ссылки недоступны"}
+              </p>
+              {!canManagePublicStorefront && (
+                <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
+                  Переключатель станет доступен после обновления базы данных.
+                </p>
+              )}
+            </div>
+            <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => void handleOpenStoreQr()}
+                disabled={!storefrontVisible || !storeId || storeQrPending}
+                aria-label="Показать QR-код публичной витрины"
+                title={storefrontVisible ? "Открыть QR-код ссылки на витрину" : "Включите публичную витрину, чтобы QR-ссылка работала"}
+              >
+                <QrCode className="mr-1.5 h-4 w-4" />
+                QR витрины
+              </Button>
+              <span className="text-xs text-muted-foreground">{storefrontVisible ? "Публичная" : "Скрыта"}</span>
+              <Switch
+                checked={storefrontVisible}
+                onCheckedChange={handleTogglePublicStorefront}
+                disabled={!canManagePublicStorefront || visibilityPending}
+                aria-label="Публичная витрина магазина"
+              />
+            </div>
+          </div>
+        )}
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
           <ProductSearch
             value={query}
@@ -192,15 +315,21 @@ export function VitrinaScreen({
                     {p.metal} · {formatWeight(p.weight)}
                     {p.size ? ` · р.${p.size}` : ""}
                   </p>
-                  <div className="flex items-baseline justify-between pt-1">
-                    <span className="font-mono text-base font-semibold text-primary">{formatSom(p.sale_price)}</span>
+                  <div className="min-w-0 space-y-1 pt-1">
+                    <span className="block break-words font-mono text-sm font-semibold leading-tight text-primary [overflow-wrap:anywhere] sm:text-base">
+                      {formatSom(p.sale_price)}
+                    </span>
                     {canSeePurchasePrice && (
-                      <span className="font-mono text-[11px] text-muted-foreground">
+                      <span className="block break-words font-mono text-[11px] text-muted-foreground [overflow-wrap:anywhere]">
                         закуп {formatSom(p.purchase_price)}
                       </span>
                     )}
                   </div>
-                  {canSeePurchasePrice && <div className="text-[11px] text-success">маржа {formatSom(margin)}</div>}
+                  {canSeePurchasePrice && (
+                    <div className="break-words text-[11px] text-success [overflow-wrap:anywhere]">
+                      маржа {formatSom(margin)}
+                    </div>
+                  )}
                   {/* Переключатель видимости — только для администратора */}
                   {isAdmin && (
                     <Button
@@ -254,6 +383,33 @@ export function VitrinaScreen({
           togglingId={togglingId}
         />
       )}
+      <Dialog open={storeQrOpen} onOpenChange={setStoreQrOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>QR-код публичной витрины</DialogTitle>
+            <DialogDescription>Покупатель откроет публичную страницу вашего магазина.</DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col items-center gap-3">
+            {storeQrPending ? (
+              <div className="flex h-56 w-56 items-center justify-center rounded-xl border border-border text-sm text-muted-foreground" role="status">
+                Создаём QR-код…
+              </div>
+            ) : storeQrDataUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={storeQrDataUrl} alt="QR-код публичной витрины магазина" className="h-56 w-56 rounded-lg border border-border bg-white p-2" />
+            ) : null}
+            {storeQrUrl && <p className="w-full break-all text-center text-xs text-muted-foreground">{storeQrUrl}</p>}
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Button type="button" variant="outline" className="flex-1" onClick={() => void handleCopyStoreUrl()} disabled={!storeQrUrl}>
+              <Copy className="mr-2 h-4 w-4" /> Скопировать ссылку
+            </Button>
+            <Button type="button" className="flex-1" onClick={handleDownloadStoreQr} disabled={!storeQrDataUrl}>
+              <Download className="mr-2 h-4 w-4" /> Скачать QR
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
@@ -375,7 +531,9 @@ function Info({ label, value, accent }: { label: string; value: string; accent?:
   return (
     <div className="rounded-xl border border-border bg-card px-3 py-2">
       <div className="text-[11px] text-muted-foreground">{label}</div>
-      <div className={cn("truncate font-mono text-sm font-medium", accent && "text-primary")}>{value}</div>
+      <div className={cn("break-words font-mono text-sm font-medium [overflow-wrap:anywhere]", accent && "text-primary")}>
+        {value}
+      </div>
     </div>
   )
 }

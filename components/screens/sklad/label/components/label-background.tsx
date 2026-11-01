@@ -7,12 +7,15 @@ interface ShapeMeta {
   vbH: number
   bodyW: number
   bodyH: number
+  rotatedFrom?: "T25x30_45" | "T30x25_45"
 }
 
 const META: Record<string, ShapeMeta> = {
   T25x30_45:   { vbW: 25.12487, vbH: 74.945435, bodyW: 25.12487, bodyH: 30.02 },
   T30x25_45:   { vbW: 30,       vbH: 70,         bodyW: 30,       bodyH: 25   },
   T30x25_50:   { vbW: 30,       vbH: 75,         bodyW: 30,       bodyH: 25   },
+  T25x30_horizontal: { vbW: 74.945435, vbH: 25.12487, bodyW: 30.02, bodyH: 25.12487, rotatedFrom: "T25x30_45" },
+  T30x25_horizontal: { vbW: 70, vbH: 30, bodyW: 25, bodyH: 30, rotatedFrom: "T30x25_45" },
   T50x30_rect: { vbW: 50,       vbH: 30,         bodyW: 50,       bodyH: 30   },
   T12x30_d11:  { vbW: 12,       vbH: 30,         bodyW: 12,       bodyH: 30   },
   T12x50_d110: { vbW: 12,       vbH: 50,         bodyW: 12,       bodyH: 50   },
@@ -85,12 +88,14 @@ function ShapeT30x25() {
 interface LabelBackgroundProps {
   sizeDef: LabelSizeDef
   rotation?: number
+  scaleX?: number
+  scaleY?: number
   className?: string
   style?: React.CSSProperties
 }
 
 export const LabelBackground = memo(function LabelBackground({
-  sizeDef, rotation = 0, className, style,
+  sizeDef, rotation = 0, scaleX = 1, scaleY = 1, className, style,
 }: LabelBackgroundProps) {
   const key = sizeDef.key
   const m = getMeta(key)
@@ -100,6 +105,11 @@ export const LabelBackground = memo(function LabelBackground({
   const baseSvgH = Math.round(m.vbH * pxPerMm + SVG_PAD * 2)
   const padMm = SVG_PAD / pxPerMm
   const hasShape = key in META && key !== "T12x30_d11" && key !== "T12x50_d110"
+  const shapeKey = m.rotatedFrom ?? key
+  const sourceMeta = getMeta(shapeKey)
+  const labelShape = shapeKey === "T30x25_50" || shapeKey === "T30x25_45"
+    ? <ShapeT30x25 />
+    : <ShapeT25x30_45 />
 
   return (
     <div
@@ -110,7 +120,7 @@ export const LabelBackground = memo(function LabelBackground({
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        transform: `rotate(${rotation}deg)`,
+        transform: `rotate(${rotation}deg) scale(${scaleX}, ${scaleY})`,
         transformOrigin: "center center",
         willChange: "transform",
         ...style,
@@ -135,33 +145,29 @@ export const LabelBackground = memo(function LabelBackground({
             </filter>
           </defs>
 
-          <g filter="url(#paper-shadow)">
-            {key === "T30x25_50" || key === "T30x25_45"
-              ? <ShapeT30x25 />
-              : <ShapeT25x30_45 />}
-
-            {m.vbH > m.bodyH && (
-              <rect
-                x={(m.vbW - TAIL_W_MM) / 2} y={m.bodyH}
-                width={TAIL_W_MM} height={m.vbH - m.bodyH}
-                fill="#d9d9d9"
-              />
+          <g transform={m.rotatedFrom ? `translate(0 ${m.vbH}) rotate(-90)` : undefined}>
+            <g filter="url(#paper-shadow)">
+              {labelShape}
+              {sourceMeta.vbH > sourceMeta.bodyH && (
+                <rect
+                  x={(sourceMeta.vbW * (key === "T30x25_horizontal" ? 0.75 : key === "T30x25_45" ? 0.25 : 0.5)) - TAIL_W_MM / 2} y={sourceMeta.bodyH}
+                  width={TAIL_W_MM} height={sourceMeta.vbH - sourceMeta.bodyH}
+                  fill="#d9d9d9"
+                />
+              )}
+            </g>
+            <rect x={0} y={0} width={sourceMeta.bodyW} height={sourceMeta.bodyH}
+              fill="none" stroke="rgba(59,130,246,0.7)"
+              strokeWidth={0.18} strokeDasharray="1.5 1.2" />
+            <rect x={1} y={1} width={sourceMeta.bodyW - 2} height={sourceMeta.bodyH - 2}
+              fill="none" stroke="rgba(239,68,68,0.65)"
+              strokeWidth={0.16} strokeDasharray="2 1.5" />
+            {sourceMeta.vbH > sourceMeta.bodyH && (
+              <line x1={0} y1={sourceMeta.bodyH} x2={sourceMeta.bodyW} y2={sourceMeta.bodyH}
+                stroke="rgba(156,163,175,0.8)"
+                strokeWidth={0.3} strokeDasharray="1 1.5" />
             )}
           </g>
-
-          <rect x={0} y={0} width={m.bodyW} height={m.bodyH}
-            fill="none" stroke="rgba(59,130,246,0.7)"
-            strokeWidth={0.18} strokeDasharray="1.5 1.2" />
-
-          <rect x={1} y={1} width={m.bodyW - 2} height={m.bodyH - 2}
-            fill="none" stroke="rgba(239,68,68,0.65)"
-            strokeWidth={0.16} strokeDasharray="2 1.5" />
-
-          {m.vbH > m.bodyH && (
-            <line x1={0} y1={m.bodyH} x2={m.bodyW} y2={m.bodyH}
-              stroke="rgba(156,163,175,0.8)"
-              strokeWidth={0.3} strokeDasharray="1 1.5" />
-          )}
         </svg>
       ) : (
         <div style={{

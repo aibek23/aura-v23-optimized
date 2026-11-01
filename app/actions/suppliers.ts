@@ -2,7 +2,7 @@
 
 import { headers } from "next/headers"
 import { revalidatePath } from "next/cache"
-import { getRequestCrmContext } from "@/lib/supabase/request-context"
+import { FORBIDDEN_MESSAGE, isAdminRole, requireShopContext } from "@/lib/supabase/request-context"
 import type {
   SupplierDebtOperation,
   SupplierDebtSummary,
@@ -10,19 +10,11 @@ import type {
 } from "@/lib/types"
 import { supplierIdentityKey } from "@/lib/supplier-identity"
 
-async function requireProfile() {
-  const { supabase, user, profile, shopId } = await getRequestCrmContext()
-  if (!user) throw new Error("Unauthorized")
-  if (!profile || profile.status !== "approved") throw new Error("Not approved")
-  if (!shopId) throw new Error("Ваш аккаунт не привязан ни к одному магазину")
-  return { supabase, user, profile, shopId }
-}
+const requireProfile = () => requireShopContext("Ваш аккаунт не привязан ни к одному магазину")
 
 async function requireAdmin() {
   const ctx = await requireProfile()
-  if (ctx.profile.role !== "admin" && ctx.profile.role !== "super_admin") {
-    throw new Error("Недостаточно прав")
-  }
+  if (!isAdminRole(ctx.profile.role)) throw new Error(FORBIDDEN_MESSAGE)
   return ctx
 }
 

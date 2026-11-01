@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, useTransition } from "react"
 import type { Customer } from "@/lib/types"
-import { createClient_, updateClient, deleteClient, getClientPurchases, setClientBlacklist, type ClientPurchase } from "@/app/actions/clients"
+import { createClient_, updateClient, deleteClient, setClientBlacklist, extendCustomerCreditDueDate } from "@/app/actions/clients"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -41,8 +41,10 @@ import {
 import { toast } from "sonner"
 import { useRouter } from "next/navigation"
 import { cn } from "@/lib/utils"
+import { normalizeText } from "@/lib/product-search"
 import {PurchaseHistoryPanel} from "@/components/screens/clients/Purchase-History-Panel"
 import { useDebouncedValue } from "@/hooks/use-debounced-value"
+import { formatSom } from "@/lib/format"
 
 const PAGE_SIZE = 30
 
@@ -81,6 +83,24 @@ function toForm(c: Customer): ClientForm {
   }
 }
 
+function localDateString() {
+  const date = new Date()
+  return date.getFullYear() + "-" + String(date.getMonth() + 1).padStart(2, "0") + "-" + String(date.getDate()).padStart(2, "0")
+}
+
+function addDaysToDate(value: string, days: number) {
+  const [year, month, day] = value.split("-").map(Number)
+  const date = new Date(year, month - 1, day)
+  date.setDate(date.getDate() + days)
+  return date.getFullYear() + "-" + String(date.getMonth() + 1).padStart(2, "0") + "-" + String(date.getDate()).padStart(2, "0")
+}
+
+function formatCreditDate(value: string | null | undefined) {
+  if (!value) return "не указан"
+  const [year, month, day] = value.split("-")
+  return day + "." + month + "." + year
+}
+
 function formatDate(iso: string) {
   return new Intl.DateTimeFormat("ru", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(iso))
 }
@@ -109,18 +129,22 @@ export function ClientsScreen({
   const [saving, setSaving] = useState(false)
 
   const [historyClient, setHistoryClient] = useState<Customer | null>(null)
+  const [extensionClient, setExtensionClient] = useState<Customer | null>(null)
+  const [extensionSaleId, setExtensionSaleId] = useState("")
+  const [extensionDueDate, setExtensionDueDate] = useState("")
+  const [extensionSaving, setExtensionSaving] = useState(false)
   const [isPending, startTransition] = useTransition()
 
   const filtered = useMemo(() => {
-    const q = debouncedQuery.toLowerCase()
+    const q = normalizeText(debouncedQuery)
     return clients.filter((c) => {
       const matchQuery =
         !q ||
-        (c.name ?? "").toLowerCase().includes(q) ||
-        (c.phone ?? "").includes(q) ||
-        (c.email ?? "").toLowerCase().includes(q) ||
-        (c.whatsapp ?? "").includes(q) ||
-        (c.instagram ?? "").toLowerCase().includes(q)
+        normalizeText(c.name).includes(q) ||
+        normalizeText(c.phone).includes(q) ||
+        normalizeText(c.email).includes(q) ||
+        normalizeText(c.whatsapp).includes(q) ||
+        normalizeText(c.instagram).includes(q)
       const matchGender = genderFilter === "all" || (c.gender ?? "") === genderFilter
       const matchBlacklist = blacklistFilter === "all" || c.is_blacklisted === true
       return matchQuery && matchGender && matchBlacklist
@@ -249,6 +273,41 @@ export function ClientsScreen({
     })
   }
 
+  const openDebtExtension = (client: Customer) => {
+    const sale = client.overdue_credit_sales?.[0]
+    if (!sale) return
+    setExtensionClient(client)
+    setExtensionSaleId(sale.id)
+    const baseDate = (sale.credit_due_date ?? "") > localDateString() ? sale.credit_due_date! : localDateString()
+    setExtensionDueDate(addDaysToDate(baseDate, 30))
+  }
+
+  const extensionSales = extensionClient?.overdue_credit_sales ?? []
+  const selectedExtensionSale = extensionSales.find((sale) => sale.id === extensionSaleId) ?? null
+
+  const saveDebtExtension = async () => {
+    if (!selectedExtensionSale || !extensionDueDate) return
+    if (extensionDueDate < localDateString()) {
+      toast.error("Новая дата не может быть в прошлом")
+      return
+    }
+    if (extensionDueDate <= (selectedExtensionSale.credit_due_date ?? "")) {
+      toast.error("Новая дата должна быть позже текущего срока")
+      return
+    }
+    setExtensionSaving(true)
+    try {
+      await extendCustomerCreditDueDate({ saleId: selectedExtensionSale.id, dueDate: extensionDueDate })
+      toast.success("Срок оплаты продлён")
+      setExtensionClient(null)
+      startTransition(() => router.refresh())
+    } catch (e) {
+      toast.error((e as Error).message)
+    } finally {
+      setExtensionSaving(false)
+    }
+  }
+
   const setField = (field: keyof ClientForm, value: string) =>
     setForm((prev: ClientForm) => ({ ...prev, [field]: value }))
 
@@ -345,6 +404,7 @@ export function ClientsScreen({
                     className={cn(
                       "border-b border-border/50 last:border-0 hover:bg-muted/20 transition-colors",
                       c.is_blacklisted && "bg-destructive/5 hover:bg-destructive/10",
+                      (c.overdue_debt_balance ?? 0) > 0 && "bg-destructive/10 hover:bg-destructive/15",
                     )}
                   >
                     <td className="px-4 py-3">
@@ -354,6 +414,22 @@ export function ClientsScreen({
                           <Badge variant="destructive" className="text-[10px] px-1.5 py-0">ЧС</Badge>
                         )}
                       </div>
+                      {(c.credit_debt_balance ?? c.debt_balance ?? 0) > 0 && (
+                        <div className="mt-1 space-y-0.5 text-xs">
+                          <p className="font-semibold">Долг: {formatSom(c.credit_debt_balance ?? c.debt_balance ?? 0)}</p>
+                          <p className={cn("text-muted-foreground", (c.overdue_debt_balance ?? 0) > 0 && "text-destructive")}>
+                            Ближайший срок возврата: {formatCreditDate(c.next_credit_due_date)}
+                          </p>
+                        </div>
+                      )}
+                      {(c.overdue_debt_balance ?? 0) > 0 && (
+                        <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-destructive">
+                          <span className="font-semibold">Просрочено: {formatSom(c.overdue_debt_balance ?? 0)}</span>
+                          <Button variant="outline" size="sm" className="h-7 border-destructive/40 px-2 text-[11px] text-destructive hover:bg-destructive/10" onClick={() => openDebtExtension(c)}>
+                            Продлить
+                          </Button>
+                        </div>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-muted-foreground">
                       {GENDER_OPTIONS.find((g) => g.value === c.gender)?.label ?? "—"}
@@ -386,6 +462,7 @@ export function ClientsScreen({
                           <Button
                             variant="ghost" size="icon"
                             className="h-8 w-8 text-muted-foreground hover:text-primary"
+                            aria-label={`История покупок клиента ${c.name ?? "без имени"}`}
                             title="История покупок"
                             onClick={() => setHistoryClient(c)}
                           >
@@ -395,6 +472,7 @@ export function ClientsScreen({
                         <Button
                           variant="ghost" size="icon"
                           className={cn("h-8 w-8", c.is_blacklisted ? "text-destructive hover:text-foreground" : "text-muted-foreground hover:text-destructive")}
+                          aria-label={c.is_blacklisted ? "Убрать из чёрного списка" : "Добавить в чёрный список"}
                           title={c.is_blacklisted ? "Убрать из чёрного списка" : "Добавить в чёрный список"}
                           onClick={() => handleToggleBlacklist(c)}
                           disabled={isPending}
@@ -404,6 +482,7 @@ export function ClientsScreen({
                         <Button
                           variant="ghost" size="icon"
                           className="h-8 w-8 text-muted-foreground hover:text-primary"
+                          aria-label={`Редактировать клиента ${c.name ?? "без имени"}`}
                           title="Редактировать"
                           onClick={() => openEdit(c)}
                         >
@@ -412,6 +491,7 @@ export function ClientsScreen({
                         <Button
                           variant="ghost" size="icon"
                           className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                          aria-label={`Удалить клиента ${c.name ?? "без имени"}`}
                           title="Удалить"
                           onClick={() => handleDelete(c)}
                         >
@@ -433,6 +513,7 @@ export function ClientsScreen({
                 className={cn(
                   "rounded-xl border border-border bg-card p-3 space-y-2",
                   c.is_blacklisted && "border-destructive/40 bg-destructive/5",
+                  (c.overdue_debt_balance ?? 0) > 0 && "border-destructive/60 bg-destructive/5",
                 )}
               >
                 <div className="flex items-start justify-between gap-2">
@@ -463,6 +544,22 @@ export function ClientsScreen({
                   </div>
                 </div>
 
+                {(c.credit_debt_balance ?? c.debt_balance ?? 0) > 0 && (
+                  <div className="rounded-lg bg-muted/50 px-2.5 py-2 text-xs">
+                    <p className="font-semibold">Долг: {formatSom(c.credit_debt_balance ?? c.debt_balance ?? 0)}</p>
+                    <p className={cn("mt-1 text-muted-foreground", (c.overdue_debt_balance ?? 0) > 0 && "text-destructive")}>
+                      Ближайший срок возврата: {formatCreditDate(c.next_credit_due_date)}
+                    </p>
+                  </div>
+                )}
+                {(c.overdue_debt_balance ?? 0) > 0 && (
+                  <div className="flex items-center justify-between gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-2.5 py-2 text-xs text-destructive">
+                    <span className="font-semibold">Просрочено: {formatSom(c.overdue_debt_balance ?? 0)}</span>
+                    <Button variant="outline" size="sm" className="h-7 border-destructive/40 px-2 text-[11px] text-destructive" onClick={() => openDebtExtension(c)}>
+                      Продлить
+                    </Button>
+                  </div>
+                )}
                 <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
                   {c.phone && (
                     <span className="flex items-center gap-1">
@@ -519,7 +616,7 @@ export function ClientsScreen({
                 {filtered.length} клиентов · стр. {currentPage}/{totalPages}
               </span>
               <div className="flex items-center gap-1">
-                <Button variant="outline" size="icon" className="h-8 w-8" disabled={currentPage === 1} onClick={() => setPage(Math.max(1, currentPage - 1))}>
+                <Button variant="outline" size="icon" className="h-8 w-8" aria-label="Предыдущая страница" title="Показать предыдущую страницу клиентов" disabled={currentPage === 1} onClick={() => setPage(Math.max(1, currentPage - 1))}>
                   <ChevronLeft className="h-4 w-4" />
                 </Button>
                 {Array.from({ length: totalPages }, (_, i) => i + 1)
@@ -529,12 +626,12 @@ export function ClientsScreen({
                       {idx > 0 && arr[idx - 1] !== n - 1 && (
                         <span className="px-1 text-xs text-muted-foreground">…</span>
                       )}
-                      <Button variant={n === currentPage ? "default" : "outline"} size="icon" className="h-8 w-8 text-xs" onClick={() => setPage(n)}>
+                      <Button variant={n === currentPage ? "default" : "outline"} size="icon" className="h-8 w-8 text-xs" aria-label={`Перейти на страницу ${n}`} title={`Перейти на страницу ${n}`} onClick={() => setPage(n)}>
                         {n}
                       </Button>
                     </span>
                   ))}
-                <Button variant="outline" size="icon" className="h-8 w-8" disabled={currentPage === totalPages} onClick={() => setPage(Math.min(totalPages, currentPage + 1))}>
+                <Button variant="outline" size="icon" className="h-8 w-8" aria-label="Следующая страница" title="Показать следующую страницу клиентов" disabled={currentPage === totalPages} onClick={() => setPage(Math.min(totalPages, currentPage + 1))}>
                   <ChevronRight className="h-4 w-4" />
                 </Button>
               </div>
@@ -542,6 +639,66 @@ export function ClientsScreen({
           )}
         </>
       )}
+
+      <Dialog open={Boolean(extensionClient)} onOpenChange={(open) => { if (!open) setExtensionClient(null) }}>
+        <DialogContent className="max-w-md w-full overflow-visible">
+          <DialogHeader>
+            <DialogTitle>Продлить срок долга</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <p className="text-sm text-muted-foreground">Клиент: {extensionClient?.name ?? "—"}</p>
+            {extensionSales.length > 1 && (
+              <div className="grid gap-1.5">
+                <Label className="text-xs">Просроченная продажа</Label>
+                <Select
+                  value={extensionSaleId}
+                  onValueChange={(value) => {
+                    const sale = extensionSales.find((item) => item.id === value)
+                    setExtensionSaleId(value ?? "")
+                    if (sale) {
+                      const baseDate = (sale.credit_due_date ?? "") > localDateString() ? sale.credit_due_date! : localDateString()
+                      setExtensionDueDate(addDaysToDate(baseDate, 30))
+                    }
+                  }}
+                >
+                  <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Выберите продажу" /></SelectTrigger>
+                  <SelectContent>
+                    {extensionSales.map((sale) => (
+                      <SelectItem key={sale.id} value={sale.id}>
+                        {formatCreditDate(sale.credit_due_date)} · {formatSom(sale.credit_balance)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            {selectedExtensionSale && (
+              <p className="rounded-lg bg-muted/50 px-3 py-2 text-sm">
+                Остаток по продаже: <span className="font-semibold">{formatSom(selectedExtensionSale.credit_balance)}</span>
+              </p>
+            )}
+            <div className="grid gap-1.5">
+              <Label htmlFor="extended-credit-due-date" className="text-xs">Новая дата оплаты</Label>
+              <Input
+                id="extended-credit-due-date"
+                type="date"
+                value={extensionDueDate}
+                onChange={(event) => setExtensionDueDate(event.target.value)}
+                min={selectedExtensionSale && addDaysToDate(selectedExtensionSale.credit_due_date ?? localDateString(), 1) > localDateString()
+                  ? addDaysToDate(selectedExtensionSale.credit_due_date ?? localDateString(), 1)
+                  : localDateString()}
+                className="h-11 min-w-0 text-base [color-scheme:light] dark:[color-scheme:dark]"
+              />
+            </div>
+            <div className="flex gap-2">
+              <Button variant="outline" className="flex-1" onClick={() => setExtensionClient(null)} disabled={extensionSaving}>Отмена</Button>
+              <Button className="flex-1" onClick={saveDebtExtension} disabled={extensionSaving || !selectedExtensionSale || !extensionDueDate}>
+                {extensionSaving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Сохранение...</> : "Продлить срок"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Диалог добавления / редактирования */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>

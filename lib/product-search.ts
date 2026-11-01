@@ -7,7 +7,7 @@ export type ProductSearchQuery =
   | { kind: "date"; value: string }
   | { kind: "empty"; value: "" }
 
-function normalizeText(value: unknown): string {
+export function normalizeText(value: unknown): string {
   return String(value ?? "")
     .toLocaleLowerCase("ru-RU")
     .replaceAll("ё", "е")

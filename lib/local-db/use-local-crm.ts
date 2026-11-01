@@ -235,6 +235,32 @@ export function useLocalCrm(initialData: {
     }
   }, [shopId, enabled])
 
+  // Hydrate newly-created customers after server actions/router.refresh. The
+  // offline-first state remains authoritative; this only adds missing rows.
+  useEffect(() => {
+    const serverClients = (initialData.clients || []).filter(
+      (client) => !client.shop_id || client.shop_id === shopId,
+    )
+    if (!enabled) {
+      setClients(serverClients)
+      return
+    }
+    if (!isReady || serverClients.length === 0) return
+
+    let cancelled = false
+    const refreshClients = async () => {
+      await seedMissingLocalRows('customers', serverClients, shopId)
+      const localClients = await getShopRecords<Customer>('customers', shopId)
+      if (!cancelled) setClients(localClients)
+    }
+    void refreshClients().catch((error) => {
+      console.error('Error refreshing customers from server data:', error)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [shopId, enabled, isReady, initialData.clients])
+
   // 2. Offline-first Checkout (Sales POS)
   const localCheckout = useCallback(
     async (input: {
@@ -245,8 +271,18 @@ export function useLocalCrm(initialData: {
       amount_electronic?: number
       customer_name: string
       customer_phone: string
+      customer_id?: string | null
       bonus_used: number
     }) => {
+      const selectedCustomer = input.customer_id
+        ? clients.find((customer) => customer.id === input.customer_id) ?? null
+        : null
+      if (input.payment_method === "credit" && !input.customer_id) {
+        throw new Error("Для продажи в долг выберите клиента из списка")
+      }
+      if (input.payment_method === "credit" && !selectedCustomer) {
+        throw new Error("Выбранный клиент не найден в локальном каталоге")
+      }
       if (!input.items.length) throw new Error('Чек пуст — добавьте хотя бы одну позицию')
       if (input.items.some((item) => Number(item.quantity) !== 1)) {
         throw new Error('Количество каждой позиции должно быть равно 1')
@@ -310,6 +346,8 @@ export function useLocalCrm(initialData: {
         }
       } else if (input.payment_method === 'card' || input.payment_method === 'transfer') {
         electronicAmount = finalPrice
+      } else if (input.payment_method === 'credit') {
+        // Долг учитывается отдельно и не должен попадать в кассу.
       } else {
         throw new Error('Выберите корректный способ оплаты')
       }
@@ -319,9 +357,9 @@ export function useLocalCrm(initialData: {
         shop_id: shopId,
         seller_id: initialData.profile.id,
         seller_name: initialData.profile.full_name || null,
-        customer_id: null,
-        customer_name: input.customer_name || null,
-        customer_phone: input.customer_phone || null,
+        customer_id: input.customer_id || null,
+        customer_name: selectedCustomer?.name || input.customer_name || null,
+        customer_phone: selectedCustomer?.phone || input.customer_phone || null,
         payment_method: input.payment_method,
         amount_cash: cashAmount,
         amount_electronic: electronicAmount,
@@ -341,7 +379,7 @@ export function useLocalCrm(initialData: {
       }
 
       let newCashOp: CashOperation | null = null
-      if (finalPrice > 0) {
+      if (finalPrice > 0 && input.payment_method !== 'credit') {
         const source =
           cashAmount > 0 && electronicAmount > 0
             ? 'mixed'
@@ -383,7 +421,7 @@ export function useLocalCrm(initialData: {
 
       return { success: true, sale: newSale }
     },
-    [shopId, initialData.profile.id, initialData.profile.full_name, products]
+    [shopId, initialData.profile.id, initialData.profile.full_name, products, clients]
   )
 
   // 3. Offline-first Return
