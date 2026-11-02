@@ -274,22 +274,21 @@ export async function getSalesInRange(input: {
     .slice(0, 5000)
   for (let i = 0; i < extraIds.length; i += 200) {
     const chunk = extraIds.slice(i, i + 200)
-    let { data, error } = await supabase
-      .from("sales")
-      .select(SALE_COLUMNS + ", receipt_type")
-      .eq("shop_id", shopId)
-      .is("deleted_at", null)
-      .in("id", chunk)
-    if (error && MISSING_SCHEMA_CODES.includes(error.code ?? "")) {
-      ;({ data, error } = await supabase
+    const readExtraSales = async (columns: string) => {
+      const result = await supabase
         .from("sales")
-        .select(SALE_COLUMNS)
+        .select(columns)
         .eq("shop_id", shopId)
         .is("deleted_at", null)
-        .in("id", chunk))
+        .in("id", chunk)
+      return { data: result.data as unknown, error: result.error }
     }
-    if (error) break
-    sales.push(...((data ?? []) as unknown as Sale[]))
+    let result = await readExtraSales(SALE_COLUMNS + ", receipt_type")
+    if (result.error && MISSING_SCHEMA_CODES.includes(result.error.code ?? "")) {
+      result = await readExtraSales(SALE_COLUMNS)
+    }
+    if (result.error) break
+    sales.push(...((result.data ?? []) as Sale[]))
   }
 
   let products: ReportProductInfo[] = []
