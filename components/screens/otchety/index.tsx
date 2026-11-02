@@ -42,6 +42,7 @@ import { ScrapAnalysis } from "./sections/scrap-analysis"
 import { HeatmapSection } from "./sections/heatmap-section"
 import { ChartsSection } from "./sections/charts-section"
 import { CategoryTable } from "./sections/category-table"
+import { ExportButtons } from "./sections/export-buttons"
 import type { KpiSummary, PeriodId, SeriesPoint, SortKey } from "./types"
 
 export function OtchetyScreen({
@@ -364,6 +365,7 @@ export function OtchetyScreen({
           setCustomTo={setCustomTo}
           range={range}
         />
+        <ExportButtons range={range} allTime={allTime} products={products} scrapPrices={scrapPrices} />
         {allTime && (
           <label className="flex flex-col gap-1.5 text-sm sm:max-w-xs">
             <span className="text-muted-foreground">Детализация за всё время</span>
@@ -438,6 +440,8 @@ export function OtchetyScreen({
         setCustomTo={setCustomTo}
         range={range}
       />
+
+      <ExportButtons range={range} allTime={allTime} products={products} scrapPrices={scrapPrices} />
 
       <KpiSection kpi={kpi} prevKpi={prevKpi} stockCount={stockCount} />
 
