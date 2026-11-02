@@ -11,7 +11,7 @@ export const PERIODS: { id: PeriodId; label: string }[] = [
   { id: "7d", label: "7 дней" },
   { id: "30d", label: "30 дней" },
   { id: "month", label: "Текущий месяц" },
-  { id: "all", label: "За все время" },
+  { id: "all", label: "За всё время" },
 ]
 
 export const TIME_SLOTS = [
@@ -64,7 +64,6 @@ export function resolveRange(
 ): DateRange {
   const today = startOfDay(new Date())
   const tomorrow = addDays(today, 1)
-
   switch (period) {
     case "today":
       return { from: today, to: tomorrow }
@@ -78,12 +77,15 @@ export function resolveRange(
       return { from: new Date(today.getFullYear(), today.getMonth(), 1), to: tomorrow }
     case "custom": {
       const from = customFrom ? startOfDay(new Date(customFrom)) : addDays(today, -29)
-      const to = customTo ? addDays(startOfDay(new Date(customTo)), 1) : tomorrow
+      let to = customTo ? addDays(startOfDay(new Date(customTo)), 1) : tomorrow
+      if (to > tomorrow) to = tomorrow
       return { from, to: to > from ? to : addDays(from, 1) }
     }
     case "all":
     default:
-      return { from: new Date(0), to: tomorrow }
+      // The actual start date is resolved server-side from the shop's first
+      // registered profile; this placeholder is not sent as the report start.
+      return { from: today, to: tomorrow }
   }
 }
 
@@ -98,7 +100,7 @@ export function previousRange(range: DateRange): DateRange {
 
 /** Human-readable label for a range. */
 export function rangeLabel(period: PeriodId, range: DateRange): string {
-  if (period === "all") return "За все время"
+  if (period === "all") return "За всё время"
   const to = addDays(range.to, -1)
   const fmt = (d: Date) =>
     d.toLocaleDateString("ru-RU", { day: "2-digit", month: "short" })

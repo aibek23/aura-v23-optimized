@@ -138,6 +138,9 @@ export async function getProductsPage(
     .select(PRODUCT_COLUMNS)
     .eq("shop_id", shopId)
     .is("deleted_at", null)
+    // Проданные товары не отправляем в каталог: они не нужны кассе/складу
+    // и только раздувают локальную базу на слабых устройствах.
+    .neq("status", "sold")
     .order("created_at", { ascending: false })
     .range(offset, offset + limit)
 

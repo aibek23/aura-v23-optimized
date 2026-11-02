@@ -41,6 +41,255 @@ export async function getSales(): Promise<Sale[]> {
   return ((data ?? []) as unknown as Sale[])
 }
 
+// ---------------------------------------------------------------------------
+// Серверная история продаж с пагинацией.
+// Локально (IndexedDB) хранятся только последние 100 чеков, всё остальное
+// читается с сервера постранично — так слабые устройства не держат в памяти
+// всю историю магазина.
+// ---------------------------------------------------------------------------
+
+export type SalesPageCursor = { created_at: string; id: string }
+export type SalesPage = { items: Sale[]; nextCursor: SalesPageCursor | null }
+
+function parseIsoOrNull(value: unknown): string | null {
+  if (typeof value !== "string" || !value) return null
+  const time = Date.parse(value)
+  return Number.isFinite(time) ? new Date(time).toISOString() : null
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/**
+ * Одна страница истории продаж (новые сверху), keyset-пагинация по
+ * (created_at, id) — стабильна при добавлении новых чеков.
+ */
+type SalesPageInput = {
+  limit?: number
+  cursor?: SalesPageCursor | null
+  from?: string | null
+  to?: string | null
+  sellerId?: string | null
+}
+
+export async function getSalesPage(input: SalesPageInput = {}): Promise<SalesPage> {
+  const { supabase, shopId } = await requireProfile()
+  return readSalesPage(supabase, shopId, input)
+}
+
+async function readSalesPage(
+  supabase: Awaited<ReturnType<typeof requireProfile>>["supabase"],
+  shopId: string,
+  input: SalesPageInput,
+): Promise<SalesPage> {
+  const limit = Math.min(Math.max(Math.floor(Number(input.limit) || 30), 1), 100)
+  const from = parseIsoOrNull(input.from)
+  const to = parseIsoOrNull(input.to)
+  const sellerId = input.sellerId && UUID_RE.test(input.sellerId) ? input.sellerId : null
+  const cursorAt = parseIsoOrNull(input.cursor?.created_at)
+  const cursorId = input.cursor?.id && /^[\w-]{1,64}$/.test(input.cursor.id) ? input.cursor.id : null
+
+  const readPage = (columns: string) => {
+    let query = supabase
+      .from("sales")
+      .select(columns)
+      .eq("shop_id", shopId)
+      .is("deleted_at", null)
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .limit(limit + 1)
+    if (from) query = query.gte("created_at", from)
+    if (to) query = query.lt("created_at", to)
+    if (sellerId) query = query.eq("seller_id", sellerId)
+    if (cursorAt && cursorId) {
+      query = query.or(`created_at.lt.${cursorAt},and(created_at.eq.${cursorAt},id.lt.${cursorId})`)
+    }
+    return query
+  }
+
+  let { data, error } = await readPage(SALE_COLUMNS + ", receipt_type")
+  if (error && MISSING_SCHEMA_CODES.includes(error.code ?? "")) {
+    ;({ data, error } = await readPage(SALE_COLUMNS))
+  }
+  if (error) throw new Error(`Не удалось загрузить историю продаж: ${error.message}`)
+
+  const rows = (data ?? []) as unknown as Sale[]
+  const items = rows.slice(0, limit)
+  await fillMissingSkus(supabase, shopId, items)
+  const last = items[items.length - 1]
+  return {
+    items,
+    nextCursor: rows.length > limit && last ? { created_at: last.created_at, id: last.id } : null,
+  }
+}
+
+/**
+ * Проданные товары больше не лежат в локальном каталоге, поэтому артикул
+ * для поиска/возврата по QR дописываем в позиции чека на сервере.
+ */
+async function fillMissingSkus(
+  supabase: Awaited<ReturnType<typeof requireProfile>>["supabase"],
+  shopId: string,
+  sales: Sale[],
+) {
+  const ids = [
+    ...new Set(
+      sales.flatMap((sale) =>
+        (sale.items ?? []).filter((item) => item.product_id && !item.sku).map((item) => item.product_id as string),
+      ),
+    ),
+  ]
+  if (ids.length === 0) return
+  const { data, error } = await supabase.from("products").select("id, sku").eq("shop_id", shopId).in("id", ids)
+  if (error || !data) return
+  const skuById = new Map((data as { id: string; sku: string | null }[]).map((row) => [row.id, row.sku]))
+  for (const sale of sales) {
+    sale.items = (sale.items ?? []).map((item) =>
+      item.product_id && !item.sku && skuById.get(item.product_id)
+        ? { ...item, sku: skuById.get(item.product_id) }
+        : item,
+    )
+  }
+}
+
+export type ReportProductInfo = { id: string; category: string | null; metal: string | null }
+
+export type DailySalesSummaryRow = {
+  report_day: string
+  revenue: number
+  cost: number
+  profit: number
+  receipt_count: number
+  refund_amount: number
+  refund_cost: number
+  return_count: number
+}
+
+/**
+ * Compact, server-side report data. The SQL function aggregates existing
+ * sales/returns at request time; it does not persist duplicate daily rows.
+ */
+export async function getDailySalesSummary(input: {
+  from: string | null
+  to: string
+  allTime?: boolean
+}): Promise<DailySalesSummaryRow[]> {
+  const { supabase, profile, shopId } = await requireProfile()
+  if (profile.role !== "admin" && profile.role !== "super_admin") {
+    throw new Error("Раздел доступен только администраторам")
+  }
+
+  let from = input.from
+  if (input.allTime) {
+    // shop_settings has no registration timestamp; the signup trigger creates
+    // its first profile and shop row together, so the earliest shop profile is
+    // the registration date without adding a new database column.
+    const { data: firstProfile, error: profileError } = await supabase
+      .from("profiles")
+      .select("created_at")
+      .eq("shop_id", shopId)
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle()
+    if (profileError) {
+      throw new Error(`Не удалось определить дату регистрации магазина: ${profileError.message}`)
+    }
+    from = firstProfile?.created_at ?? null
+  }
+
+  if (!from) throw new Error("Не удалось определить дату регистрации магазина")
+  const fromMs = Date.parse(from)
+  const toMs = Date.parse(input.to)
+  if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || toMs <= fromMs) {
+    throw new Error("Неверный диапазон дат отчёта")
+  }
+
+  const { data, error } = await supabase.rpc("get_daily_sales_summary", {
+    _from: new Date(fromMs).toISOString(),
+    _to: new Date(toMs).toISOString(),
+  })
+  if (error) throw new Error(`Не удалось загрузить дневной отчёт: ${error.message}`)
+
+  return ((data ?? []) as DailySalesSummaryRow[]).map((row) => ({
+    ...row,
+    revenue: Number(row.revenue) || 0,
+    cost: Number(row.cost) || 0,
+    profit: Number(row.profit) || 0,
+    receipt_count: Number(row.receipt_count) || 0,
+    refund_amount: Number(row.refund_amount) || 0,
+    refund_cost: Number(row.refund_cost) || 0,
+    return_count: Number(row.return_count) || 0,
+  }))
+}
+
+/** Максимум чеков за один запрос отчёта — защита слабых устройств от гигантских ответов. */
+const RANGE_MAX_SALES = 5000
+
+/**
+ * Продажи за период (для отчётов и статистики продавцов). Читаются с сервера
+ * постранично, плюс категории проданных товаров — их больше нет в локальном
+ * каталоге, потому что проданные товары на устройство не загружаются.
+ */
+export async function getSalesInRange(input: {
+  from?: string | null
+  to?: string | null
+  withProducts?: boolean
+  /** Чеки вне периода, нужные для привязки возвратов к продавцу. */
+  includeSaleIds?: string[]
+}): Promise<{ sales: Sale[]; products: ReportProductInfo[]; truncated: boolean }> {
+  const { supabase, shopId } = await requireProfile()
+  const sales: Sale[] = []
+  let cursor: SalesPageCursor | null = null
+  let truncated = false
+
+  while (true) {
+    const page = await readSalesPage(supabase, shopId, { limit: 100, cursor, from: input.from, to: input.to })
+    sales.push(...page.items)
+    if (!page.nextCursor) break
+    if (sales.length >= RANGE_MAX_SALES) {
+      truncated = true
+      break
+    }
+    cursor = page.nextCursor
+  }
+
+  const known = new Set(sales.map((sale) => sale.id))
+  const extraIds = [...new Set((input.includeSaleIds ?? []).filter((id) => typeof id === "string" && UUID_RE.test(id)))]
+    .filter((id) => !known.has(id))
+    .slice(0, 500)
+  for (let i = 0; i < extraIds.length; i += 200) {
+    const chunk = extraIds.slice(i, i + 200)
+    const { data, error } = await supabase
+      .from("sales")
+      .select(SALE_COLUMNS)
+      .eq("shop_id", shopId)
+      .is("deleted_at", null)
+      .in("id", chunk)
+    if (error) break
+    sales.push(...((data ?? []) as unknown as Sale[]))
+  }
+
+  let products: ReportProductInfo[] = []
+  if (input.withProducts) {
+    const ids = [
+      ...new Set(
+        sales.flatMap((sale) => (sale.items ?? []).map((item) => item.product_id).filter(Boolean) as string[]),
+      ),
+    ]
+    for (let i = 0; i < ids.length; i += 200) {
+      const chunk = ids.slice(i, i + 200)
+      const { data, error } = await supabase
+        .from("products")
+        .select("id, category, metal")
+        .eq("shop_id", shopId)
+        .in("id", chunk)
+      if (error) break
+      products.push(...((data ?? []) as ReportProductInfo[]))
+    }
+  }
+
+  return { sales, products, truncated }
+}
+
 export type CheckoutInput = {
   items: SaleItem[]
   discount: number

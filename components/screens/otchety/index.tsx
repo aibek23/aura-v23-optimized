@@ -17,7 +17,7 @@
 //   sections/charts-section.tsx    — графики
 //   sections/category-table.tsx    — таблица по категориям
 
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Lock, Undo2 } from "lucide-react"
 import type { Product, Profile, Role, Sale, SaleReturn } from "@/lib/types"
 import { formatSom } from "@/lib/format"
@@ -34,16 +34,18 @@ import {
   summarise,
   toInputDate,
 } from "./utils"
+import { useServerSalesRange } from "@/hooks/use-server-sales"
+import { useServerDailySummary } from "@/hooks/use-server-daily-summary"
 import { PeriodSelector } from "./sections/period-selector"
 import { KpiSection } from "./sections/kpi-section"
 import { ScrapAnalysis } from "./sections/scrap-analysis"
 import { HeatmapSection } from "./sections/heatmap-section"
 import { ChartsSection } from "./sections/charts-section"
 import { CategoryTable } from "./sections/category-table"
-import type { PeriodId, SortKey } from "./types"
+import type { KpiSummary, PeriodId, SeriesPoint, SortKey } from "./types"
 
 export function OtchetyScreen({
-  sales,
+  sales: localSales,
   products,
   returns = [],
   viewRole,
@@ -68,6 +70,27 @@ export function OtchetyScreen({
   const [heatCategory, setHeatCategory] = useState("all")
   const [tableQuery, setTableQuery] = useState("")
   const [sortKey, setSortKey] = useState<SortKey>("revenue")
+  const [selectedSummaryMonth, setSelectedSummaryMonth] = useState("")
+  const [reportDevice, setReportDevice] = useState({
+    detailedDays: 30,
+    ready: false,
+  })
+
+  useEffect(() => {
+    const isMobile = window.matchMedia("(pointer: coarse)").matches
+    const capabilities = navigator as Navigator & { deviceMemory?: number }
+    // Be conservative when the browser hides hardware details: use the
+    // lighter summary path unless both RAM and CPU indicate a capable phone.
+    const isCapableMobile =
+      isMobile &&
+      Number(capabilities.deviceMemory) >= 6 &&
+      navigator.hardwareConcurrency >= 6
+    setReportDevice({ detailedDays: isCapableMobile ? 90 : 30, ready: true })
+  }, [])
+
+  useEffect(() => {
+    if (period !== "all") setSelectedSummaryMonth("")
+  }, [period])
 
   // Отчёты доступны только администраторам
   const allowed = viewRole === "admin" || viewRole === "super_admin"
@@ -76,14 +99,45 @@ export function OtchetyScreen({
     () => resolveRange(period, customFrom, customTo),
     [period, customFrom, customTo],
   )
+  const allTime = period === "all"
   const prev = useMemo(() => previousRange(range), [range])
+  const rangeDays = allTime
+    ? Number.POSITIVE_INFINITY
+    : (range.to.getTime() - range.from.getTime()) / 86_400_000
+  // Long ranges use compact SQL aggregates instead of transferring every receipt.
+  const dailySummaryMode = allTime || rangeDays > reportDevice.detailedDays
+  const canCompareSummary = !allTime && rangeDays <= 900
+  const summaryFrom = allTime
+    ? null
+    : dailySummaryMode && canCompareSummary
+      ? Math.min(prev.from.getTime(), range.from.getTime())
+      : range.from.getTime()
 
-  // Карта id → продукт для группировки позиций продаж
+  // На устройстве только последние 100 чеков — отчёт за период читаем с сервера
+  // (текущий и предыдущий период одним запросом). Офлайн — локальная история.
+  const server = useServerSalesRange({
+    from: Math.min(prev.from.getTime(), range.from.getTime()),
+    to: range.to,
+    localSales,
+    enabled: allowed && reportDevice.ready && !dailySummaryMode,
+    withProducts: true,
+  })
+  const sales = server.sales
+  const dailySummary = useServerDailySummary({
+    from: summaryFrom,
+    to: range.to,
+    allTime,
+    enabled: allowed && reportDevice.ready && dailySummaryMode,
+  })
+
+  // Карта id → продукт для группировки позиций продаж. Проданных товаров нет
+  // в локальном каталоге, их категорию/металл присылает сервер.
   const productById = useMemo(() => {
     const map = new Map<string, Product>()
+    for (const p of server.products) map.set(p.id, p as unknown as Product)
     for (const p of products) map.set(p.id, p)
     return map
-  }, [products])
+  }, [products, server.products])
 
   const inRange = useMemo(
     () =>
@@ -214,6 +268,161 @@ export function OtchetyScreen({
           {profile.full_name ?? "Пользователь"}, обратитесь к владельцу
           магазина за доступом.
         </p>
+      </div>
+    )
+  }
+
+  if (dailySummaryMode) {
+    const dayTimestamp = (day: string) => Date.parse(`${day}T00:00:00+06:00`)
+    const currentRows = allTime
+      ? dailySummary.rows
+      : dailySummary.rows.filter((row) => {
+          const time = dayTimestamp(row.report_day)
+          return time >= range.from.getTime() && time < range.to.getTime()
+        })
+    const selectedMonth = allTime ? selectedSummaryMonth : ""
+    const displayRows = selectedMonth
+      ? currentRows.filter((row) => row.report_day.startsWith(selectedMonth))
+      : currentRows
+    const monthlyOverview = rangeDays > 900 && !selectedMonth
+    const monthOptions = allTime
+      ? Array.from(new Set(currentRows.map((row) => row.report_day.slice(0, 7))))
+          .sort((a, b) => b.localeCompare(a))
+      : []
+    const previousRows = canCompareSummary
+      ? dailySummary.rows.filter((row) => {
+          const time = dayTimestamp(row.report_day)
+          return time >= prev.from.getTime() && time < prev.to.getTime()
+        })
+      : []
+    const toKpi = (rows: typeof dailySummary.rows): KpiSummary => {
+      const totals = rows.reduce(
+        (sum, row) => ({
+          revenue: sum.revenue + Number(row.revenue || 0),
+          cost: sum.cost + Number(row.cost || 0),
+          profit: sum.profit + Number(row.profit || 0),
+          count: sum.count + Number(row.receipt_count || 0),
+        }),
+        { revenue: 0, cost: 0, profit: 0, count: 0 },
+      )
+      return {
+        ...totals,
+        margin: totals.revenue > 0 ? (totals.profit / totals.revenue) * 100 : 0,
+        avgCheck: totals.count > 0 ? totals.revenue / totals.count : 0,
+      }
+    }
+    // Keep all-time reports light on mobile: exact KPI totals still use every
+    // daily row, while the chart combines long ranges into monthly points.
+    const chartRows = monthlyOverview
+      ? Array.from(
+          displayRows.reduce((months, row) => {
+            const month = row.report_day.slice(0, 7)
+            const total = months.get(month) ?? {
+              report_day: `${month}-01`,
+              revenue: 0,
+              cost: 0,
+              profit: 0,
+            }
+            total.revenue += Number(row.revenue || 0)
+            total.cost += Number(row.cost || 0)
+            total.profit += Number(row.profit || 0)
+            months.set(month, total)
+            return months
+          }, new Map<string, { report_day: string; revenue: number; cost: number; profit: number }>()),
+        ).map(([, row]) => row)
+      : displayRows
+    const summarySeries: SeriesPoint[] = chartRows.map((row) => {
+      const date = new Date(dayTimestamp(row.report_day))
+      const revenue = Number(row.revenue || 0)
+      const cost = Number(row.cost || 0)
+      const profit = Number(row.profit || 0)
+      return {
+        key: row.report_day,
+        label: date.toLocaleDateString("ru-RU", {
+          timeZone: "Asia/Bishkek",
+          ...(monthlyOverview
+            ? { month: "short" as const, year: "numeric" as const }
+            : { day: "2-digit" as const, month: "short" as const }),
+        }),
+        revenue,
+        cost,
+        profit,
+        margin: revenue > 0 ? (profit / revenue) * 100 : 0,
+      }
+    })
+    const returnsCount = displayRows.reduce((sum, row) => sum + Number(row.return_count || 0), 0)
+    const returnsTotal = displayRows.reduce((sum, row) => sum + Number(row.refund_amount || 0), 0)
+
+    return (
+      <div className="space-y-6 pb-8">
+        <PeriodSelector
+          period={period}
+          setPeriod={setPeriod}
+          customFrom={customFrom}
+          customTo={customTo}
+          setCustomFrom={setCustomFrom}
+          setCustomTo={setCustomTo}
+          range={range}
+        />
+        {allTime && (
+          <label className="flex flex-col gap-1.5 text-sm sm:max-w-xs">
+            <span className="text-muted-foreground">Детализация за всё время</span>
+            <select
+              value={selectedMonth}
+              onChange={(event) => setSelectedSummaryMonth(event.target.value)}
+              className="h-10 rounded-md border border-input bg-background px-3 text-foreground"
+            >
+              <option value="">Обзор по месяцам</option>
+              {monthOptions.map((month) => (
+                <option key={month} value={month}>
+                  {new Date(`${month}-01T12:00:00+06:00`).toLocaleDateString("ru-RU", {
+                    timeZone: "Asia/Bishkek",
+                    month: "long",
+                    year: "numeric",
+                  })}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        {!reportDevice.ready && (
+          <p className="rounded-xl border border-border px-4 py-3 text-sm text-muted-foreground">
+            Подбираем детализацию отчёта для этого устройства…
+          </p>
+        )}
+        {dailySummary.loading && (
+          <p className="rounded-xl border border-border px-4 py-3 text-sm text-muted-foreground">
+            Формируем дневную сводку на сервере…
+          </p>
+        )}
+        {dailySummary.error && (
+          <p role="alert" className="rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+            Не удалось загрузить дневную сводку: {dailySummary.error}
+          </p>
+        )}
+        {dailySummary.fromServer && (
+          <>
+            <KpiSection
+              kpi={toKpi(displayRows)}
+              prevKpi={canCompareSummary ? toKpi(previousRows) : toKpi([])}
+              stockCount={stockCount}
+            />
+            {returnsCount > 0 && (
+              <div className="rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+                Возвратов за период: {returnsCount} на {formatSom(returnsTotal)}; сумма уже вычтена из выручки и прибыли.
+              </div>
+            )}
+            <p className="rounded-xl border border-border bg-muted/20 px-4 py-3 text-sm text-muted-foreground">
+              {selectedMonth
+                ? "Показаны дневные итоги за выбранный месяц; чеки не загружаются на устройство."
+                : "Показаны полные итоги по дням за выбранный период. Чеки не загружаются на устройство."}
+              {" "}Подробные графики по категориям и времени доступны до {reportDevice.detailedDays} дней на этом устройстве.
+              {monthlyOverview ? " Длинный график сгруппирован по месяцам; выберите месяц выше для дневной разбивки." : ""}
+              {canCompareSummary ? "" : " Сравнение с предыдущим периодом отключено для диапазонов больше 2,5 лет."}
+            </p>
+            <ChartsSection series={summarySeries} revenueByCategory={[]} />
+          </>
+        )}
       </div>
     )
   }

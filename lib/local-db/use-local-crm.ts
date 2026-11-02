@@ -58,6 +58,16 @@ async function seedMissingLocalRows<T extends { id?: string; shop_id?: string }>
   if (missing.length) await bulkPut(table, missing)
 }
 
+/**
+ * Локальный каталог без проданных товаров: им не место в памяти кассы и склада
+ * (на слабых устройствах это тысячи лишних строк). История продаж и отчёты
+ * получают данные о проданном с сервера.
+ */
+async function readCatalogProducts(shopId: string): Promise<Product[]> {
+  const rows = await getShopRecords<Product>('products', shopId)
+  return rows.filter((product) => product.status !== 'sold')
+}
+
 export function useLocalCrm(initialData: {
   profile: Profile
   enabled?: boolean
@@ -139,7 +149,7 @@ export function useLocalCrm(initialData: {
         // Read all active records from local DB
         const [localProducts, localSales, localReturns, localCashOps, localPresets, localClients, localRates] =
           await Promise.all([
-            getShopRecords<Product>('products', shopId),
+            readCatalogProducts(shopId),
             getShopRecords<Sale>('sales', shopId),
             getShopRecords<SaleReturn>('sale_returns', shopId),
             getShopRecords<CashOperation>('cash_operations', shopId),
@@ -173,13 +183,13 @@ export function useLocalCrm(initialData: {
 
     // Listen to phase 1 ready event
     const onPhase1Ready = async () => {
-      const refreshedProducts = await getShopRecords<Product>('products', shopId)
+      const refreshedProducts = await readCatalogProducts(shopId)
       if (mounted) setProducts(refreshedProducts)
     }
 
     const refreshAfterSaleSync = async () => {
       const [refreshedProducts, refreshedSales, refreshedClients] = await Promise.all([
-        getShopRecords<Product>('products', shopId),
+        readCatalogProducts(shopId),
         getShopRecords<Sale>('sales', shopId),
         getShopRecords<Customer>('customers', shopId),
       ])
@@ -199,7 +209,7 @@ export function useLocalCrm(initialData: {
         refreshedClients,
         refreshedRates,
       ] = await Promise.all([
-        getShopRecords<Product>('products', shopId),
+        readCatalogProducts(shopId),
         getShopRecords<Sale>('sales', shopId),
         getShopRecords<SaleReturn>('sale_returns', shopId),
         getShopRecords<CashOperation>('cash_operations', shopId),
@@ -574,7 +584,7 @@ export function useLocalCrm(initialData: {
         if (result.restored_products?.length) await bulkPut('products', result.restored_products as any)
         if (result.removed_cash_operations?.length) await bulkPut('cash_operations', result.removed_cash_operations as any)
         const [p, s, c] = await Promise.all([
-          getShopRecords<Product>('products', shopId),
+          readCatalogProducts(shopId),
           getShopRecords<Sale>('sales', shopId),
           getShopRecords<CashOperation>('cash_operations', shopId),
         ])

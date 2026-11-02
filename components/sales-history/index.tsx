@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { Product, Sale, SaleReturn } from "@/lib/types"
 import { formatSom } from "@/lib/format"
 import { PERIOD_PRESETS, inPeriod, periodRange, type PeriodId } from "@/lib/period"
@@ -20,8 +20,16 @@ import { ReturnDialog } from "@/components/sales-return/return-dialog"
 import { ReturnSearchModal } from "@/components/sales-return/return-search-modal"
 import { SaleUnitCard, type HistoryRow } from "./sale-unit-card"
 import { useDebouncedValue } from "@/hooks/use-debounced-value"
+import { getSalesPage, type SalesPageCursor } from "@/app/actions/sales"
 
 const PAGE = 15
+/** Сколько чеков запрашивать с сервера за одну страницу. */
+const SERVER_PAGE = 30
+
+/** Ключи дедупликации: локальный и серверный чек одной операции совпадают по client_op_id. */
+function saleKeys(sale: Sale): string[] {
+  return sale.client_op_id ? [sale.id, `op:${sale.client_op_id}`] : [sale.id]
+}
 
 function unitToRow(unit: SaleUnit): HistoryRow {
   const price = Number(unit.item.price) || 0
@@ -71,7 +79,7 @@ export type SalesHistoryProps = {
  * а товар возвращается на склад (атомарно, одной операцией в БД).
  */
 export function SalesHistory({
-  sales,
+  sales: localSales,
   returns = [],
   products = [],
   canSeeProfit,
@@ -91,6 +99,124 @@ export function SalesHistory({
   const [dialogUnit, setDialogUnit] = useState<SaleUnit | null>(null)
   const [justReturned, setJustReturned] = useState<SaleReturn[]>([])
   const sentinel = useRef<HTMLDivElement | null>(null)
+
+  // ── Серверная история с пагинацией ────────────────────────────────────────
+  // На устройстве хранятся только последние 100 чеков. При наличии сети
+  // история читается с сервера страницами по SERVER_PAGE чеков; локальные
+  // (ещё не отправленные) чеки показываются поверх. Без сети — локальная история.
+  const [online, setOnline] = useState(true)
+  const [serverSales, setServerSales] = useState<Sale[] | null>(null)
+  const [nextCursor, setNextCursor] = useState<SalesPageCursor | null>(null)
+  const [loadingPage, setLoadingPage] = useState(false)
+  const [pageError, setPageError] = useState<string | null>(null)
+  const requestId = useRef(0)
+
+  useEffect(() => {
+    const update = () => setOnline(navigator.onLine)
+    update()
+    window.addEventListener("online", update)
+    window.addEventListener("offline", update)
+    return () => {
+      window.removeEventListener("online", update)
+      window.removeEventListener("offline", update)
+    }
+  }, [])
+
+  const serverFilter = useMemo(() => {
+    const r = periodRange(period, { from, to })
+    return {
+      from: r.from ? r.from.toISOString() : null,
+      to: r.to ? r.to.toISOString() : null,
+      sellerId: seller === "all" ? null : seller,
+    }
+  }, [period, from, to, seller])
+
+  const loadPage = useCallback(
+    async (cursor: SalesPageCursor | null) => {
+      const id = ++requestId.current
+      setLoadingPage(true)
+      setPageError(null)
+      try {
+        const page = await getSalesPage({ ...serverFilter, cursor, limit: SERVER_PAGE })
+        if (id !== requestId.current) return
+        setServerSales((prev) => {
+          if (!cursor || !prev) return page.items
+          const known = new Set(prev.map((sale) => sale.id))
+          return [...prev, ...page.items.filter((sale) => !known.has(sale.id))]
+        })
+        setNextCursor(page.nextCursor)
+      } catch (err) {
+        if (id !== requestId.current) return
+        console.warn("[sales-history] server page failed, using local history:", err)
+        setPageError("Не удалось загрузить историю с сервера — показаны последние чеки на устройстве")
+        if (!cursor) setServerSales(null)
+      } finally {
+        if (id === requestId.current) setLoadingPage(false)
+      }
+    },
+    [serverFilter],
+  )
+
+  // Первая страница при смене фильтров и при появлении сети.
+  useEffect(() => {
+    if (!online) {
+      requestId.current++
+      setServerSales(null)
+      setNextCursor(null)
+      setLoadingPage(false)
+      return
+    }
+    void loadPage(null)
+  }, [online, loadPage])
+
+  // Новые чеки с других устройств: обновляем «голову» списка, не сбрасывая прокрутку.
+  useEffect(() => {
+    if (!online) return
+    let timer: number | undefined
+    const refreshHead = () => {
+      window.clearTimeout(timer)
+      timer = window.setTimeout(async () => {
+        try {
+          const page = await getSalesPage({ ...serverFilter, cursor: null, limit: SERVER_PAGE })
+          setServerSales((prev) => {
+            if (!prev) return page.items
+            const fresh = new Map(page.items.map((sale) => [sale.id, sale]))
+            const merged = prev.map((sale) => fresh.get(sale.id) ?? sale)
+            const known = new Set(prev.map((sale) => sale.id))
+            return [...page.items.filter((sale) => !known.has(sale.id)), ...merged]
+          })
+        } catch {}
+      }, 800)
+    }
+    window.addEventListener("aura:data_changed", refreshHead)
+    window.addEventListener("aura:sale_sync_state_changed", refreshHead)
+    return () => {
+      window.clearTimeout(timer)
+      window.removeEventListener("aura:data_changed", refreshHead)
+      window.removeEventListener("aura:sale_sync_state_changed", refreshHead)
+    }
+  }, [online, serverFilter])
+
+  const hasMoreServer = serverSales !== null && nextCursor !== null
+
+  const sales = useMemo(() => {
+    if (!serverSales) return localSales
+    // Локальные чеки, которых ещё нет на сервере (офлайн/ожидают отправки),
+    // и свежие чеки новее загруженных страниц.
+    const seen = new Set<string>()
+    for (const sale of serverSales) for (const key of saleKeys(sale)) seen.add(key)
+    const oldestLoaded = hasMoreServer && serverSales.length
+      ? new Date(serverSales[serverSales.length - 1].created_at).getTime()
+      : Number.NEGATIVE_INFINITY
+    const extra = localSales.filter(
+      (sale) =>
+        !saleKeys(sale).some((key) => seen.has(key)) &&
+        (sale.sync_status === "pending" ||
+          sale.sync_status === "rejected" ||
+          new Date(sale.created_at).getTime() >= oldestLoaded),
+    )
+    return extra.length ? [...extra, ...serverSales] : serverSales
+  }, [serverSales, localSales, hasMoreServer])
 
   // Возвраты из БД + только что оформленные (до обновления серверных данных).
   const allReturns = useMemo(() => [...justReturned, ...returns], [justReturned, returns])
@@ -135,13 +261,19 @@ export function SalesHistory({
     if (!el) return
     const io = new IntersectionObserver(
       (entries) => {
-        if (entries[0]?.isIntersecting) setVisible((v) => Math.min(v + PAGE, rows.length))
+        if (!entries[0]?.isIntersecting) return
+        if (visible < rows.length) {
+          setVisible((v) => Math.min(v + PAGE, rows.length))
+        } else if (hasMoreServer && !loadingPage && !pageError) {
+          // Локально показано всё загруженное — подгружаем следующую страницу с сервера.
+          void loadPage(nextCursor)
+        }
       },
       { rootMargin: "200px" },
     )
     io.observe(el)
     return () => io.disconnect()
-  }, [rows.length])
+  }, [rows.length, visible, hasMoreServer, loadingPage, pageError, loadPage, nextCursor])
 
   const confirmedRows = useMemo(
     () => rows.filter((row) => row.syncStatus !== "pending" && row.syncStatus !== "rejected"),
@@ -265,7 +397,17 @@ export function SalesHistory({
         </div>
       )}
 
-      {rows.length === 0 ? (
+      {pageError && (
+        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700">
+          {pageError}
+        </div>
+      )}
+
+      {rows.length === 0 && loadingPage ? (
+        <div className="rounded-xl border border-dashed border-border py-12 text-center text-sm text-muted-foreground" role="status">
+          Загружаем историю продаж…
+        </div>
+      ) : rows.length === 0 && !hasMoreServer ? (
         <div className="rounded-xl border border-dashed border-border py-12 text-center text-sm text-muted-foreground">
           Продаж не найдено
         </div>
@@ -282,7 +424,21 @@ export function SalesHistory({
             />
           ))}
 
-          {visible < rows.length && <div ref={sentinel} className="h-8" />}
+          {(visible < rows.length || (hasMoreServer && !pageError)) && <div ref={sentinel} className="h-8" />}
+
+          {hasMoreServer && (
+            <div className="flex justify-center pt-1">
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-8 text-xs"
+                disabled={loadingPage}
+                onClick={() => void loadPage(nextCursor)}
+              >
+                {loadingPage ? "Загрузка…" : "Загрузить ещё"}
+              </Button>
+            </div>
+          )}
         </div>
       )}
 

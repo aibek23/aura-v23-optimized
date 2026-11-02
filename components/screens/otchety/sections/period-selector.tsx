@@ -4,7 +4,7 @@
 
 import { Input } from "@/components/ui/input"
 import { Chip } from "../ui/chip"
-import { PERIODS, rangeLabel } from "../utils"
+import { PERIODS, rangeLabel, toInputDate } from "../utils"
 import type { DateRange, PeriodId } from "../types"
 
 interface PeriodSelectorProps {
@@ -30,6 +30,9 @@ export function PeriodSelector({
   setCustomTo,
   range,
 }: PeriodSelectorProps) {
+  const today = new Date()
+  const maxDate = toInputDate(today)
+
   return (
     <header className="space-y-3">
       <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
@@ -60,6 +63,7 @@ export function PeriodSelector({
           <Input
             type="date"
             value={customFrom}
+            max={customTo && customTo <= maxDate ? customTo : maxDate}
             onChange={(e) => setCustomFrom(e.target.value)}
             className="sm:w-44"
           />
@@ -67,6 +71,8 @@ export function PeriodSelector({
           <Input
             type="date"
             value={customTo}
+            min={customFrom || undefined}
+            max={maxDate}
             onChange={(e) => setCustomTo(e.target.value)}
             className="sm:w-44"
           />

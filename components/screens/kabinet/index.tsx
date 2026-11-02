@@ -16,6 +16,7 @@ import {
   type CabinetData,
 } from "@/app/actions/cabinet"
 import { getProductUnitUsageCount } from "@/app/actions/product-units"
+import { useServerSalesRange } from "@/hooks/use-server-sales"
 import { RECEIPT_TYPE_SETTINGS, type ReceiptTypeSetting } from "@/lib/receipt-type"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -100,7 +101,7 @@ function rangeBounds(id: RangeId, from: string, to: string): [number, number] {
 }
 
 function SellerStats({
-  sales,
+  sales: localSales,
   returns,
   profile,
 }: {
@@ -111,6 +112,25 @@ function SellerStats({
   const [range, setRange] = useState<RangeId>("today")
   const [from, setFrom] = useState("")
   const [to, setTo] = useState("")
+
+  // Локально только последние 100 чеков — продажи за период берём с сервера.
+  const bounds = useMemo(() => rangeBounds(range, from, to), [range, from, to])
+  const returnSaleIds = useMemo(
+    () =>
+      returns
+        .filter((r) => {
+          const t = new Date(r.created_at).getTime()
+          return t >= bounds[0] && t < bounds[1]
+        })
+        .map((r) => r.sale_id),
+    [returns, bounds],
+  )
+  const { sales } = useServerSalesRange({
+    from: bounds[0],
+    to: Number.isFinite(bounds[1]) ? bounds[1] : null,
+    localSales,
+    includeSaleIds: returnSaleIds,
+  })
 
   const mine = useMemo(() => sales.filter((s) => s.seller_id === profile.id), [sales, profile.id])
   const mySaleIds = useMemo(() => new Set(mine.map((s) => s.id)), [mine])
@@ -197,7 +217,7 @@ function SellerStats({
 /* --------------------------------------------- аналитика по продавцам (админ) */
 
 function TeamSales({
-  sales,
+  sales: localSales,
   returns,
   profile,
   team,
@@ -216,6 +236,25 @@ function TeamSales({
   const [range, setRange] = useState<RangeId>("30d")
   const [from, setFrom] = useState("")
   const [to, setTo] = useState("")
+
+  // Локально только последние 100 чеков — продажи за период берём с сервера.
+  const bounds = useMemo(() => rangeBounds(range, from, to), [range, from, to])
+  const returnSaleIds = useMemo(
+    () =>
+      returns
+        .filter((r) => {
+          const t = new Date(r.created_at).getTime()
+          return t >= bounds[0] && t < bounds[1]
+        })
+        .map((r) => r.sale_id),
+    [returns, bounds],
+  )
+  const { sales } = useServerSalesRange({
+    from: bounds[0],
+    to: Number.isFinite(bounds[1]) ? bounds[1] : null,
+    localSales,
+    includeSaleIds: returnSaleIds,
+  })
 
   // Администратор обязательно присутствует в списке продавцов.
   const people = useMemo(() => {

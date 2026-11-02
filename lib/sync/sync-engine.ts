@@ -1,6 +1,6 @@
 import { createClient as createSupabaseClient } from '@/lib/supabase/client'
 import { toast } from 'sonner'
-import { bulkPut, bulkDelete, getMeta, setMeta, getLocalDB, ensureShopScope, localDatabaseWasRebuilt } from '../local-db/db'
+import { bulkPut, bulkDelete, getMeta, setMeta, getLocalDB, ensureShopScope, localDatabaseWasRebuilt, trimLocalSales, purgeSoldProducts, LOCAL_SALES_LIMIT } from '../local-db/db'
 import {
   getDueOutboxItems,
   getOutboxPendingCount,
@@ -173,6 +173,18 @@ class SyncEngine {
     }
 
     updateSyncState({ scopeShopId: shopId })
+
+    // Одноразово освобождаем место от данных старых версий: проданные товары
+    // и история продаж сверх последних LOCAL_SALES_LIMIT чеков.
+    if (!(await getMeta<boolean>(`slim_local_v1:${shopId}`, false))) {
+      try {
+        await purgeSoldProducts(shopId)
+        await trimLocalSales(shopId, LOCAL_SALES_LIMIT)
+        await setMeta(`slim_local_v1:${shopId}`, true)
+      } catch (err) {
+        console.warn('[Sync] Local cleanup failed, will retry next start:', err)
+      }
+    }
 
     this.startPeriodicSync()
     this.startStalenessWatch()
@@ -431,8 +443,12 @@ class SyncEngine {
       if (!data || data.length === 0) break
 
       // Split the page: live rows are written, soft-deleted rows are purged locally.
-      const live = data.filter((row: any) => !row.deleted_at)
-      const removed = data.filter((row: any) => row.deleted_at).map((row: any) => row.id)
+      // Проданные товары не храним в локальном каталоге — для устройства они
+      // равносильны удалённым (история продаж читается с сервера).
+      const isGone = (row: any) =>
+        Boolean(row.deleted_at) || (spec.table === 'products' && row.status === 'sold')
+      const live = data.filter((row: any) => !isGone(row))
+      const removed = data.filter((row: any) => isGone(row)).map((row: any) => row.id)
 
       if (live.length > 0) await bulkPut(spec.table, live)
       if (removed.length > 0) {
@@ -525,6 +541,40 @@ class SyncEngine {
     return { fetched, deleted }
   }
 
+  /**
+   * Загружает только последние LOCAL_SALES_LIMIT чеков (новые сверху) и ставит
+   * курсор дельты на самый свежий updated_at — дальше подтягиваются только
+   * изменения. Старые чеки остаются на сервере и читаются постранично.
+   */
+  private async pullRecentSales(): Promise<number> {
+    const shopId = this.activeShopId
+    if (!shopId) return 0
+    const supabase = createSupabaseClient()
+    const rows = await withTimeout(async (signal) => {
+      const res = await supabase
+        .from('sales')
+        .select('*')
+        .eq('shop_id', shopId)
+        .is('deleted_at', null)
+        .order('created_at', { ascending: false })
+        .limit(LOCAL_SALES_LIMIT)
+        .abortSignal(signal)
+      return unwrap(res as any, 'sales') as any[] | null
+    }, 'sales')
+
+    const list = rows ?? []
+    if (list.length > 0) await bulkPut('sales', list)
+    await trimLocalSales(shopId, LOCAL_SALES_LIMIT)
+
+    let latest: string | null = null
+    for (const row of list) {
+      const stamp = row.updated_at || row.created_at
+      if (stamp && (!latest || Date.parse(stamp) > Date.parse(latest))) latest = stamp
+    }
+    if (latest) await this.setCursor('sales', latest)
+    return list.length
+  }
+
   // Stage 1: minimum needed to start working (shop, rates, in-stock products)
   // Stage 2: customers, presets, cash operations
   // Stage 3: sales and returns history
@@ -559,7 +609,8 @@ class SyncEngine {
       // 1.2 Products, fully paginated
       updateSyncState({ percent: 25, currentTask: 'Загрузка товаров в наличии...' })
       await this.pullTable(
-        { table: 'products' },
+        // Первичная загрузка: проданные товары даже не скачиваем.
+        { table: 'products', initialFilter: (query) => query.neq('status', 'sold') },
         {
           incremental: false,
           onProgress: (count) =>
@@ -609,7 +660,8 @@ class SyncEngine {
         currentTask: 'Фоновая загрузка истории чеков...',
       })
 
-      await this.pullTable({ table: 'sales' }, { incremental: false })
+      // Только последние LOCAL_SALES_LIMIT чеков; полная история — на сервере.
+      await this.pullRecentSales()
       await this.pullTable({ table: 'sale_returns' }, { incremental: false })
       await this.pullTable({ table: 'supplier_debt_operations' }, { incremental: false })
 
@@ -675,6 +727,9 @@ class SyncEngine {
         if (this.activeShopId !== shopId || this.stopped) return
         const r = await this.pullTable({ table }, { incremental: true })
         changed += r.fetched + r.deleted
+        if (table === 'sales' && r.fetched > 0) {
+          changed += await trimLocalSales(shopId, LOCAL_SALES_LIMIT)
+        }
         if (table === 'products') {
           const tombstones = await this.pullProductDeletionTombstones()
           changed += tombstones.deleted

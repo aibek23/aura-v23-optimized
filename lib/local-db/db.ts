@@ -392,6 +392,79 @@ async function readShopRecordsFromIdb<T>(tableName: TableName, shopId: string): 
   return (all as any[]).filter((r) => r.shop_id === shopId && !r.deleted_at) as T[]
 }
 
+/** Сколько последних чеков хранится на устройстве. Остальное — на сервере. */
+export const LOCAL_SALES_LIMIT = 100
+
+/**
+ * Оставляет в IndexedDB только последние `keep` чеков магазина.
+ * Неотправленные (pending) и отклонённые (rejected) чеки никогда не удаляются —
+ * иначе офлайн-продажа потеряется до отправки на сервер.
+ */
+export async function trimLocalSales(shopId: string, keep = LOCAL_SALES_LIMIT): Promise<number> {
+  if (!shopId) return 0
+  const db = await getLocalDB()
+  const tx = db.transaction('sales', 'readwrite')
+  const store = tx.objectStore('sales')
+  try {
+    const rows = (await store.index('shop_id').getAll(shopId)) as any[]
+    if (rows.length <= keep) {
+      await tx.done
+      return 0
+    }
+    const time = (row: any) => Date.parse(row?.created_at || '') || 0
+    rows.sort((a, b) => time(b) - time(a))
+    let kept = 0
+    let removed = 0
+    for (const row of rows) {
+      const unsent = row.sync_status === 'pending' || row.sync_status === 'rejected'
+      if (unsent) continue
+      if (!row.deleted_at && kept < keep) {
+        kept++
+        continue
+      }
+      await store.delete(row.id)
+      removed++
+    }
+    await tx.done
+    return removed
+  } catch (err) {
+    try {
+      tx.abort()
+    } catch {}
+    throw err
+  }
+}
+
+/**
+ * Одноразовая очистка: удаляет проданные товары, накопленные старыми версиями
+ * приложения. Новые версии проданные товары на устройство не загружают.
+ */
+export async function purgeSoldProducts(shopId: string): Promise<number> {
+  if (!shopId) return 0
+  const db = await getLocalDB()
+  const tx = db.transaction('products', 'readwrite')
+  const store = tx.objectStore('products')
+  let removed = 0
+  try {
+    let cursor = await store.index('shop_id').openCursor(shopId)
+    while (cursor) {
+      const row = cursor.value as any
+      if (row?.status === 'sold') {
+        await cursor.delete()
+        removed++
+      }
+      cursor = await cursor.continue()
+    }
+    await tx.done
+    return removed
+  } catch (err) {
+    try {
+      tx.abort()
+    } catch {}
+    throw err
+  }
+}
+
 // Fast search over local index
 export async function searchLocalProducts(shopId: string, query: string, limit = 100): Promise<any[]> {
   const db = await getLocalDB()
