@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react"
 import dynamic from "next/dynamic"
 import type { CashOperation, CashOpType, CashReasonPreset, Sale } from "@/lib/types"
+import type { CashBalances } from "@/lib/cash"
 import { formatSom } from "@/lib/format"
 import { PERIOD_PRESETS, periodRange, inPeriod, type PeriodId } from "@/lib/period"
 import { computeBalances } from "@/lib/cash"
@@ -22,12 +23,14 @@ export function CashPanel({
   sales,
   operations,
   presets,
+  ledgerBalance,
   isAdmin,
   balanceOnly = false,
 }: {
   sales: Sale[]
   operations: CashOperation[]
   presets: CashReasonPreset[]
+  ledgerBalance?: CashBalances | null
   isAdmin: boolean
   balanceOnly?: boolean
 }) {
@@ -63,8 +66,8 @@ export function CashPanel({
 
   // Балансы за всё время — именно из них ведутся списания.
   const balances = useMemo(
-    () => computeBalances(confirmedSales, confirmedOperations),
-    [confirmedSales, confirmedOperations],
+    () => ledgerBalance ?? computeBalances(confirmedSales, confirmedOperations),
+    [ledgerBalance, confirmedSales, confirmedOperations],
   )
 
   const authors = useMemo(() => {

@@ -98,6 +98,7 @@ export function KassaScreen({
   viewRole,
   sales,
   cash,
+  ledgerBalance,
   rates = [],
   clients = [],
   returns = [],
@@ -111,6 +112,7 @@ export function KassaScreen({
   viewRole: Role
   sales: Sale[]
   cash: CashData
+  ledgerBalance?: CashData["ledgerBalance"]
   rates?: MetalRate[]
   clients?: Customer[]
   returns?: SaleReturn[]
@@ -514,6 +516,7 @@ export function KassaScreen({
             sales={sales}
             operations={cash.operations}
             presets={cash.presets}
+            ledgerBalance={ledgerBalance}
             isAdmin={isAdmin}
             balanceOnly
           />

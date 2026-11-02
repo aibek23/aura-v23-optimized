@@ -59,9 +59,8 @@ export async function CrmScreen({ screen }: { screen: ScreenId }) {
     )
   }
 
-  // Параллельная загрузка всех данных сохраняется: Dashboard переключает
-  // разделы без полного перехода страницы, поэтому каждый экран должен
-  // оставаться доступным сразу после открытия CRM.
+  // История долга поставщиков не ограничена по размеру. Загружаем её только
+  // при первом открытии соответствующего раздела, а не при старте кассы.
   // Оборачиваем в try/catch: если сессия устарела или профиль изменился между запросами — редиректим.
   let products, sales, returns, cabinet, cash, rates, clients, supplierDebts, superAdminShops, impersonatedShop, publicStorefrontState
   try {
@@ -74,7 +73,9 @@ export async function CrmScreen({ screen }: { screen: ScreenId }) {
         getCashData(),
         getMetalRates(),
         getClients(),
-        getSupplierDebtData(),
+        screen === "suppliers"
+          ? getSupplierDebtData()
+          : Promise.resolve({ operations: [], suppliers: [] }),
         isSuperAdmin ? getSuperAdminShops() : Promise.resolve([] as ShopBillingRow[]),
         isSuperAdmin ? getImpersonatedShop() : Promise.resolve(null),
         typed.role === "admin" ? getOwnShopPublicState() : Promise.resolve({ enabled: true, canToggle: false }),

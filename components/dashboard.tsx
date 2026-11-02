@@ -12,7 +12,7 @@ import type { CabinetData } from "@/app/actions/cabinet"
 import type { MetalRate } from "@/lib/types"
 import type { CashData } from "@/app/actions/cash"
 import type { ShopBillingRow } from "@/app/actions/superadmin"
-import type { SupplierDebtData } from "@/app/actions/suppliers"
+import { getSupplierDebtData, type SupplierDebtData } from "@/app/actions/suppliers"
 import { impersonateShop } from "@/app/actions/superadmin"
 import { useRouter } from "next/navigation"
 import { createClient as createSupabaseBrowserClient } from "@/lib/supabase/client"
@@ -139,6 +139,10 @@ export function Dashboard({
   const router = useRouter()
   const [activeScreen, setActiveScreen] = useState<ScreenId>(screen)
   const [viewRole, setViewRole] = useState<Role>(profile.role ?? "seller")
+  const [supplierDebtData, setSupplierDebtData] = useState(supplierDebts)
+  const [supplierDebtLoaded, setSupplierDebtLoaded] = useState(screen === "suppliers")
+  const [supplierDebtLoading, setSupplierDebtLoading] = useState(false)
+  const [supplierDebtLoadError, setSupplierDebtLoadError] = useState<string | null>(null)
   const [showExitModal, setShowExitModal] = useState(false)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
@@ -180,6 +184,40 @@ export function Dashboard({
   useEffect(() => {
     setActiveScreen(screen)
   }, [screen])
+
+  // This ledger can contain the store's full history. Keep it off the first
+  // POS/cash-screen response and request it only when an admin opens Suppliers.
+  useEffect(() => {
+    if (
+      activeScreen !== "suppliers" ||
+      !isAdmin ||
+      supplierDebtLoaded ||
+      supplierDebtLoading ||
+      supplierDebtLoadError
+    ) return
+    let cancelled = false
+    setSupplierDebtLoading(true)
+    getSupplierDebtData()
+      .then((data) => {
+        if (!cancelled) {
+          setSupplierDebtData(data)
+          setSupplierDebtLoaded(true)
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setSupplierDebtLoadError(
+            error instanceof Error ? error.message : "Не удалось загрузить долги поставщиков",
+          )
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setSupplierDebtLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [activeScreen, isAdmin, supplierDebtLoaded, supplierDebtLoading, supplierDebtLoadError])
 
   // Local-first data is disabled while the super admin views another store.
   const localCrm = useLocalCrm({
@@ -392,6 +430,7 @@ export function Dashboard({
             sales={currentSales}
             returns={currentReturns}
             cash={currentCash}
+            ledgerBalance={isOnline ? cash.ledgerBalance : null}
             rates={currentRates}
             clients={currentClients}
             onlineOnly={isImpersonating}
@@ -405,6 +444,7 @@ export function Dashboard({
             sales={currentSales}
             operations={currentCash.operations}
             presets={currentCash.presets}
+            ledgerBalance={isOnline ? cash.ledgerBalance : null}
             isAdmin={isAdmin}
           />
         )}
@@ -435,12 +475,27 @@ export function Dashboard({
           <ClientsScreen clients={currentClients} allowOffline={!isImpersonating} />
         )}
         {activeScreen === "suppliers" && isAdmin && (
-          <SuppliersScreen
-            supplierDebts={supplierDebts}
-            products={currentProducts}
-            sales={confirmedSales}
-            isAdmin={isAdmin}
-          />
+          supplierDebtLoading && !supplierDebtLoaded ? (
+            <SectionLoading />
+          ) : supplierDebtLoadError ? (
+            <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm" role="alert">
+              <p>{supplierDebtLoadError}</p>
+              <button
+                type="button"
+                onClick={() => setSupplierDebtLoadError(null)}
+                className="mt-3 rounded-lg border border-border px-3 py-1.5 font-medium"
+              >
+                Повторить
+              </button>
+            </div>
+          ) : (
+            <SuppliersScreen
+              supplierDebts={supplierDebtData}
+              products={currentProducts}
+              sales={confirmedSales}
+              isAdmin={isAdmin}
+            />
+          )
         )}
         {activeScreen === "kabinet" && (
           <KabinetScreen
