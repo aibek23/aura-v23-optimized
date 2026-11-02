@@ -396,6 +396,7 @@ export function Dashboard({
             clients={currentClients}
             onlineOnly={isImpersonating}
             shopId={activeShopId}
+            defaultReceiptType={cabinet.defaultReceiptType}
             onLocalCheckout={isImpersonating ? undefined : localCrm.localCheckout}
           />
         )}

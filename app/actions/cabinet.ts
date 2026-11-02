@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase/server"
 import { revalidatePath } from "next/cache"
 import type { Profile } from "@/lib/types"
+import { normalizeReceiptTypeSetting, type ReceiptTypeSetting } from "@/lib/receipt-type"
 import {
   requireAdminContext,
   requireApprovedContext,
@@ -28,14 +29,36 @@ export type CabinetData = {
   team: Profile[]
   requests: Profile[]
   defaultBonusRate: number
+  /** Тип чека по умолчанию в кассе (миграция 007). */
+  defaultReceiptType: ReceiptTypeSetting
+}
+
+/**
+ * Настройка типа чека читается отдельным запросом: если миграция 007 ещё
+ * не применена, касса просто спрашивает тип чека, а остальной кабинет работает.
+ */
+async function readDefaultReceiptType(
+  supabase: Awaited<ReturnType<typeof requireApprovedContext>>["supabase"],
+  shopId: string | null,
+): Promise<ReceiptTypeSetting> {
+  if (!shopId) return "ask"
+  const { data, error } = await supabase
+    .from("shop_settings")
+    .select("default_receipt_type")
+    .eq("shop_id", shopId)
+    .maybeSingle()
+  if (error) return "ask"
+  return normalizeReceiptTypeSetting((data as { default_receipt_type?: unknown } | null)?.default_receipt_type)
 }
 
 /** Данные кабинета с учётом роли: супер-админ видит всех, админ — своих продавцов. */
 export async function getCabinetData(): Promise<CabinetData> {
   const { supabase, profile, shopId } = await requireProfile()
 
+  const defaultReceiptType = await readDefaultReceiptType(supabase, shopId)
+
   if (profile.role === "seller") {
-    return { team: [], requests: [], defaultBonusRate: profile.bonus_rate ?? 2 }
+    return { team: [], requests: [], defaultBonusRate: profile.bonus_rate ?? 2, defaultReceiptType }
   }
 
   const isSuper = profile.role === "super_admin"
@@ -83,7 +106,32 @@ export async function getCabinetData(): Promise<CabinetData> {
     team,
     requests,
     defaultBonusRate: Number(settings?.default_bonus_rate ?? 2),
+    defaultReceiptType,
   }
+}
+
+/** Тип чека по умолчанию для кассы — администратор магазина или супер-админ. */
+export async function setDefaultReceiptType(value: ReceiptTypeSetting) {
+  const { supabase, shopId } = await requireAdmin()
+  if (!shopId) throw new Error("Сначала выберите магазин")
+  if (value !== "ask" && value !== "fiscal" && value !== "non_fiscal") {
+    throw new Error("Выберите корректный тип чека")
+  }
+  const { data, error } = await supabase
+    .from("shop_settings")
+    .update({ default_receipt_type: value, updated_at: new Date().toISOString() })
+    .eq("shop_id", shopId)
+    .select("default_receipt_type")
+    .maybeSingle()
+  if (error) {
+    if (["42703", "PGRST204"].includes(error.code ?? "")) {
+      throw new Error("Сначала примените SQL-миграцию supabase/migrations/007_fiscal_receipts.sql")
+    }
+    throw new Error(`Не удалось сохранить тип чека: ${error.message}`)
+  }
+  if (!data) throw new Error("Настройки магазина не найдены")
+  revalidatePath("/")
+  revalidatePath("/crm")
 }
 
 /**

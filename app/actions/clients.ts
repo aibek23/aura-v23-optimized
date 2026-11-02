@@ -169,7 +169,7 @@ export async function payCustomerDebt(input: {
 
   if (error) {
     if (["42883", "42P01", "42703", "PGRST202", "PGRST204", "PGRST205"].includes(error.code ?? "")) {
-      throw new Error("Сначала примените SQL-миграцию supabase/migrations/20261019_customer_credit_sales.sql")
+      throw new Error("Сначала примените SQL-миграцию supabase/migrations/001_customer_credit_sales.sql")
     }
     throw new Error(`Не удалось принять оплату долга: ${error.message}`)
   }
@@ -196,7 +196,7 @@ export async function extendCustomerCreditDueDate(input: {
   })
   if (error) {
     if (["42883", "42P01", "42703", "PGRST202", "PGRST204", "PGRST205"].includes(error.code ?? "")) {
-      throw new Error("Сначала примените SQL-миграцию supabase/migrations/20261022_customer_credit_due_dates.sql")
+      throw new Error("Сначала примените SQL-миграцию supabase/migrations/002_customer_credit_due_dates.sql")
     }
     throw new Error("Не удалось продлить срок долга: " + error.message)
   }

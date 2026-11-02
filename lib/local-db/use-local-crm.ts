@@ -16,6 +16,7 @@ import { enqueueOutbox } from './outbox'
 import { syncEngine } from '../sync/sync-engine'
 import { createLocalId } from './id'
 import { persistOfflineSale } from './sale-record'
+import { isReceiptType, type ReceiptType } from '@/lib/receipt-type'
 import { toast } from 'sonner'
 import type { TableName } from './schema'
 import { commitUndoCache, undoRecordFingerprint, type UndoLocalBaseline } from './undo-cache'
@@ -273,6 +274,7 @@ export function useLocalCrm(initialData: {
       customer_phone: string
       customer_id?: string | null
       bonus_used: number
+      receipt_type?: ReceiptType | null
     }) => {
       const selectedCustomer = input.customer_id
         ? clients.find((customer) => customer.id === input.customer_id) ?? null
@@ -376,6 +378,7 @@ export function useLocalCrm(initialData: {
         created_at: nowIso,
         client_op_id: clientOpId,
         sync_status: 'pending',
+        receipt_type: isReceiptType(input.receipt_type) ? input.receipt_type : null,
       }
 
       let newCashOp: CashOperation | null = null

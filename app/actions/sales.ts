@@ -5,6 +5,10 @@ import type { Sale, SaleItem } from "@/lib/types"
 import { DEFAULT_RATES } from "@/lib/rates"
 import { getRequestCrmContext } from "@/lib/supabase/request-context"
 import { resolveClientOperationId } from "@/lib/client-operation"
+import { isReceiptType, type ReceiptType } from "@/lib/receipt-type"
+
+/** Ошибки «функции/колонки ещё нет» — значит, SQL-миграция не применена. */
+const MISSING_SCHEMA_CODES = ["42883", "42P01", "42703", "PGRST202", "PGRST204", "PGRST205"]
 
 async function requireProfile() {
   const { supabase, user, profile, shopId } = await getRequestCrmContext()
@@ -15,19 +19,26 @@ async function requireProfile() {
   return { supabase, user, profile, shopId }
 }
 
+const SALE_COLUMNS =
+  "id, shop_id, seller_id, seller_name, customer_id, customer_name, customer_phone, payment_method, amount_cash, amount_electronic, subtotal, discount, total, cost_total, profit, bonus_earned, bonus_used, items, created_at, updated_at, deleted_at, client_op_id, cash_operation_id"
+
 export async function getSales(): Promise<Sale[]> {
   const { supabase, shopId } = await requireProfile()
   if (!shopId) return []
-  const { data, error } = await supabase
-    .from("sales")
-    .select(
-      "id, shop_id, seller_id, seller_name, customer_id, customer_name, customer_phone, payment_method, amount_cash, amount_electronic, subtotal, discount, total, cost_total, profit, bonus_earned, bonus_used, items, created_at, updated_at, deleted_at, client_op_id, cash_operation_id",
-    )
-    .eq("shop_id", shopId)
-    .order("created_at", { ascending: false })
-    .range(0, 49)
+  const readSales = (columns: string) =>
+    supabase
+      .from("sales")
+      .select(columns)
+      .eq("shop_id", shopId)
+      .order("created_at", { ascending: false })
+      .range(0, 49)
+  let { data, error } = await readSales(SALE_COLUMNS + ", receipt_type")
+  // До применения миграции 007 колонки receipt_type нет — читаем без неё.
+  if (error && MISSING_SCHEMA_CODES.includes(error.code ?? "")) {
+    ;({ data, error } = await readSales(SALE_COLUMNS))
+  }
   if (error) throw error
-  return (data as Sale[]) ?? []
+  return ((data ?? []) as unknown as Sale[])
 }
 
 export type CheckoutInput = {
@@ -40,6 +51,8 @@ export type CheckoutInput = {
   customer_phone: string
   customer_id?: string | null
   credit_due_date?: string
+  /** Фискальный / нефискальный чек. Не указан — сервер подставит настройку магазина. */
+  receipt_type?: ReceiptType | null
   bonus_used: number
   /** Generate once on the client and reuse when retrying an uncertain result. */
   client_op_id?: string
@@ -64,6 +77,10 @@ export async function checkout(input: CheckoutInput) {
   if (items.length === 0) throw new Error("Чек пуст — добавьте хотя бы одну позицию")
   if (items.length > 200) throw new Error("Слишком много позиций в одном чеке")
   if (!PAYMENTS.has(input.payment_method)) throw new Error("Выберите корректный способ оплаты")
+  const receiptType = input.receipt_type ?? null
+  if (receiptType !== null && !isReceiptType(receiptType)) {
+    throw new Error("Выберите тип чека: фискальный или нефискальный")
+  }
   if (items.some((item) => Number(item.quantity) !== 1)) {
     throw new Error("Количество каждой позиции должно быть равно 1")
   }
@@ -139,21 +156,35 @@ export async function checkout(input: CheckoutInput) {
     bonus_used: input.bonus_used,
     customer_name: (input.customer_name ?? "").trim() || null,
     customer_phone: phone || null,
+    receipt_type: receiptType,
   }
-  const rpcResponse = input.payment_method === "credit"
-    ? await supabase.rpc("commit_offline_credit_sale", {
-        _client_op_id: clientOpId,
-        _sale: salePayload,
-        _due_date: creditDueDate,
-      })
-    : await supabase.rpc("commit_offline_sale", {
-        _client_op_id: clientOpId,
-        _sale: salePayload,
-      })
+  const legacyCommit = () =>
+    input.payment_method === "credit"
+      ? supabase.rpc("commit_offline_credit_sale", {
+          _client_op_id: clientOpId,
+          _sale: salePayload,
+          _due_date: creditDueDate,
+        })
+      : supabase.rpc("commit_offline_sale", {
+          _client_op_id: clientOpId,
+          _sale: salePayload,
+        })
+  // commit_sale_with_receipt (миграция 007) вызывает те же функции продажи,
+  // но дополнительно записывает тип чека. Пока миграция не применена —
+  // продажа проходит по-старому, тип чека не сохраняется.
+  let rpcResponse = await supabase.rpc("commit_sale_with_receipt", {
+    _client_op_id: clientOpId,
+    _sale: salePayload,
+    _due_date: input.payment_method === "credit" ? creditDueDate : null,
+  })
+  if (rpcResponse.error && ["42883", "PGRST202"].includes(rpcResponse.error.code ?? "")) {
+    console.warn("[checkout] commit_sale_with_receipt не найдена — примените миграцию 007_fiscal_receipts.sql")
+    rpcResponse = await legacyCommit()
+  }
   const { data: result, error } = rpcResponse
   if (error) {
-    if (input.payment_method === "credit" && (["42883", "42P01", "42703", "PGRST202", "PGRST204", "PGRST205"].includes(error.code ?? "") || error.message.includes("Некорректный способ оплаты"))) {
-      throw new Error("Сначала примените SQL-миграции продаж в долг и сроков: supabase/migrations/20261019_customer_credit_sales.sql и supabase/migrations/20261022_customer_credit_due_dates.sql")
+    if (input.payment_method === "credit" && (MISSING_SCHEMA_CODES.includes(error.code ?? "") || error.message.includes("Некорректный способ оплаты"))) {
+      throw new Error("Сначала примените SQL-миграции продаж в долг и сроков: supabase/migrations/001_customer_credit_sales.sql и supabase/migrations/002_customer_credit_due_dates.sql")
     }
     throw new Error(`Не удалось провести продажу: ${error.message}`)
   }

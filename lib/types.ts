@@ -1,3 +1,5 @@
+import type { ReceiptType } from "@/lib/receipt-type"
+
 export type Role = "seller" | "admin" | "super_admin"
 export type ProfileStatus = "pending" | "approved" | "rejected"
 
@@ -189,6 +191,8 @@ export type Sale = {
   sync_status?: "pending" | "confirmed" | "rejected"
   sync_error?: string
   cash_operation_id?: string | null
+  /** Фискальный / нефискальный чек (миграция 007). null — не указан (старые продажи). */
+  receipt_type?: ReceiptType | null
 }
 
 /** Возврат одной позиции чека (таблица sale_returns, миграция v33). */

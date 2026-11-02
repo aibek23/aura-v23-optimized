@@ -18,10 +18,12 @@ import {
   CreditCard,
   CalendarDays,
   Tag,
-  ChevronDown
+  ChevronDown,
+  Receipt
 } from "lucide-react"
 import { PAYMENT_METHODS, type Customer, type Product } from "@/lib/types"
 import { normalizeText } from "@/lib/product-search"
+import { RECEIPT_TYPES, type ReceiptType } from "@/lib/receipt-type"
 import { formatSom, formatWeight } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import type { ExtendedSaleItem } from "./index"
@@ -52,6 +54,9 @@ interface KassaCartProps {
   bonusUsed: string
   setBonusUsed: (bonus: string) => void
   payment: string
+  /** Фискальный / нефискальный чек; null — ещё не выбран. */
+  receiptType: ReceiptType | null
+  setReceiptType: (value: ReceiptType) => void
   creditDueDate: string
   setCreditDueDate: (value: string) => void
   setPayment: (payment: string | null) => void
@@ -110,6 +115,8 @@ export function KassaCart({
   bonusUsed,
   setBonusUsed,
   payment,
+  receiptType,
+  setReceiptType,
   creditDueDate,
   setCreditDueDate,
   setPayment,
@@ -574,6 +581,36 @@ export function KassaCart({
                 <Button variant="outline" size="sm" onClick={handleReset} className="h-8 text-xs w-full text-muted-foreground bg-background">
                   <RefreshCw className="mr-1 h-3 w-3" /> Очистить
                 </Button>
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-2">
+            <Label className="flex items-center gap-1 text-[10px] text-muted-foreground">
+              <Receipt className="h-3 w-3" /> Тип чека
+            </Label>
+            <div className="grid grid-cols-2 gap-1.5" role="radiogroup" aria-label="Тип чека">
+              {RECEIPT_TYPES.map((r) => (
+                <button
+                  key={r.value}
+                  type="button"
+                  role="radio"
+                  aria-checked={receiptType === r.value}
+                  onClick={() => setReceiptType(r.value)}
+                  className={cn(
+                    "rounded-lg border px-2 py-2 text-[11px] font-medium transition-colors",
+                    receiptType === r.value
+                      ? "border-primary bg-primary text-primary-foreground"
+                      : "border-border bg-background text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  {r.label}
+                </button>
+              ))}
+            </div>
+            {!receiptType && cart.length > 0 && (
+              <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-800 dark:text-amber-200">
+                Выберите тип чека перед оформлением продажи.
               </div>
             )}
           </div>

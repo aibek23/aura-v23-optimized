@@ -939,12 +939,27 @@ class SyncEngine {
         sync_error,
         ...salePayload
       } = item.payload
-      const result = await this.run(supabase, (client, signal) =>
-        client.rpc('commit_offline_sale', {
-          _client_op_id: item.client_op_id,
-          _sale: salePayload,
-        }).abortSignal(signal)
-      )
+      // Миграция 007: та же продажа + тип чека (фискальный / нефискальный).
+      // Если миграция ещё не применена, очередь не застревает — продажа уходит
+      // в прежнюю функцию, тип чека при этом не сохраняется.
+      let result: any
+      try {
+        result = await this.run(supabase, (client, signal) =>
+          client.rpc('commit_sale_with_receipt', {
+            _client_op_id: item.client_op_id,
+            _sale: salePayload,
+            _due_date: null,
+          }).abortSignal(signal)
+        )
+      } catch (error: any) {
+        if (error?.code !== 'PGRST202' && error?.code !== '42883') throw error
+        result = await this.run(supabase, (client, signal) =>
+          client.rpc('commit_offline_sale', {
+            _client_op_id: item.client_op_id,
+            _sale: salePayload,
+          }).abortSignal(signal)
+        )
+      }
 
       if (result?.accepted !== true) {
         await setLocalSaleSyncState(item.payload.id, 'rejected', {

@@ -1,6 +1,7 @@
 "use client"
 
 import type { SaleReturn } from "@/lib/types"
+import { RECEIPT_TYPE_LABELS, type ReceiptType } from "@/lib/receipt-type"
 import { formatDateTime, formatSom, formatWeight,formatDateTimeTotal } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -21,6 +22,8 @@ export type HistoryRow = {
   customerName: string | null
   customerPhone: string | null
   paymentMethod: string
+  /** Фискальный / нефискальный чек; null — не указан (старые продажи). */
+  receiptType?: ReceiptType | null
   name: string
   metal: string | null
   weight: number
@@ -106,6 +109,7 @@ export function SaleUnitCard({
           </div>
           <div className="mt-1 font-mono text-[11px] text-muted-foreground/80">
           чек: {row.saleId.slice(0, 8)}
+            {row.receiptType ? ` · ${RECEIPT_TYPE_LABELS[row.receiptType]}` : ""}
             {/* ID: {row.unitId} · чек: {row.saleId.slice(0, 8)} · позиция #{row.position} */}
           </div>
 

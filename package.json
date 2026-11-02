@@ -14,7 +14,8 @@
     "test:atomic:postgres": "node scripts/test-atomic-postgres.mjs",
     "test:history:postgres": "node scripts/test-action-history-postgres.mjs",
     "test:product-units": "node --max-old-space-size=64 scripts/check-product-unit-usage.mjs",
-    "test:reports": "node --experimental-strip-types --test tests/sales-timeline.test.mjs"
+    "test:reports": "node --experimental-strip-types --test tests/sales-timeline.test.mjs",
+    "test:receipt": "node --experimental-strip-types --test tests/receipt-type.test.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.5.0",

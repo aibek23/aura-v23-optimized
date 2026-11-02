@@ -37,6 +37,7 @@ function unitToRow(unit: SaleUnit): HistoryRow {
     customerName: unit.sale.customer_name,
     customerPhone: unit.sale.customer_phone,
     paymentMethod: unit.sale.payment_method,
+    receiptType: unit.sale.receipt_type ?? null,
     name: unit.item.name,
     metal: unit.item.metal,
     weight: Number(unit.item.weight) || 0,

@@ -8,6 +8,7 @@ import {
   rejectRequest,
   removeMember,
   setDefaultBonusRate,
+  setDefaultReceiptType,
   setMemberBonusRate,
   resetBonusPoints,
   setBonusPoints,
@@ -15,6 +16,7 @@ import {
   type CabinetData,
 } from "@/app/actions/cabinet"
 import { getProductUnitUsageCount } from "@/app/actions/product-units"
+import { RECEIPT_TYPE_SETTINGS, type ReceiptTypeSetting } from "@/lib/receipt-type"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -523,6 +525,8 @@ export function KabinetScreen({
   const router = useRouter()
   const [pending, start] = useTransition()
   const [defaultRate, setDefaultRate] = useState(String(data.defaultBonusRate))
+  const [receiptDefault, setReceiptDefault] = useState<ReceiptTypeSetting>(data.defaultReceiptType)
+  useEffect(() => setReceiptDefault(data.defaultReceiptType), [data.defaultReceiptType])
   const [productUnitUsage, setProductUnitUsage] = useState<{ shopId: string | null; count: number | null }>({
     shopId: null,
     count: null,
@@ -756,6 +760,49 @@ export function KabinetScreen({
             <p className="w-full text-xs text-muted-foreground">
               Применяется ко всем сотрудникам, у которых не задан персональный процент.
             </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Админ: тип чека по умолчанию в кассе */}
+      {isAdmin && (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Тип чека по умолчанию</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="grid gap-1.5 sm:grid-cols-3" role="radiogroup" aria-label="Тип чека по умолчанию">
+              {RECEIPT_TYPE_SETTINGS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  role="radio"
+                  aria-checked={receiptDefault === option.value}
+                  disabled={pending}
+                  onClick={() => setReceiptDefault(option.value)}
+                  className={cn(
+                    "rounded-lg border px-3 py-2 text-left text-xs font-medium transition-colors",
+                    receiptDefault === option.value
+                      ? "border-primary bg-primary text-primary-foreground"
+                      : "border-border bg-background text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <Button
+                disabled={pending || receiptDefault === data.defaultReceiptType}
+                onClick={() => run(() => setDefaultReceiptType(receiptDefault), "Тип чека по умолчанию сохранён")}
+              >
+                Сохранить
+              </Button>
+              <p className="min-w-0 flex-1 text-xs text-muted-foreground">
+                В кассе этот тип будет выбран заранее; продавец может поменять его в конкретной продаже.
+                При «Спрашивать» продажу нельзя оформить, пока тип чека не выбран.
+              </p>
+            </div>
           </CardContent>
         </Card>
       )}
