@@ -33,6 +33,65 @@ export async function getSaleReturns(): Promise<SaleReturn[]> {
   return (data as SaleReturn[]) ?? []
 }
 
+const EXPORT_RETURN_PAGE_SIZE = 500
+const EXPORT_RETURN_LIMIT = 5000
+
+/**
+ * Возвраты за диапазон для Excel. В отличие от списка на экране, эта выборка
+ * постраничная: экспорт не должен молча терять возвраты после первых 50 строк.
+ */
+export async function getSaleReturnsInRange(input: {
+  from?: string | null
+  to: string
+}): Promise<{ returns: SaleReturn[]; truncated: boolean }> {
+  const { supabase, shopId } = await requireProfile()
+  if (!shopId) return { returns: [], truncated: false }
+
+  const from = input.from ? Date.parse(input.from) : null
+  const to = Date.parse(input.to)
+  if ((from !== null && !Number.isFinite(from)) || !Number.isFinite(to) || (from !== null && to <= from)) {
+    throw new Error("Неверный диапазон дат возвратов")
+  }
+
+  const rows: SaleReturn[] = []
+  for (let offset = 0; offset < EXPORT_RETURN_LIMIT; offset += EXPORT_RETURN_PAGE_SIZE) {
+    let query = supabase
+      .from("sale_returns")
+      .select("*")
+      .eq("shop_id", shopId)
+      .is("deleted_at", null)
+      .lt("created_at", new Date(to).toISOString())
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(offset, offset + EXPORT_RETURN_PAGE_SIZE - 1)
+    if (from !== null) query = query.gte("created_at", new Date(from).toISOString())
+    const { data, error } = await query
+    if (error) throw new Error(`Не удалось загрузить возвраты для Excel: ${error.message}`)
+    const page = (data ?? []) as SaleReturn[]
+    rows.push(...page)
+    if (page.length < EXPORT_RETURN_PAGE_SIZE) break
+  }
+
+  let truncated = rows.length === EXPORT_RETURN_LIMIT
+  if (truncated) {
+    let probe = supabase
+      .from("sale_returns")
+      .select("id")
+      .eq("shop_id", shopId)
+      .is("deleted_at", null)
+      .lt("created_at", new Date(to).toISOString())
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(EXPORT_RETURN_LIMIT, EXPORT_RETURN_LIMIT)
+    if (from !== null) probe = probe.gte("created_at", new Date(from).toISOString())
+    const { data, error } = await probe
+    if (error) throw new Error(`Не удалось проверить полноту возвратов: ${error.message}`)
+    truncated = Boolean(data?.length)
+  }
+
+  return { returns: rows, truncated }
+}
+
 export type ReturnSaleItemInput = {
   /** ID чека, позицию которого возвращаем. */
   saleId: string

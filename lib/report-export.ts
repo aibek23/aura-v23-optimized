@@ -11,7 +11,7 @@
  *  • Управленческий — все чеки, себестоимость, скидки, прибыль, маржа,
  *    закупка, поставщики и стоимость лома.
  */
-import type { Product, Sale, SaleItem } from "./types"
+import type { Product, Sale, SaleItem, SaleReturn } from "./types"
 
 export type CellKind = "text" | "datetime" | "weight" | "money" | "int" | "percent"
 export type Column<Row> = { header: string; kind: CellKind; width: number; value: (row: Row) => string | number | null }
@@ -42,6 +42,22 @@ export type SaleLine = {
   /** Доля 0..1 для формата Excel «0.0%». */
   margin: number
 }
+
+export type ReturnLine = {
+  createdAt: string
+  receiptNo: string
+  author: string
+  sku: string
+  name: string
+  metal: string
+  purity: string
+  weight: number
+  amount: number
+  cost: number
+  reason: string
+}
+
+export type SummaryLine = { metric: string; value: number }
 
 const num = (value: unknown) => (Number.isFinite(Number(value)) ? Number(value) : 0)
 export const round2 = (value: number) => Math.round((num(value) + Number.EPSILON) * 100) / 100
@@ -163,6 +179,65 @@ export function saleLines(sales: Sale[], products: Map<string, ProductInfo>): Sa
   return lines
 }
 
+/** Возвраты отражаются в день фактической выплаты, а не в день исходной продажи. */
+export function returnLines(
+  returns: SaleReturn[],
+  sales: Sale[],
+  products: Map<string, ProductInfo>,
+): ReturnLine[] {
+  const saleById = new Map(sales.map((sale) => [sale.id, sale]))
+  return [...returns]
+    .filter((refund) => !refund.deleted_at)
+    .sort((a, b) => a.created_at.localeCompare(b.created_at))
+    .map((refund) => {
+      const sale = saleById.get(refund.sale_id)
+      const item = sale?.items?.[refund.item_index]
+      const product = products.get(refund.product_id ?? item?.product_id ?? "")
+      const metal = refund.item_metal ?? item?.metal ?? product?.metal ?? null
+      return {
+        createdAt: refund.created_at,
+        receiptNo: sale ? receiptNumber(sale) : refund.sale_id.slice(0, 8).toUpperCase(),
+        author: refund.author_name ?? "",
+        sku: item?.sku ?? refund.sku ?? "",
+        name: refund.item_name ?? refund.product_name ?? item?.name ?? "",
+        metal: metalBase(metal),
+        purity: purityOfMetal(metal),
+        weight: round2(num(refund.item_weight ?? item?.weight)),
+        amount: round2(num(refund.amount ?? refund.return_amount)),
+        cost: round2(num(refund.cost)),
+        reason: refund.reason ?? "",
+      }
+    })
+}
+
+export function managerNetSummary(sales: SaleLine[], refunds: ReturnLine[]): SummaryLine[] {
+  const revenue = round2(sales.reduce((sum, line) => sum + line.total, 0))
+  const refundAmount = round2(refunds.reduce((sum, line) => sum + line.amount, 0))
+  const cost = round2(sales.reduce((sum, line) => sum + line.cost, 0))
+  const returnedCost = round2(refunds.reduce((sum, line) => sum + line.cost, 0))
+  const netRevenue = round2(revenue - refundAmount)
+  const netCost = round2(cost - returnedCost)
+  return [
+    { metric: "Сумма продаж", value: revenue },
+    { metric: "Возвращено покупателям", value: refundAmount },
+    { metric: "Выручка после возвратов", value: netRevenue },
+    { metric: "Себестоимость продаж", value: cost },
+    { metric: "Себестоимость возвращённых изделий", value: returnedCost },
+    { metric: "Чистая себестоимость", value: netCost },
+    { metric: "Чистая прибыль после возвратов", value: round2(netRevenue - netCost) },
+  ]
+}
+
+export function gnsNetSummary(sales: SaleLine[], refunds: ReturnLine[]): SummaryLine[] {
+  const revenue = round2(sales.reduce((sum, line) => sum + line.total, 0))
+  const refundAmount = round2(refunds.reduce((sum, line) => sum + line.amount, 0))
+  return [
+    { metric: "Фискальные продажи", value: revenue },
+    { metric: "Возвраты по фискальным чекам", value: refundAmount },
+    { metric: "Фискальная выручка после возвратов", value: round2(revenue - refundAmount) },
+  ]
+}
+
 export const inStock = (products: Product[]) =>
   products
     .filter((p) => p.status === "in_stock" && !p.deleted_at)
@@ -191,6 +266,37 @@ export const GNS_STOCK_COLUMNS: Column<Product>[] = [
   { header: "Размер", kind: "text", width: 9, value: (p) => p.size ?? "" },
   { header: "Количество", kind: "int", width: 11, value: () => 1 },
   { header: "Розничная цена (сом)", kind: "money", width: 18, value: (p) => round2(num(p.sale_price)) },
+]
+
+export const RETURN_COLUMNS: Column<ReturnLine>[] = [
+  { header: "Дата и время возврата", kind: "datetime", width: 20, value: (r) => r.createdAt },
+  { header: "Номер исходного чека", kind: "text", width: 18, value: (r) => r.receiptNo },
+  { header: "Оформил возврат", kind: "text", width: 20, value: (r) => r.author },
+  { header: "Артикул", kind: "text", width: 14, value: (r) => r.sku },
+  { header: "Наименование", kind: "text", width: 30, value: (r) => r.name },
+  { header: "Металл", kind: "text", width: 16, value: (r) => r.metal },
+  { header: "Проба", kind: "text", width: 8, value: (r) => r.purity },
+  { header: "Вес (г)", kind: "weight", width: 10, value: (r) => r.weight },
+  { header: "Возвращено покупателю (сом)", kind: "money", width: 24, value: (r) => r.amount },
+  { header: "Возвращённая себестоимость (сом)", kind: "money", width: 28, value: (r) => r.cost },
+  { header: "Причина", kind: "text", width: 34, value: (r) => r.reason },
+]
+
+export const GNS_RETURN_COLUMNS: Column<ReturnLine>[] = [
+  { header: "Дата и время возврата", kind: "datetime", width: 20, value: (r) => r.createdAt },
+  { header: "Номер исходного чека", kind: "text", width: 18, value: (r) => r.receiptNo },
+  { header: "Артикул", kind: "text", width: 14, value: (r) => r.sku },
+  { header: "Наименование", kind: "text", width: 30, value: (r) => r.name },
+  { header: "Металл", kind: "text", width: 16, value: (r) => r.metal },
+  { header: "Проба", kind: "text", width: 8, value: (r) => r.purity },
+  { header: "Вес (г)", kind: "weight", width: 10, value: (r) => r.weight },
+  { header: "Возвращено покупателю (сом)", kind: "money", width: 24, value: (r) => r.amount },
+  { header: "Причина", kind: "text", width: 34, value: (r) => r.reason },
+]
+
+export const SUMMARY_COLUMNS: Column<SummaryLine>[] = [
+  { header: "Показатель", kind: "text", width: 42, value: (r) => r.metric },
+  { header: "Сумма (сом)", kind: "money", width: 20, value: (r) => r.value },
 ]
 
 /* ─── Колонки управленческого отчёта ──────────────────────────────────── */

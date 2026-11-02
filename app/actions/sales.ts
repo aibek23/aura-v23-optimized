@@ -21,6 +21,7 @@ async function requireProfile() {
 
 const SALE_COLUMNS =
   "id, shop_id, seller_id, seller_name, customer_id, customer_name, customer_phone, payment_method, amount_cash, amount_electronic, subtotal, discount, total, cost_total, profit, bonus_earned, bonus_used, items, created_at, updated_at, deleted_at, client_op_id, cash_operation_id"
+const REPORT_PAGE_SIZE = 500
 
 export async function getSales(): Promise<Sale[]> {
   const { supabase, shopId } = await requireProfile()
@@ -80,8 +81,9 @@ async function readSalesPage(
   supabase: Awaited<ReturnType<typeof requireProfile>>["supabase"],
   shopId: string,
   input: SalesPageInput,
+  resolveSkus = true,
 ): Promise<SalesPage> {
-  const limit = Math.min(Math.max(Math.floor(Number(input.limit) || 30), 1), 100)
+  const limit = Math.min(Math.max(Math.floor(Number(input.limit) || 30), 1), REPORT_PAGE_SIZE)
   const from = parseIsoOrNull(input.from)
   const to = parseIsoOrNull(input.to)
   const sellerId = input.sellerId && UUID_RE.test(input.sellerId) ? input.sellerId : null
@@ -114,7 +116,7 @@ async function readSalesPage(
 
   const rows = (data ?? []) as unknown as Sale[]
   const items = rows.slice(0, limit)
-  await fillMissingSkus(supabase, shopId, items)
+  if (resolveSkus) await fillMissingSkus(supabase, shopId, items)
   const last = items[items.length - 1]
   return {
     items,
@@ -139,9 +141,16 @@ async function fillMissingSkus(
     ),
   ]
   if (ids.length === 0) return
-  const { data, error } = await supabase.from("products").select("id, sku").eq("shop_id", shopId).in("id", ids)
-  if (error || !data) return
-  const skuById = new Map((data as { id: string; sku: string | null }[]).map((row) => [row.id, row.sku]))
+  const skuById = new Map<string, string | null>()
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data, error } = await supabase
+      .from("products")
+      .select("id, sku")
+      .eq("shop_id", shopId)
+      .in("id", ids.slice(i, i + 200))
+    if (error || !data) continue
+    for (const row of data as { id: string; sku: string | null }[]) skuById.set(row.id, row.sku)
+  }
   for (const sale of sales) {
     sale.items = (sale.items ?? []).map((item) =>
       item.product_id && !item.sku && skuById.get(item.product_id)
@@ -151,7 +160,7 @@ async function fillMissingSkus(
   }
 }
 
-export type ReportProductInfo = { id: string; category: string | null; metal: string | null }
+export type ReportProductInfo = { id: string; category: string | null; metal: string | null; sku?: string | null }
 
 export type DailySalesSummaryRow = {
   report_day: string
@@ -221,7 +230,7 @@ export async function getDailySalesSummary(input: {
   }))
 }
 
-/** Максимум чеков за один запрос отчёта — защита слабых устройств от гигантских ответов. */
+/** Максимум чеков за один экспорт — защита слабых устройств от гигантских ответов. */
 const RANGE_MAX_SALES = 5000
 
 /**
@@ -242,7 +251,14 @@ export async function getSalesInRange(input: {
   let truncated = false
 
   while (true) {
-    const page = await readSalesPage(supabase, shopId, { limit: 100, cursor, from: input.from, to: input.to })
+    // Export reads larger keyset pages than the interactive history so a
+    // 5,000-receipt report needs roughly 10 round trips instead of 50.
+    const page = await readSalesPage(
+      supabase,
+      shopId,
+      { limit: REPORT_PAGE_SIZE, cursor, from: input.from, to: input.to },
+      false,
+    )
     sales.push(...page.items)
     if (!page.nextCursor) break
     if (sales.length >= RANGE_MAX_SALES) {
@@ -255,15 +271,23 @@ export async function getSalesInRange(input: {
   const known = new Set(sales.map((sale) => sale.id))
   const extraIds = [...new Set((input.includeSaleIds ?? []).filter((id) => typeof id === "string" && UUID_RE.test(id)))]
     .filter((id) => !known.has(id))
-    .slice(0, 500)
+    .slice(0, 5000)
   for (let i = 0; i < extraIds.length; i += 200) {
     const chunk = extraIds.slice(i, i + 200)
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from("sales")
-      .select(SALE_COLUMNS)
+      .select(SALE_COLUMNS + ", receipt_type")
       .eq("shop_id", shopId)
       .is("deleted_at", null)
       .in("id", chunk)
+    if (error && MISSING_SCHEMA_CODES.includes(error.code ?? "")) {
+      ;({ data, error } = await supabase
+        .from("sales")
+        .select(SALE_COLUMNS)
+        .eq("shop_id", shopId)
+        .is("deleted_at", null)
+        .in("id", chunk))
+    }
     if (error) break
     sales.push(...((data ?? []) as unknown as Sale[]))
   }
@@ -279,12 +303,23 @@ export async function getSalesInRange(input: {
       const chunk = ids.slice(i, i + 200)
       const { data, error } = await supabase
         .from("products")
-        .select("id, category, metal")
+        .select("id, category, metal, sku")
         .eq("shop_id", shopId)
         .in("id", chunk)
       if (error) break
       products.push(...((data ?? []) as ReportProductInfo[]))
     }
+    const skuById = new Map(products.map((product) => [product.id, product.sku]))
+    for (const sale of sales) {
+      sale.items = (sale.items ?? []).map((item) =>
+        item.product_id && !item.sku && skuById.get(item.product_id)
+          ? { ...item, sku: skuById.get(item.product_id) }
+          : item,
+      )
+    }
+  } else {
+    // Resolve old receipt SKUs once for the whole export, not once per page.
+    await fillMissingSkus(supabase, shopId, sales)
   }
 
   return { sales, products, truncated }
