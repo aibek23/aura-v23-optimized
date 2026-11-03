@@ -1,7 +1,9 @@
 "use server"
 
 import { revalidatePath } from "next/cache"
-import type { Sale, SaleItem } from "@/lib/types"
+import type { Sale, SaleItem, SaleReturn } from "@/lib/types"
+import { flattenSaleUnits, matchesSaleUnit } from "@/lib/sale-search"
+import { parseProductSearchQuery } from "@/lib/product-search"
 import { DEFAULT_RATES } from "@/lib/rates"
 import { getRequestCrmContext } from "@/lib/supabase/request-context"
 import { resolveClientOperationId } from "@/lib/client-operation"
@@ -50,7 +52,7 @@ export async function getSales(): Promise<Sale[]> {
 // ---------------------------------------------------------------------------
 
 export type SalesPageCursor = { created_at: string; id: string }
-export type SalesPage = { items: Sale[]; nextCursor: SalesPageCursor | null }
+export type SalesPage = { items: Sale[]; nextCursor: SalesPageCursor | null; returns: SaleReturn[] }
 
 function parseIsoOrNull(value: unknown): string | null {
   if (typeof value !== "string" || !value) return null
@@ -70,6 +72,7 @@ type SalesPageInput = {
   from?: string | null
   to?: string | null
   sellerId?: string | null
+  query?: string
 }
 
 export async function getSalesPage(input: SalesPageInput = {}): Promise<SalesPage> {
@@ -89,6 +92,32 @@ async function readSalesPage(
   const sellerId = input.sellerId && UUID_RE.test(input.sellerId) ? input.sellerId : null
   const cursorAt = parseIsoOrNull(input.cursor?.created_at)
   const cursorId = input.cursor?.id && /^[\w-]{1,64}$/.test(input.cursor.id) ? input.cursor.id : null
+  const search = parseProductSearchQuery((input.query ?? "").slice(0, 200))
+  const searching = search.kind !== "empty"
+
+  // Look up sold products on the SERVER, not in the stock-only local catalog.
+  // Full SKU searches jump straight to matching receipts, regardless of age.
+  let skuConditions: string[] = []
+  if (search.kind === "text") {
+    const literalSku = search.value.replace(/[\\%_]/g, "\\$&")
+    const { data: skuProducts, error: skuError } = await supabase
+      .from("products")
+      .select("id, sku")
+      .eq("shop_id", shopId)
+      .ilike("sku", literalSku)
+      .limit(101)
+    if (skuError) throw new Error(`Не удалось найти артикул: ${skuError.message}`)
+    // Duplicate legacy SKUs must not create a huge OR URL or truncate results.
+    // If there are many, use the complete bounded archive scan instead.
+    skuConditions = (skuProducts && skuProducts.length <= 100 ? skuProducts : []).flatMap((product: { id: string; sku: string | null }) => [
+      `items.cs.${JSON.stringify([{ product_id: product.id }])}`,
+      `items.cs.${JSON.stringify([{ id: product.id }])}`,
+      ...(product.sku ? [`items.cs.${JSON.stringify([{ sku: product.sku }])}`] : []),
+    ])
+  }
+  // Other queries scan bounded server pages using the exact same predicate as
+  // the UI. Only matching receipts travel to the browser, never the full archive.
+  const batchSize = searching && skuConditions.length === 0 ? REPORT_PAGE_SIZE : limit
 
   const readPage = (columns: string) => {
     let query = supabase
@@ -98,7 +127,8 @@ async function readSalesPage(
       .is("deleted_at", null)
       .order("created_at", { ascending: false })
       .order("id", { ascending: false })
-      .limit(limit + 1)
+      .limit(batchSize + 1)
+    if (skuConditions.length) query = query.or(skuConditions.join(","))
     if (from) query = query.gte("created_at", from)
     if (to) query = query.lt("created_at", to)
     if (sellerId) query = query.eq("seller_id", sellerId)
@@ -115,12 +145,34 @@ async function readSalesPage(
   if (error) throw new Error(`Не удалось загрузить историю продаж: ${error.message}`)
 
   const rows = (data ?? []) as unknown as Sale[]
-  const items = rows.slice(0, limit)
-  if (resolveSkus) await fillMissingSkus(supabase, shopId, items)
+  const candidates = rows.slice(0, batchSize)
+  if (resolveSkus || searching) await fillMissingSkus(supabase, shopId, candidates)
+  const matching = searching
+    ? candidates.filter((sale) => flattenSaleUnits([sale]).some((unit) => matchesSaleUnit(unit, search)))
+    : candidates
+  const items = matching.slice(0, limit)
   const last = items[items.length - 1]
+  // If this batch has no match, keep the scan cursor so the UI can continue
+  // searching older pages instead of claiming that nothing exists.
+  const scanLast = matching.length > limit ? last : candidates[candidates.length - 1]
+  const more = matching.length > limit || rows.length > batchSize
+  const refunds: SaleReturn[] = []
+  if (items.length && resolveSkus) {
+    for (let offset = 0; ; offset += REPORT_PAGE_SIZE) {
+      const { data: refundRows, error: refundError } = await supabase
+        .from("sale_returns").select("*")
+        .eq("shop_id", shopId).in("sale_id", items.map((sale) => sale.id))
+        .is("deleted_at", null)
+        .order("id", { ascending: true }).range(offset, offset + REPORT_PAGE_SIZE - 1)
+      if (refundError) throw new Error(`Не удалось проверить возвраты: ${refundError.message}`)
+      refunds.push(...((refundRows ?? []) as SaleReturn[]))
+      if (!refundRows || refundRows.length < REPORT_PAGE_SIZE) break
+    }
+  }
   return {
     items,
-    nextCursor: rows.length > limit && last ? { created_at: last.created_at, id: last.id } : null,
+    nextCursor: more && scanLast ? { created_at: scanLast.created_at, id: scanLast.id } : null,
+    returns: refunds,
   }
 }
 
@@ -136,7 +188,8 @@ async function fillMissingSkus(
   const ids = [
     ...new Set(
       sales.flatMap((sale) =>
-        (sale.items ?? []).filter((item) => item.product_id && !item.sku).map((item) => item.product_id as string),
+        (sale.items ?? []).filter((item) => (item.product_id || item.id) && !item.sku)
+          .map((item) => (item.product_id || item.id) as string),
       ),
     ),
   ]
@@ -148,13 +201,14 @@ async function fillMissingSkus(
       .select("id, sku")
       .eq("shop_id", shopId)
       .in("id", ids.slice(i, i + 200))
-    if (error || !data) continue
+    if (error) throw new Error(`Не удалось загрузить артикулы проданных товаров: ${error.message}`)
+    if (!data) continue
     for (const row of data as { id: string; sku: string | null }[]) skuById.set(row.id, row.sku)
   }
   for (const sale of sales) {
     sale.items = (sale.items ?? []).map((item) =>
-      item.product_id && !item.sku && skuById.get(item.product_id)
-        ? { ...item, sku: skuById.get(item.product_id) }
+      (item.product_id || item.id) && !item.sku && skuById.get((item.product_id || item.id) as string)
+        ? { ...item, sku: skuById.get((item.product_id || item.id) as string) }
         : item,
     )
   }
