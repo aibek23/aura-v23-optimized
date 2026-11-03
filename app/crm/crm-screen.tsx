@@ -50,7 +50,7 @@ export async function CrmScreen({ screen }: { screen: ScreenId }) {
         returns={[]}
         cabinet={{ team: [], requests: [], defaultBonusRate: 2, defaultReceiptType: "ask" }}
         cash={{ operations: [], presets: [] }}
-        supplierDebts={{ operations: [], suppliers: [] }}
+        supplierDebts={{ operations: [], suppliers: [], profiles: [] }}
         rates={[]}
         email={user.email ?? ""}
         clients={[]}
@@ -75,7 +75,7 @@ export async function CrmScreen({ screen }: { screen: ScreenId }) {
         getClients(),
         screen === "suppliers"
           ? getSupplierDebtData()
-          : Promise.resolve({ operations: [], suppliers: [] }),
+          : Promise.resolve({ operations: [], suppliers: [], profiles: [] }),
         isSuperAdmin ? getSuperAdminShops() : Promise.resolve([] as ShopBillingRow[]),
         isSuperAdmin ? getImpersonatedShop() : Promise.resolve(null),
         typed.role === "admin" ? getOwnShopPublicState() : Promise.resolve({ enabled: true, canToggle: false }),

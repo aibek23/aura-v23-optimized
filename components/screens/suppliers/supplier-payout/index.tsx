@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react"
 import { WalletCards } from "lucide-react"
 import type { SupplierDebtData } from "@/app/actions/suppliers"
 import type { Product } from "@/lib/types"
+import type { SupplierProfile } from "@/app/actions/suppliers"
 import { matchesParsedProduct, parseProductSearchQuery } from "@/lib/product-search"
 import { type GoodsSummary, type SearchMatch, supplierKey } from "./types"
 import { SupplierCard } from "./supplier-card"
@@ -14,6 +15,9 @@ interface SupplierPayoutPanelProps {
   goodsBySupplier?: Map<string, GoodsSummary>
   productsBySupplier?: Map<string, Product[]>
   query?: string
+  profilesBySupplier: Map<string, SupplierProfile>
+  onSupplierProfileUpdated: (profile: SupplierProfile) => void
+  onOpenProduct: (product: Product) => void
 }
 
 export function SupplierPayoutPanel({
@@ -22,6 +26,9 @@ export function SupplierPayoutPanel({
   goodsBySupplier,
   productsBySupplier,
   query,
+  profilesBySupplier,
+  onSupplierProfileUpdated,
+  onOpenProduct,
 }: SupplierPayoutPanelProps) {
   const [openKey, setOpenKey] = useState<string | null>(null)
 
@@ -96,6 +103,9 @@ export function SupplierPayoutPanel({
             goods={goodsBySupplier?.get(key)}
             products={productsBySupplier?.get(key) ?? []}
             operations={data.operations}
+            profile={profilesBySupplier.get(key) ?? null}
+            onProfileUpdated={onSupplierProfileUpdated}
+            onOpenProduct={onOpenProduct}
             highlightedProductId={
               searchMatch?.key === key ? searchMatch.productId : null
             }

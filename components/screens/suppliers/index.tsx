@@ -1,7 +1,7 @@
 "use client"
 
 import { useMemo, useState } from "react"
-import type { SupplierDebtData } from "@/app/actions/suppliers"
+import type { SupplierDebtData, SupplierProfile } from "@/app/actions/suppliers"
 import type { Product, Sale, SupplierDebtSummary } from "@/lib/types"
 import { SupplierPayoutPanel } from "../suppliers/supplier-payout/index"
 import { ProductSearch } from "@/components/product-search"
@@ -25,11 +25,15 @@ export function SuppliersScreen({
   products = [],
   sales = [],
   isAdmin,
+  onSupplierProfileUpdated,
+  onOpenProduct,
 }: {
   supplierDebts: SupplierDebtData
   products?: Product[]
   sales?: Sale[]
   isAdmin: boolean
+  onSupplierProfileUpdated: (profile: SupplierProfile) => void
+  onOpenProduct: (product: Product) => void
 }) {
   const groups = useMemo<SupplierGroup[]>(() => {
     const map = new Map<string, SupplierGroup>()
@@ -59,12 +63,27 @@ export function SuppliersScreen({
   // В таком случае показываем его с нулевым долгом, но с товарами.
   const supplierData = useMemo<SupplierDebtData>(() => {
     const byKey = new Map<string, SupplierDebtSummary>()
+    const deletedAtByKey = new Map(
+      supplierDebts.profiles
+        .filter((profile) => profile.deleted_at)
+        .map((profile) => [
+          supplierIdentityKey(profile.supplier_name, profile.supplier_phone),
+          Date.parse(profile.deleted_at!),
+        ]),
+    )
     for (const supplier of supplierDebts.suppliers) {
+      const deletedAt = deletedAtByKey.get(supplierIdentityKey(supplier.supplier_name, supplier.supplier_phone))
+      if (deletedAt !== undefined && deletedAt >= Date.parse(supplier.last_operation_at)) continue
       byKey.set(supplierIdentityKey(supplier.supplier_name, supplier.supplier_phone), supplier)
     }
 
     for (const group of groups) {
       if (group.key === NO_SUPPLIER_KEY) continue
+      const deletedAt = deletedAtByKey.get(group.key)
+      const touchedAfterDelete = group.items.some(
+        (product) => Date.parse(product.updated_at ?? product.created_at) > (deletedAt ?? Number.POSITIVE_INFINITY),
+      )
+      if (deletedAt !== undefined && !touchedAfterDelete) continue
       if (byKey.has(group.key)) continue
       byKey.set(group.key, {
         supplier_name: group.name,
@@ -79,8 +98,29 @@ export function SuppliersScreen({
       suppliers: [...byKey.values()].sort(
         (a, b) => b.balance - a.balance || a.supplier_name.localeCompare(b.supplier_name),
       ),
+      profiles: supplierDebts.profiles.map((profile) =>
+        profile.deleted_at &&
+        groups.some((group) =>
+          group.key === supplierIdentityKey(profile.supplier_name, profile.supplier_phone) &&
+          group.items.some((product) =>
+            Date.parse(product.updated_at ?? product.created_at) > Date.parse(profile.deleted_at!),
+          ),
+        )
+          ? { ...profile, deleted_at: null }
+          : profile,
+      ),
     }
   }, [groups, supplierDebts])
+
+  const profilesBySupplier = useMemo(
+    () => new Map(
+      supplierData.profiles.map((profile) => [
+        supplierIdentityKey(profile.supplier_name, profile.supplier_phone),
+        profile,
+      ]),
+    ),
+    [supplierData.profiles],
+  )
 
   // Сводка по товарам для карточек поставщиков
   const goodsBySupplier = useMemo(() => {
@@ -159,6 +199,9 @@ export function SuppliersScreen({
           goodsBySupplier={goodsBySupplier}
           productsBySupplier={productsBySupplier}
           query={query}
+          profilesBySupplier={profilesBySupplier}
+          onSupplierProfileUpdated={onSupplierProfileUpdated}
+          onOpenProduct={onOpenProduct}
         />
       </div>
     </div>

@@ -1,18 +1,15 @@
 "use client"
 
-import { useEffect, useMemo, useState, useTransition } from "react"
-import { Pencil, Printer, Trash2 } from "lucide-react"
-import { toast } from "sonner"
-import { deleteProduct } from "@/app/actions/products"
+import { useEffect, useMemo, useState } from "react"
+import { Link2 } from "lucide-react"
 import type { Product } from "@/lib/types"
 import { formatSom, formatWeight } from "@/lib/format"
 import { cn } from "@/lib/utils"
-import { useRouter } from "next/navigation"
 
 interface SupplierProductsProps {
   products: Product[]
-  isAdmin: boolean
   highlightedProductId?: string | null
+  onOpenProduct: (product: Product) => void
 }
 
 /**
@@ -21,36 +18,15 @@ interface SupplierProductsProps {
  */
 export function SupplierProducts({
   products,
-  isAdmin,
   highlightedProductId,
+  onOpenProduct,
 }: SupplierProductsProps) {
-  const router = useRouter()
-  const [, startTransition] = useTransition()
   const [visibleCount, setVisibleCount] = useState(30)
 
   // Сброс пагинации при смене списка товаров
   useEffect(() => {
     setVisibleCount(30)
   }, [products])
-
-  const onDelete = async (p: Product) => {
-    if (!confirm(`Удалить «${p.name}»?`)) return
-    try {
-      const res = await deleteProduct(p.id)
-      if (!res.ok) throw new Error(res.error)
-      // Убираем товар и из локальной базы устройства, иначе он снова появится.
-      try {
-        const { bulkDelete } = await import("@/lib/local-db/db")
-        await bulkDelete("products", [p.id])
-      } catch (err) {
-        console.warn("[delete] local purge failed", err)
-      }
-      toast.success("Товар удалён")
-      startTransition(() => router.refresh())
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Не удалось удалить")
-    }
-  }
 
   // Не создаём сотни DOM-узлов при раскрытии карточки.
   // Найденный товар добавляем отдельно, даже если он дальше первой страницы.
@@ -133,34 +109,17 @@ export function SupplierProducts({
             </div>
           </div>
 
-          {/* Кнопки действий */}
+          {/* Переход к выбранному товару; печать/редактирование доступны на складе. */}
           <div className="flex shrink-0 items-center gap-1">
             <button
               type="button"
-              title="Печать"
-              className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              title="Открыть товар на складе"
+              aria-label={`Открыть «${p.name}» на складе`}
+              onClick={() => onOpenProduct(p)}
+              className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-primary"
             >
-              <Printer className="h-3.5 w-3.5" />
+              <Link2 className="h-4 w-4" />
             </button>
-            {isAdmin && (
-              <>
-                <button
-                  type="button"
-                  title="Редактировать"
-                  className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                >
-                  <Pencil className="h-3.5 w-3.5" />
-                </button>
-                <button
-                  type="button"
-                  title="Удалить"
-                  onClick={() => onDelete(p)}
-                  className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
-              </>
-            )}
           </div>
         </div>
       ))}

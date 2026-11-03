@@ -28,6 +28,7 @@ import { useRouter } from "next/navigation"
 import { ProductDialog } from "@/components/screens/sklad/add-edit-Product/product-dialog"
 import { SkladStats } from "./sklad-stats"
 import { filterProducts } from "@/lib/product-search"
+import { cn } from "@/lib/utils"
 import { ProductSearch } from "@/components/product-search"
 import { VirtualizedSkladTable } from "./virtualized-sklad-table"
 import { usePrinterConnection } from "./use-printer-connection"
@@ -81,6 +82,8 @@ export function SkladScreen({
   onProductSaved,
   onProductDeleted,
   onOfflineDeleteProduct,
+  focusProduct = null,
+  onFocusProductHandled,
 }: {
   products: Product[]
   sales?: Sale[]
@@ -94,6 +97,8 @@ export function SkladScreen({
   onProductSaved?: (product: Product) => void
   onProductDeleted?: (productId: string) => void | Promise<void>
   onOfflineDeleteProduct?: (product: Product) => void | Promise<void>
+  focusProduct?: Pick<Product, "id" | "name" | "sku"> | null
+  onFocusProductHandled?: (productId: string) => void
 }) {
   const router = useRouter()
   const [, startTransition] = useTransition()
@@ -118,6 +123,7 @@ export function SkladScreen({
   const debouncedQuery = useDebouncedValue(query)
   const [remoteSkuMatch, setRemoteSkuMatch] = useState<{ query: string; product: Product } | null>(null)
   const [page, setPage] = useState(1)
+  const [focusedSupplierProductId, setFocusedSupplierProductId] = useState<string | null>(null)
   const printerProfile = getPrinterProfile(printerConnection.modelKey)
   const nativeWidth = Math.round(getLabelSizeDef(labelSizeKey).w_px * printerProfile.dpi / 203)
   const fitsPrinthead = nativeWidth <= printerProfile.printheadPx
@@ -170,6 +176,25 @@ export function SkladScreen({
 
   const filtered = useMemo(() => filterProducts(productsForSearch, debouncedQuery), [productsForSearch, debouncedQuery])
 
+  useEffect(() => {
+    if (!focusProduct) return
+    const product = products.find((item) => item.id === focusProduct.id)
+    if (!product) return
+    setFocusedSupplierProductId(product.id)
+    setQuery(product.sku?.trim() || product.name || focusProduct.name)
+    setPage(1)
+    onFocusProductHandled?.(product.id)
+  }, [focusProduct, onFocusProductHandled, products])
+
+  useEffect(() => {
+    if (!focusedSupplierProductId) return
+    const matchIndex = filtered.findIndex((product) => product.id === focusedSupplierProductId)
+    if (matchIndex >= 0) {
+      const neededPage = Math.floor(matchIndex / PAGE_SIZE) + 1
+      if (page !== neededPage) setPage(neededPage)
+    }
+  }, [filtered, focusedSupplierProductId, page])
+
   const handleProductSaved = (savedProduct: Product, isNew: boolean) => {
     onProductSaved?.(savedProduct)
     if (isNew) {
@@ -180,6 +205,7 @@ export function SkladScreen({
 
   // Сбрасываем страницу при смене фильтра
   const handleQueryChange = (v: string) => {
+    setFocusedSupplierProductId(null)
     setQuery(v)
     setPage(1)
   }
@@ -187,6 +213,18 @@ export function SkladScreen({
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
   const currentPage = Math.min(page, totalPages)
   const paginated = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
+
+  useEffect(() => {
+    if (!focusedSupplierProductId) return
+    const frame = window.requestAnimationFrame(() => {
+      const target = [...document.querySelectorAll<HTMLElement>("[data-inventory-product-id]")]
+        .find((element) =>
+          element.dataset.inventoryProductId === focusedSupplierProductId && element.getClientRects().length > 0,
+        )
+      target?.scrollIntoView({ behavior: "smooth", block: "center" })
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [focusedSupplierProductId, paginated])
 
   const salesByProduct = useMemo(() => {
     const map = new Map<string, ActualSaleSummary>()
@@ -450,7 +488,11 @@ export function SkladScreen({
               </TableRow>
             ) : (
               paginated.map((p) => (
-                <TableRow key={p.id}>
+                <TableRow
+                  key={p.id}
+                  data-inventory-product-id={p.id}
+                  className={p.id === focusedSupplierProductId ? "bg-primary/10 ring-1 ring-primary/40" : undefined}
+                >
                   <TableCell>
                     <div className="flex items-center gap-3">
                       <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-muted">
@@ -515,7 +557,11 @@ export function SkladScreen({
           paginated.map((p) => (
             <div
               key={p.id}
-              className="rounded-xl border border-border bg-card p-3 space-y-2"
+              data-inventory-product-id={p.id}
+              className={cn(
+                "rounded-xl border border-border bg-card p-3 space-y-2",
+                p.id === focusedSupplierProductId && "border-primary bg-primary/10 ring-1 ring-primary/40",
+              )}
             >
               {/* Строка 1: фото + название + артикул */}
               <div className="flex items-start gap-3">
