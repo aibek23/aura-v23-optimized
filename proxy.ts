@@ -10,6 +10,6 @@ export const config = {
   matcher: [
     // Keep public storefront requests outside the auth proxy without excluding
     // the protected /stores CRM route. Next.js 16 uses proxy.ts as its entrypoint.
-    "/((?!store(?:/|$)|_next/static|_next/image|favicon.ico|manifest\\.json|manifest\\.webmanifest|site\\.webmanifest|sw\\.js|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|wasm|mjs|js|css|json|webmanifest|woff|woff2|ttf|eot)$).*)",
+    "/((?!store(?:/|$)|q(?:/|$)|_next/static|_next/image|favicon.ico|manifest\\.json|manifest\\.webmanifest|site\\.webmanifest|sw\\.js|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|wasm|mjs|js|css|json|webmanifest|woff|woff2|ttf|eot)$).*)",
   ],
 }

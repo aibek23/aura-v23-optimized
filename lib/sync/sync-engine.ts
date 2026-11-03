@@ -109,6 +109,7 @@ interface PullSpec {
 
 class SyncEngine {
   private isRunning = false
+  private outboxFlushing = false
   private isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true
   private activeShopId: string | null = null
   private syncTimer: any = null
@@ -847,6 +848,17 @@ class SyncEngine {
    * landed before the connection dropped cannot create a second row.
    */
   public async flushOutbox() {
+    // Timer, online events and enqueue events can overlap within the same tab.
+    if (this.outboxFlushing) return
+    this.outboxFlushing = true
+    try {
+      await this.flushOutboxBatch()
+    } finally {
+      this.outboxFlushing = false
+    }
+  }
+
+  private async flushOutboxBatch() {
     if (!this.isOnline || !this.activeShopId || this.stopped) return
     const shopId = this.activeShopId
 
@@ -875,9 +887,12 @@ class SyncEngine {
       } catch (err: any) {
         // The cash RPC handles actual idempotent retries itself. A remaining
         // unique violation is a conflicting payload/id, not a successful send.
-        const kind = item.op_type === 'atomic_cash' && String(err?.code) === '23505'
+        // A unique constraint/HTTP 409 is not proof that THIS operation
+        // committed. Idempotent RPCs/upserts handle real replays themselves.
+        const classified = classifyError(err)
+        const kind = classified === 'conflict'
           ? 'permanent'
-          : classifyError(err)
+          : classified
 
         if (err?.code === 'OFFLINE_SALE_CONFLICT') {
           await markOutboxFailed(item.id, err.message, { permanent: true })
@@ -885,13 +900,6 @@ class SyncEngine {
             description: 'Чек исключён из итогов. Обновите каталог перед следующей продажей.',
             duration: 8000,
           })
-          continue
-        }
-
-        if (kind === 'conflict') {
-          // The operation already exists on the server (idempotency key matched).
-          await markOutboxCompleted(item.id)
-          syncedCount++
           continue
         }
 
@@ -1036,65 +1044,57 @@ class SyncEngine {
 
     if (item.op_type === 'atomic_return') {
       const payload = item.payload
-      const { data: userData } = await supabase.auth.getUser()
-      const userId = payload.created_by || userData?.user?.id
-      let cashOpId = payload.cash_operation_id
-
-      if (!cashOpId && payload.amount && Number(payload.amount) > 0) {
-        const cashClientOpId = `${item.client_op_id}:cash`
-        const refundAmt = Number(payload.amount)
-        const { data: cashOp } = await supabase
-          .from('cash_operations')
-          .upsert(
-            {
-              shop_id: item.shop_id,
-              created_by: userId,
-              author_name: payload.author_name || null,
-              type: 'outcome',
-              amount: refundAmt,
-              source: 'cash',
-              amount_cash: refundAmt,
-              amount_electronic: 0,
-              reason: payload.reason || `Возврат: ${payload.item_name || 'Товар'}`,
-              client_op_id: cashClientOpId,
-              updated_at: nowIso,
-            },
-            { onConflict: 'client_op_id', ignoreDuplicates: true }
-          )
-          .select('id')
-          .maybeSingle()
-        if (cashOp?.id) cashOpId = cashOp.id
-      }
-
-      const returnPayload = {
-        ...payload,
-        item_name: payload.item_name || payload.product_name || 'Товар',
-        created_by: userId,
-        cash_operation_id: cashOpId || payload.cash_operation_id || null,
-        client_op_id: item.client_op_id,
-        shop_id: item.shop_id,
-        updated_at: nowIso,
-      }
-      delete (returnPayload as any).product_name
-      delete (returnPayload as any).return_amount
-      delete (returnPayload as any).original_updated_at
-
-      await this.run(supabase, (client, signal) =>
-        client
-          .from('sale_returns')
-          .upsert(returnPayload, { onConflict: 'client_op_id', ignoreDuplicates: true })
-          .abortSignal(signal)
-      )
-
-      if (payload.product_id) {
-        await this.run(supabase, (client, signal) =>
-          client
-            .from('products')
-            .update({ status: 'in_stock', updated_at: nowIso })
-            .eq('id', payload.product_id)
-            .abortSignal(signal)
+      let result: any
+      try {
+        // The existing database function calculates the refund and updates cash,
+        // stock and customer totals together, under the sale's row lock.
+        result = await this.run(supabase, (client, signal) =>
+          client.rpc('return_sale_item', {
+            _sale_id: payload.sale_id,
+            _item_index: payload.item_index,
+            _reason: payload.reason || null,
+          }).abortSignal(signal)
         )
+      } catch (error: any) {
+        if (error?.code !== 'P0001' && error?.code !== '23505') throw error
+        // The response may have been lost after commit. A confirmed row for
+        // this exact shop/sale/item proves completion; an arbitrary 409 does not.
+        result = await this.run(supabase, (client, signal) =>
+          client.from('sale_returns').select('*')
+            .eq('shop_id', item.shop_id)
+            .eq('sale_id', payload.sale_id)
+            .eq('item_index', payload.item_index)
+            .is('deleted_at', null)
+            .abortSignal(signal).maybeSingle()
+        )
+        if (!result) throw error
       }
+      const confirmed = Array.isArray(result) ? result[0] : result
+      if (!confirmed?.id || confirmed.shop_id !== item.shop_id ||
+          confirmed.sale_id !== payload.sale_id || confirmed.item_index !== payload.item_index) {
+        throw new Error('Возврат не подтверждён сервером')
+      }
+      const cash = confirmed.cash_operation_id
+        ? await this.run(supabase, (client, signal) =>
+            client.from('cash_operations').select('*')
+              .eq('shop_id', item.shop_id).eq('id', confirmed.cash_operation_id)
+              .abortSignal(signal).single()
+          )
+        : null
+
+      // Replace optimistic rows rather than counting both local and server IDs.
+      const db = await getLocalDB()
+      const tx = db.transaction(['sale_returns', 'cash_operations'], 'readwrite')
+      const returns = tx.objectStore('sale_returns')
+      const cashStore = tx.objectStore('cash_operations')
+      const localCash = await cashStore.index('shop_id').getAll(item.shop_id)
+      for (const row of localCash) {
+        if (row.client_op_id === `${item.client_op_id}:cash`) await cashStore.delete(row.id)
+      }
+      if (payload.id && payload.id !== confirmed.id) await returns.delete(payload.id)
+      await returns.put(confirmed)
+      if (cash) await cashStore.put(cash)
+      await tx.done
       return
     }
 
