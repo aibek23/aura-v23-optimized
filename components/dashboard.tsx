@@ -187,12 +187,13 @@ export function Dashboard({
 
   // This ledger can contain the store's full history. Keep it off the first
   // POS/cash-screen response and request it only when an admin opens Suppliers.
+  // Do not depend on supplierDebtLoading: setting it would run cleanup and
+  // cancel this very request before its result can clear the spinner.
   useEffect(() => {
     if (
       activeScreen !== "suppliers" ||
       !isAdmin ||
       supplierDebtLoaded ||
-      supplierDebtLoading ||
       supplierDebtLoadError
     ) return
     let cancelled = false
@@ -202,6 +203,7 @@ export function Dashboard({
         if (!cancelled) {
           setSupplierDebtData(data)
           setSupplierDebtLoaded(true)
+          setSupplierDebtLoading(false)
         }
       })
       .catch((error) => {
@@ -209,15 +211,13 @@ export function Dashboard({
           setSupplierDebtLoadError(
             error instanceof Error ? error.message : "Не удалось загрузить долги поставщиков",
           )
+          setSupplierDebtLoading(false)
         }
-      })
-      .finally(() => {
-        if (!cancelled) setSupplierDebtLoading(false)
       })
     return () => {
       cancelled = true
     }
-  }, [activeScreen, isAdmin, supplierDebtLoaded, supplierDebtLoading, supplierDebtLoadError])
+  }, [activeScreen, isAdmin, supplierDebtLoaded, supplierDebtLoadError])
 
   // Local-first data is disabled while the super admin views another store.
   const localCrm = useLocalCrm({

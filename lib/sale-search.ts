@@ -57,7 +57,7 @@ export function flattenSaleUnits(
         item,
         itemIndex: index,
         // Проданных товаров нет в локальном каталоге — берём артикул из самого чека.
-        sku: (item.product_id ? skuById.get(item.product_id) : null) ?? item.sku ?? null,
+        sku: item.sku ?? skuById.get(item.product_id || item.id || "") ?? null,
       })
     }
   }

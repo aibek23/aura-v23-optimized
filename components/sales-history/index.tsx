@@ -15,9 +15,9 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
-import { History, Search, Undo2 } from "lucide-react"
+import { History } from "lucide-react"
+import { ProductSearch } from "@/components/product-search"
 import { ReturnDialog } from "@/components/sales-return/return-dialog"
-import { ReturnSearchModal } from "@/components/sales-return/return-search-modal"
 import { SaleUnitCard, type HistoryRow } from "./sale-unit-card"
 import { useDebouncedValue } from "@/hooks/use-debounced-value"
 import { getSalesPage, type SalesPageCursor } from "@/app/actions/sales"
@@ -95,7 +95,6 @@ export function SalesHistory({
   const [from, setFrom] = useState("")
   const [to, setTo] = useState("")
   const [seller, setSeller] = useState("all")
-  const [searchOpen, setSearchOpen] = useState(false)
   const [dialogUnit, setDialogUnit] = useState<SaleUnit | null>(null)
   const [justReturned, setJustReturned] = useState<SaleReturn[]>([])
   const sentinel = useRef<HTMLDivElement | null>(null)
@@ -106,6 +105,7 @@ export function SalesHistory({
   // (ещё не отправленные) чеки показываются поверх. Без сети — локальная история.
   const [online, setOnline] = useState(true)
   const [serverSales, setServerSales] = useState<Sale[] | null>(null)
+  const [serverReturns, setServerReturns] = useState<SaleReturn[]>([])
   const [nextCursor, setNextCursor] = useState<SalesPageCursor | null>(null)
   const [loadingPage, setLoadingPage] = useState(false)
   const [pageError, setPageError] = useState<string | null>(null)
@@ -128,8 +128,9 @@ export function SalesHistory({
       from: r.from ? r.from.toISOString() : null,
       to: r.to ? r.to.toISOString() : null,
       sellerId: seller === "all" ? null : seller,
+      query: debouncedQuery,
     }
-  }, [period, from, to, seller])
+  }, [period, from, to, seller, debouncedQuery])
 
   const loadPage = useCallback(
     async (cursor: SalesPageCursor | null) => {
@@ -139,6 +140,11 @@ export function SalesHistory({
       try {
         const page = await getSalesPage({ ...serverFilter, cursor, limit: SERVER_PAGE })
         if (id !== requestId.current) return
+        setServerReturns((prev) => {
+          const merged = new Map((cursor ? prev : []).map((refund) => [refund.id, refund]))
+          for (const refund of page.returns) merged.set(refund.id, refund)
+          return [...merged.values()]
+        })
         setServerSales((prev) => {
           if (!cursor || !prev) return page.items
           const known = new Set(prev.map((sale) => sale.id))
@@ -162,6 +168,7 @@ export function SalesHistory({
     if (!online) {
       requestId.current++
       setServerSales(null)
+      setServerReturns([])
       setNextCursor(null)
       setLoadingPage(false)
       return
@@ -173,11 +180,19 @@ export function SalesHistory({
   useEffect(() => {
     if (!online) return
     let timer: number | undefined
+    let cancelled = false
     const refreshHead = () => {
       window.clearTimeout(timer)
       timer = window.setTimeout(async () => {
         try {
+          const id = requestId.current
           const page = await getSalesPage({ ...serverFilter, cursor: null, limit: SERVER_PAGE })
+          if (cancelled || id !== requestId.current) return
+          setServerReturns((prev) => {
+            const merged = new Map(prev.map((refund) => [refund.id, refund]))
+            for (const refund of page.returns) merged.set(refund.id, refund)
+            return [...merged.values()]
+          })
           setServerSales((prev) => {
             if (!prev) return page.items
             const fresh = new Map(page.items.map((sale) => [sale.id, sale]))
@@ -191,6 +206,7 @@ export function SalesHistory({
     window.addEventListener("aura:data_changed", refreshHead)
     window.addEventListener("aura:sale_sync_state_changed", refreshHead)
     return () => {
+      cancelled = true
       window.clearTimeout(timer)
       window.removeEventListener("aura:data_changed", refreshHead)
       window.removeEventListener("aura:sale_sync_state_changed", refreshHead)
@@ -219,7 +235,10 @@ export function SalesHistory({
   }, [serverSales, localSales, hasMoreServer])
 
   // Возвраты из БД + только что оформленные (до обновления серверных данных).
-  const allReturns = useMemo(() => [...justReturned, ...returns], [justReturned, returns])
+  const allReturns = useMemo(
+    () => [...returns, ...serverReturns, ...justReturned].filter((refund) => !refund.deleted_at),
+    [justReturned, returns, serverReturns],
+  )
 
   const refundByUnit = useMemo(() => {
     const map = new Map<string, SaleReturn>()
@@ -228,14 +247,6 @@ export function SalesHistory({
   }, [allReturns])
 
   const units = useMemo(() => flattenSaleUnits(sales, products), [sales, products])
-  const returnableUnits = useMemo(
-    () => units.filter((unit) => unit.sale.sync_status !== "pending" && unit.sale.sync_status !== "rejected"),
-    [units],
-  )
-  const returnedKeys = useMemo(
-    () => new Set(allReturns.map((r) => saleUnitKey(r.sale_id, r.item_index))),
-    [allReturns],
-  )
 
   const range = useMemo(() => periodRange(period, { from, to }), [period, from, to])
   const parsedQuery = useMemo(() => parseProductSearchQuery(debouncedQuery), [debouncedQuery])
@@ -325,27 +336,19 @@ export function SalesHistory({
             )}
           </span>
         </div>
-        {canReturn && returnableUnits.length > 0 && (
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-8 gap-1.5 border-destructive/40 bg-transparent text-xs text-destructive hover:bg-destructive/10 hover:text-destructive"
-            onClick={() => setSearchOpen(true)}
-          >
-            <Undo2 className="h-3.5 w-3.5" />
-            Возврат по QR / поиск
-          </Button>
-        )}
       </div>
 
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          placeholder="Поиск: артикул, товар, металл, клиент, телефон, продавец"
+      <div>
+        <ProductSearch
+          placeholder="Продажи и возврат: артикул, QR, товар, клиент, вес, цена или дата"
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          className="pl-9"
+          onChange={setQuery}
         />
+        <p className="mt-1 text-xs text-muted-foreground">
+          {online
+            ? "Поиск по всей истории магазина. Для возврата найдите товар и нажмите «Вернуть»."
+            : "Нет сети — доступны только чеки, сохранённые на этом устройстве."}
+        </p>
       </div>
 
       <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
@@ -405,7 +408,7 @@ export function SalesHistory({
 
       {rows.length === 0 && loadingPage ? (
         <div className="rounded-xl border border-dashed border-border py-12 text-center text-sm text-muted-foreground" role="status">
-          Загружаем историю продаж…
+          {debouncedQuery.trim() ? "Ищем в архиве продаж…" : "Загружаем историю продаж…"}
         </div>
       ) : rows.length === 0 && !hasMoreServer ? (
         <div className="rounded-xl border border-dashed border-border py-12 text-center text-sm text-muted-foreground">
@@ -440,16 +443,6 @@ export function SalesHistory({
             </div>
           )}
         </div>
-      )}
-
-      {searchOpen && (
-        <ReturnSearchModal
-          units={returnableUnits}
-          returnedKeys={returnedKeys}
-          allowOffline={allowOffline}
-          onClose={() => setSearchOpen(false)}
-          onReturned={(created) => finishReturn(created)}
-        />
       )}
 
       {dialogUnit && (

@@ -17,4 +17,4 @@ jobs:
         with:
           node-version: "24"
       # Intentionally no npm install: detect inaccessible registry URLs first.
-      - run: node --test tests/lockfile-registry.test.mjs
+      - run: node --test tests/*.test.mjs
