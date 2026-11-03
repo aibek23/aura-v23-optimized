@@ -201,7 +201,7 @@ test("Suppliers stops spinning on error and supports retry", async () => {
   assert.ok(h.context.supplierDebtLoadError)
   h.set("supplierDebtLoadError", null)
   await settle()
-  h.requests[1].resolve({ operations: [], suppliers: [] })
+  h.requests[1].resolve({ operations: [], suppliers: [], profiles: [] })
   await settle()
   assert.equal(h.context.supplierDebtLoaded, true)
 })
@@ -211,4 +211,132 @@ test("POS history has one shared searchable input with QR instead of a second mo
   assert.equal((source.match(/<ProductSearch\b/g) ?? []).length, 1)
   assert.equal(source.includes("ReturnSearchModal"), false)
   assert.match(source, /query: debouncedQuery/)
+})
+
+test("supplier inventory links target/highlight a specific item instead of printing/editing/deleting it inline", () => {
+  const products = readFileSync(new URL("../components/screens/suppliers/supplier-payout/supplier-products.tsx", import.meta.url), "utf8")
+  const warehouse = readFileSync(new URL("../components/screens/sklad/index.tsx", import.meta.url), "utf8")
+  assert.match(products, /Link2/)
+  assert.match(products, /onOpenProduct\(p\)/)
+  assert.doesNotMatch(products, /Printer|Pencil|Trash2|deleteProduct/)
+  assert.match(warehouse, /focusProduct/)
+  assert.match(warehouse, /setFocusedSupplierProductId\(product\.id\)/)
+  assert.match(warehouse, /scrollIntoView/)
+  assert.match(warehouse, /data-inventory-product-id/)
+})
+
+test("supplier photo and deletion actions are scoped to admin-owned shop paths", () => {
+  const actions = readFileSync(new URL("../app/actions/suppliers.ts", import.meta.url), "utf8")
+  const migration = readFileSync(new URL("../supabase/migrations/010_supplier_profiles.sql", import.meta.url), "utf8")
+  const card = readFileSync(new URL("../components/screens/suppliers/supplier-payout/supplier-card.tsx", import.meta.url), "utf8")
+  assert.match(actions, /requireAdmin\(\)/)
+  assert.match(actions, /supplier-profiles\//)
+  assert.match(migration, /pg_advisory_xact_lock/)
+  assert.match(migration, /IF v_balance > 0 THEN/)
+  assert.match(migration, /product-images/)
+  assert.match(card, /Удалить поставщика\?/)
+  assert.match(card, /disabled=\{hasDebt\}/)
+  assert.match(card, /deleteSupplierProfile/)
+})
+
+function supplierActionHarness({ role = "admin", rpcError = null } = {}) {
+  const calls = []
+  const shopId = "shop-1"
+  const supabase = {
+    from(table) {
+      const call = { table, steps: [] }
+      calls.push(call)
+      const query = {
+        upsert(value, options) { call.steps.push(["upsert", value, options]); return query },
+        update(value) { call.steps.push(["update", value]); return query },
+        select(value) { call.steps.push(["select", value]); return query },
+        single: async () => ({ data: {
+          supplier_name: "Золотой дом", supplier_phone: null,
+          photo_path: "shop-1/supplier-profiles/one.webp", deleted_at: null,
+        }, error: null }),
+        eq(column, value) { call.steps.push(["eq", column, value]); return query },
+        then(resolve, reject) { return Promise.resolve({ data: null, error: null }).then(resolve, reject) },
+      }
+      return query
+    },
+    rpc: async (name, args) => {
+      calls.push({ table: "rpc", name, args })
+      return rpcError
+        ? { data: null, error: rpcError }
+        : { data: `${shopId}/supplier-profiles/one.webp`, error: null }
+    },
+    storage: {
+      from(bucket) {
+        return { remove: async (paths) => {
+          calls.push({ table: "storage", bucket, paths })
+          return { data: paths, error: null }
+        } }
+      },
+    },
+  }
+  const actions = load("app/actions/suppliers.ts", "({ saveSupplierProfilePhoto, deleteSupplierProfile })", {
+    supabase,
+    requireShopContext: async () => ({
+      supabase, shopId, profile: { role }, user: { id: "user-1" },
+    }),
+    isAdminRole: (value) => value === "admin" || value === "super_admin",
+    FORBIDDEN_MESSAGE: "Недостаточно прав",
+    revalidatePath: () => {},
+    headers: async () => ({ get: () => null }),
+    supplierIdentityKey: (name, phone) => `${name.trim().toLowerCase()}\u0000${phone?.trim() ?? ""}`,
+  })
+  return { ...actions, calls }
+}
+
+test("supplier photo save writes a shop-scoped identity and cannot accept another shop's path", async () => {
+  const h = supplierActionHarness()
+  const saved = await h.saveSupplierProfilePhoto({
+    supplierName: "Золотой дом", supplierPhone: null,
+    photoPath: "shop-1/supplier-profiles/photo.webp",
+  })
+  assert.equal(saved.photo_path, "shop-1/supplier-profiles/one.webp")
+  const upsert = h.calls.find((call) => call.table === "supplier_profiles").steps[0][1]
+  assert.equal(upsert.shop_id, "shop-1")
+  assert.equal(upsert.identity_key, "золотой дом\u001f")
+  assert.equal(upsert.deleted_at, null)
+
+  await assert.rejects(h.saveSupplierProfilePhoto({
+    supplierName: "Золотой дом", photoPath: "other-shop/supplier-profiles/photo.webp",
+  }), /текущего магазина/)
+  assert.equal(h.calls.filter((call) => call.table === "supplier_profiles").length, 1)
+})
+
+test("supplier delete removes only its shop photo after the debt-check RPC", async () => {
+  const h = supplierActionHarness()
+  const result = await h.deleteSupplierProfile({ supplierName: "Золотой дом", supplierPhone: null })
+  assert.equal(result.photo_path, null)
+  const rpcIndex = h.calls.findIndex((call) => call.table === "rpc")
+  const storageIndex = h.calls.findIndex((call) => call.table === "storage")
+  assert.ok(rpcIndex >= 0 && storageIndex > rpcIndex)
+  assert.equal(JSON.stringify(h.calls[storageIndex].paths), '["shop-1/supplier-profiles/one.webp"]')
+  assert.ok(h.calls.find((call) => call.table === "supplier_profiles").steps.some(
+    (step) => step[0] === "eq" && step[1] === "shop_id" && step[2] === "shop-1",
+  ))
+})
+
+test("supplier delete stops before removing a photo when the atomic debt check rejects it", async () => {
+  const h = supplierActionHarness({ rpcError: { message: "Нельзя удалить: есть долг" } })
+  await assert.rejects(
+    h.deleteSupplierProfile({ supplierName: "Золотой дом" }),
+    /есть долг/,
+  )
+  assert.equal(h.calls.some((call) => call.table === "storage"), false)
+  assert.equal(h.calls.some((call) => call.table === "supplier_profiles"), false)
+})
+
+test("supplier photos and deletion are admin-only", async () => {
+  const h = supplierActionHarness({ role: "seller" })
+  await assert.rejects(
+    h.saveSupplierProfilePhoto({
+      supplierName: "Золотой дом",
+      photoPath: "shop-1/supplier-profiles/photo.webp",
+    }),
+    /Недостаточно прав/,
+  )
+  assert.equal(h.calls.length, 0)
 })

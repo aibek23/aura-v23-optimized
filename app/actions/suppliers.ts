@@ -28,6 +28,14 @@ async function deviceInfo() {
 export type SupplierDebtData = {
   operations: SupplierDebtOperation[]
   suppliers: SupplierDebtSummary[]
+  profiles: SupplierProfile[]
+}
+
+export type SupplierProfile = {
+  supplier_name: string
+  supplier_phone: string | null
+  photo_path: string | null
+  deleted_at: string | null
 }
 
 const SUPPLIER_DEBT_COLUMNS = [
@@ -53,14 +61,30 @@ const SUPPLIER_DEBT_COLUMNS = [
 /** Журнал долга поставщиков и текущие остатки. Остаток считается только из журнала. */
 export async function getSupplierDebtData(): Promise<SupplierDebtData> {
   const { supabase, profile, shopId } = await requireProfile()
-  const { data, error } = await supabase
-    .from("supplier_debt_operations")
-    .select(SUPPLIER_DEBT_COLUMNS)
-    .eq("shop_id", shopId)
-    .order("created_at", { ascending: false })
+  const [operationsResult, profilesResult] = await Promise.all([
+    supabase
+      .from("supplier_debt_operations")
+      .select(SUPPLIER_DEBT_COLUMNS)
+      .eq("shop_id", shopId)
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("supplier_profiles")
+      .select("supplier_name, supplier_phone, photo_path, deleted_at")
+      .eq("shop_id", shopId),
+  ])
 
-  if (error) throw new Error(`Не удалось загрузить журнал поставщиков: ${error.message}`)
-  const operations = (data as unknown as SupplierDebtOperation[]) ?? []
+  if (operationsResult.error) throw new Error(`Не удалось загрузить журнал поставщиков: ${operationsResult.error.message}`)
+  if (
+    profilesResult.error &&
+    !["42P01", "PGRST205"].includes(profilesResult.error.code ?? "")
+  ) {
+    throw new Error(`Не удалось загрузить карточки поставщиков: ${profilesResult.error.message}`)
+  }
+  const operations = (operationsResult.data as unknown as SupplierDebtOperation[]) ?? []
+  const profiles = profilesResult.error ? [] : ((profilesResult.data ?? []) as SupplierProfile[])
+  const profileByKey = new Map(
+    profiles.map((item) => [supplierIdentityKey(item.supplier_name, item.supplier_phone), item]),
+  )
   const map = new Map<string, SupplierDebtSummary>()
   for (const operation of operations) {
     const key = supplierIdentityKey(operation.supplier_name, operation.supplier_phone)
@@ -78,7 +102,100 @@ export async function getSupplierDebtData(): Promise<SupplierDebtData> {
       })
     }
   }
-  return { operations, suppliers: [...map.values()].sort((a, b) => b.balance - a.balance) }
+  for (const [key, supplier] of map) {
+    const profile = profileByKey.get(key)
+    if (profile?.deleted_at && Date.parse(profile.deleted_at) >= Date.parse(supplier.last_operation_at)) {
+      map.delete(key)
+    }
+  }
+  return {
+    operations,
+    suppliers: [...map.values()].sort((a, b) => b.balance - a.balance),
+    profiles,
+  }
+}
+
+function persistedSupplierKey(name: string, phone: string | null) {
+  return supplierIdentityKey(name, phone).replace("\u0000", "\u001f")
+}
+
+/** Сохраняет фото карточки поставщика в папку текущего магазина. */
+export async function saveSupplierProfilePhoto(input: {
+  supplierName: string
+  supplierPhone?: string | null
+  photoPath: string
+}): Promise<SupplierProfile> {
+  const { supabase, shopId } = await requireAdmin()
+  const supplierName = input.supplierName.trim()
+  const supplierPhone = input.supplierPhone?.trim() || null
+  const photoPath = input.photoPath
+  if (!supplierName || supplierName.length > 200) throw new Error("Некорректное имя поставщика")
+  if (supplierPhone && supplierPhone.length > 50) throw new Error("Некорректный телефон поставщика")
+  if (
+    typeof photoPath !== "string" ||
+    photoPath.length > 500 ||
+    !photoPath.startsWith(`${shopId}/supplier-profiles/`) ||
+    photoPath.includes("..")
+  ) {
+    throw new Error("Фото должно находиться в папке текущего магазина")
+  }
+
+  const profileData = {
+    shop_id: shopId,
+    identity_key: persistedSupplierKey(supplierName, supplierPhone),
+    supplier_name: supplierName,
+    supplier_phone: supplierPhone,
+    photo_path: photoPath,
+    deleted_at: null,
+  }
+  const { data, error } = await supabase
+    .from("supplier_profiles")
+    .upsert(profileData, { onConflict: "shop_id,identity_key" })
+    .select("supplier_name, supplier_phone, photo_path, deleted_at")
+    .single()
+  if (error) throw new Error(`Не удалось сохранить карточку поставщика: ${error.message}`)
+  revalidatePath("/crm")
+  return data as SupplierProfile
+}
+
+/** Удаляет карточку только при нулевом долге; RPC блокирует параллельную запись долга. */
+export async function deleteSupplierProfile(input: {
+  supplierName: string
+  supplierPhone?: string | null
+}): Promise<SupplierProfile> {
+  const { supabase, shopId } = await requireAdmin()
+  const supplierName = input.supplierName.trim()
+  const supplierPhone = input.supplierPhone?.trim() || null
+  if (!supplierName) throw new Error("Не указано имя поставщика")
+
+  const { data: photoPath, error } = await supabase.rpc("delete_supplier_profile", {
+    _supplier_name: supplierName,
+    _supplier_phone: supplierPhone,
+  })
+  if (error) throw new Error(error.message)
+
+  if (typeof photoPath === "string" && photoPath) {
+    if (!photoPath.startsWith(`${shopId}/supplier-profiles/`) || photoPath.includes("..")) {
+      throw new Error("Нельзя удалить фото вне папки текущего магазина")
+    }
+    const { error: storageError } = await supabase.storage.from("product-images").remove([photoPath])
+    if (storageError) throw new Error(`Поставщик скрыт, но фото не удалено: ${storageError.message}`)
+  }
+
+  const { error: profileError } = await supabase
+    .from("supplier_profiles")
+    .update({ photo_path: null })
+    .eq("shop_id", shopId)
+    .eq("identity_key", persistedSupplierKey(supplierName, supplierPhone))
+  if (profileError) throw new Error(`Поставщик скрыт, но не удалось завершить очистку фото: ${profileError.message}`)
+
+  revalidatePath("/crm")
+  return {
+    supplier_name: supplierName,
+    supplier_phone: supplierPhone,
+    photo_path: null,
+    deleted_at: new Date().toISOString(),
+  }
 }
 
 /** Отмечает товар на реализацию и добавляет его закупочную стоимость в долг. */

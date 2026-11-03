@@ -12,7 +12,11 @@ import type { CabinetData } from "@/app/actions/cabinet"
 import type { MetalRate } from "@/lib/types"
 import type { CashData } from "@/app/actions/cash"
 import type { ShopBillingRow } from "@/app/actions/superadmin"
-import { getSupplierDebtData, type SupplierDebtData } from "@/app/actions/suppliers"
+import {
+  getSupplierDebtData,
+  type SupplierDebtData,
+  type SupplierProfile,
+} from "@/app/actions/suppliers"
 import { impersonateShop } from "@/app/actions/superadmin"
 import { useRouter } from "next/navigation"
 import { createClient as createSupabaseBrowserClient } from "@/lib/supabase/client"
@@ -20,6 +24,7 @@ import { toast } from "sonner"
 import { useLocalCrm } from "@/lib/local-db/use-local-crm"
 import { runLogoutCleanup } from "@/lib/local-db/logout-cleanup"
 import { saveUserSession } from "@/lib/local-db/db"
+import { supplierIdentityKey } from "@/lib/supplier-identity"
 
 const SectionLoading = () => (
   <div className="flex min-h-40 items-center justify-center text-sm text-muted-foreground" role="status">
@@ -143,6 +148,22 @@ export function Dashboard({
   const [supplierDebtLoaded, setSupplierDebtLoaded] = useState(screen === "suppliers")
   const [supplierDebtLoading, setSupplierDebtLoading] = useState(false)
   const [supplierDebtLoadError, setSupplierDebtLoadError] = useState<string | null>(null)
+  const [supplierInventoryTarget, setSupplierInventoryTarget] = useState<Pick<Product, "id" | "name" | "sku"> | null>(null)
+
+  const handleSupplierProfileUpdated = useCallback((profile: SupplierProfile) => {
+    const key = supplierIdentityKey(profile.supplier_name, profile.supplier_phone)
+    setSupplierDebtData((current) => ({
+      ...current,
+      profiles: [...current.profiles.filter(
+        (item) => supplierIdentityKey(item.supplier_name, item.supplier_phone) !== key,
+      ), profile],
+      suppliers: profile.deleted_at
+        ? current.suppliers.filter(
+            (item) => supplierIdentityKey(item.supplier_name, item.supplier_phone) !== key,
+          )
+        : current.suppliers,
+    }))
+  }, [])
   const [showExitModal, setShowExitModal] = useState(false)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
@@ -469,6 +490,10 @@ export function Dashboard({
             onProductSaved={!isImpersonating ? localCrm.cacheSavedProduct : undefined}
             onProductDeleted={!isImpersonating ? localCrm.cacheDeletedProduct : undefined}
             onOfflineDeleteProduct={!isImpersonating ? localCrm.localDeleteProduct : undefined}
+            focusProduct={supplierInventoryTarget}
+            onFocusProductHandled={(productId: string) =>
+              setSupplierInventoryTarget((current) => current?.id === productId ? null : current)
+            }
           />
         )}
         {activeScreen === "clients" && (
@@ -494,6 +519,11 @@ export function Dashboard({
               products={currentProducts}
               sales={confirmedSales}
               isAdmin={isAdmin}
+              onSupplierProfileUpdated={handleSupplierProfileUpdated}
+              onOpenProduct={(product: Product) => {
+                setSupplierInventoryTarget({ id: product.id, name: product.name, sku: product.sku })
+                handleScreenChange("sklad")
+              }}
             />
           )
         )}

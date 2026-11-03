@@ -18,3 +18,4 @@ jobs:
           node-version: "24"
       # Intentionally no npm install: detect inaccessible registry URLs first.
       - run: node --test tests/*.test.mjs
+      - run: node scripts/check-product-unit-usage.mjs
