@@ -12,6 +12,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test:critical": "node --test tests/critical-regressions.test.mjs",
+    "test:lockfile": "node --test tests/lockfile-registry.test.mjs",
     "test:atomic": "node --test scripts/test-atomic-actions.mjs",
     "test:atomic:postgres": "node scripts/test-atomic-postgres.mjs",
     "test:history:postgres": "node scripts/test-action-history-postgres.mjs",
