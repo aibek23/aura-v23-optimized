@@ -16,6 +16,7 @@ import {
   readPurities,
   removePurity,
   type MetalCondition,
+  getMetalSelectionDefaults,
 } from "@/lib/metal"
 
 /**
@@ -43,7 +44,8 @@ export function MetalPicker({
   const emit = (next: Partial<{ condition: MetalCondition; base: string; purity: string }>) => {
     const c = next.condition ?? condition
     const b = next.base ?? base
-    const p = next.purity ?? purity
+    const defaults = getMetalSelectionDefaults(b, base, purity, "")
+    const p = next.purity ?? defaults.purity
     onChange({ condition: c, base: b, purity: p, metal: composeMetal(c, b, p) })
   }
 

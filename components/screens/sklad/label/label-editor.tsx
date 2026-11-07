@@ -407,6 +407,7 @@ export function LabelEditor({
     fabricRef, sizeDef, loaded, Boolean(autoPrint && canPrint),
     printerProfile, copies, density ?? printerProfile.density,
     setIsPrinting, setPrintStatus, autoPrint ? onClose : undefined,
+    autoPrint ? onClose : undefined,
   )
 
   const handleExportPng = useCallback(() => {

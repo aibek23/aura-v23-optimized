@@ -111,6 +111,9 @@ export function SkladScreen({
   const [labelDialogOpen, setLabelDialogOpen] = useState(false)
   const [labelAutoPrint, setLabelAutoPrint] = useState(false)
   const [labelSizeKey, setLabelSizeKey] = useState<JewelryLabelSizeKey>(DEFAULT_SIZE_KEY)
+  const [backgroundPrintQueue, setBackgroundPrintQueue] = useState<Product[]>([])
+  const [backgroundPrintProduct, setBackgroundPrintProduct] = useState<Product | null>(null)
+  const [backgroundPrintReady, setBackgroundPrintReady] = useState(false)
   const [isTopControlsCollapsed, setIsTopControlsCollapsed] = useState(true)
   const [labelBackgroundControlsHost, setLabelBackgroundControlsHost] = useState<HTMLDivElement | null>(null)
   const labelReturnScrollY = useRef<number | null>(null)
@@ -269,6 +272,45 @@ export function SkladScreen({
       })
   }
 
+  const closeBackgroundPrint = useCallback(() => {
+    setBackgroundPrintReady(false)
+    setBackgroundPrintProduct(null)
+  }, [])
+
+  useEffect(() => {
+    if (backgroundPrintProduct || backgroundPrintQueue.length === 0) return
+    const [next, ...remaining] = backgroundPrintQueue
+    setBackgroundPrintQueue(remaining)
+    setBackgroundPrintProduct(next)
+    setBackgroundPrintReady(false)
+  }, [backgroundPrintProduct, backgroundPrintQueue])
+
+  useEffect(() => {
+    if (!backgroundPrintProduct) return
+    let active = true
+    if (isValidShopSeqId(backgroundPrintProduct.shop_seq_id)) {
+      setBackgroundPrintReady(true)
+      return () => { active = false }
+    }
+
+    void getShopSeqIdForLabel(backgroundPrintProduct.shop_id)
+      .then((shopSeqId) => {
+        if (!isValidShopSeqId(shopSeqId)) {
+          throw new Error("Не удалось подготовить QR-код для печати")
+        }
+        if (!active) return
+        setBackgroundPrintProduct((current) => current?.id === backgroundPrintProduct.id
+          ? { ...current, shop_seq_id: shopSeqId }
+          : current)
+      })
+      .catch((error) => {
+        if (!active) return
+        toast.error(error instanceof Error ? error.message : "Не удалось подготовить этикетку")
+        closeBackgroundPrint()
+      })
+    return () => { active = false }
+  }, [backgroundPrintProduct?.id, backgroundPrintProduct?.shop_id, backgroundPrintProduct?.shop_seq_id, closeBackgroundPrint])
+
   const openLabel = (p: Product, autoPrint: boolean) => {
     const requestId = ++labelOpenRequestRef.current
     void preloadLabelEditor().catch(() => undefined)
@@ -343,8 +385,18 @@ export function SkladScreen({
   }
 
   /** Автопечать при сохранении товара из модального окна. */
-  const onAutoPrintLabel = (p: Product) => {
-    void openLabel(p, true)
+  /** Печатает в фоне, чтобы после сохранения сразу заполнить карточку следующего товара. */
+  const queueAutoPrintLabel = (p: Product) => {
+    const defaultSize = getLabelSizeDef(printerProfile.defaultLabelKey)
+    const width = Math.round(defaultSize.w_px * printerProfile.dpi / 203)
+    if (printerProfile.supportsDirectBluetooth === false || width > printerProfile.printheadPx) {
+      toast.error("Товар сохранён, но выбранный профиль не поддерживает прямую печать этой этикетки.")
+      return
+    }
+    void preloadLabelEditor().catch(() => {
+      toast.error("Не удалось загрузить модуль печати этикеток")
+    })
+    setBackgroundPrintQueue((queue) => [...queue, p])
   }
 
   const onAdd = () => {
@@ -901,6 +953,24 @@ export function SkladScreen({
       )}
       </Dialog>
 
+      {backgroundPrintProduct && backgroundPrintReady && (
+        <div
+          aria-hidden="true"
+          inert
+          className="pointer-events-none fixed -left-[10000px] top-0 h-[720px] w-[480px] overflow-hidden"
+        >
+          <LabelEditor
+            key={`background:${backgroundPrintProduct.id}`}
+            product={backgroundPrintProduct}
+            canSeePurchasePrice={canSeePurchasePrice}
+            autoPrint
+            initialSizeKey={printerProfile.defaultLabelKey}
+            printerProfile={printerProfile}
+            onClose={closeBackgroundPrint}
+          />
+        </div>
+      )}
+
       <ProductDialog
         open={productDialogOpen}
         onOpenChange={setProductDialogOpen}
@@ -908,7 +978,7 @@ export function SkladScreen({
         canSeePurchasePrice={canSeePurchasePrice}
         allowOffline={allowOffline}
         onProductSaved={handleProductSaved}
-        onPrintLabel={onAutoPrintLabel}
+        onPrintLabel={queueAutoPrintLabel}
       />
     </div>
   )
