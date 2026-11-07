@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { MetalPicker } from "@/components/metal-picker"
 import { CATEGORIES, METAL_COLORS } from "@/lib/types"
+import { getMetalSelectionDefaults } from "@/lib/metal"
 import { cn } from "@/lib/utils"
 import { RefreshCw, X } from "lucide-react"
 import type { FormState } from "@/hooks/useProductForm"
@@ -101,9 +102,11 @@ export function ProductGeneralInfo({
         purity={form.purity}
         onChange={({ condition, base, purity, metal }) => {
           skuAutoRef.current = true
+          const defaults = getMetalSelectionDefaults(base, metalBase, form.purity, form.metal_color)
           setMetalCondition(condition)
           setMetalBase(base)
           setField("purity", purity)
+          setField("metal_color", defaults.metalColor)
           setField("metal", metal)
           // is_secondary удалено из БД (v20); вычисляется из metal через /^вторичн/i
         }}

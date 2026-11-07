@@ -21,6 +21,30 @@ export const DEFAULT_PURITIES = ["375", "585", "750", "999", "925"] as const
 
 const PURITY_KEY = "aura_purity_dict_v1"
 
+/** Defaults for a newly selected metal; preserve explicit edits to the same base. */
+export function getMetalSelectionDefaults(
+  nextBase: string,
+  currentBase: string,
+  currentPurity: string,
+  currentColor: string,
+): { purity: string; metalColor: string } {
+  const changingBase = nextBase !== currentBase
+  const purity = nextBase === "Серебро" && changingBase
+    ? "925"
+    : currentBase === "Серебро" && changingBase && currentPurity === "925"
+      ? nextBase === "Золото" ? "585" : ""
+      : currentPurity
+
+  let metalColor = currentColor
+  if (nextBase === "Серебро") {
+    metalColor = "Серебро"
+  } else if (currentBase === "Серебро" && currentColor === "Серебро") {
+    metalColor = nextBase === "Золото" ? "Жёлтое золото" : ""
+  }
+
+  return { purity, metalColor }
+}
+
 export function readPurities(): string[] {
   if (typeof window === "undefined") return [...DEFAULT_PURITIES]
   try {

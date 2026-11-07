@@ -41,9 +41,6 @@ export function ProductDialog({
   const router = useRouter()
   const [, startTransition] = useTransition()
   const [saving, setSaving] = useState(false)
-  /** Подтверждение печати после успешного сохранения. */
-  const [printConfirmOpen, setPrintConfirmOpen] = useState(false)
-  const [savedProduct, setSavedProduct] = useState<Product | null>(null)
   const [consignmentChecked, setConsignmentChecked] = useState(
     Boolean(product?.consignment_operation_id),
   )
@@ -80,7 +77,7 @@ export function ProductDialog({
     }
   }, [open, product])
 
-  const submit = async () => {
+  const submit = async (printAfterSave = false) => {
     if (!form.name.trim()) {
       toast.error("Укажите название")
       return
@@ -113,6 +110,7 @@ export function ProductDialog({
       // 1) Сначала сохраняем в БД и получаем реальную строку товара
       //    (с id / sku / shop_id / shop_seq_id) — именно она нужна для QR-кода.
       let saved: Product
+      let savedOffline = false
       try {
         if (!navigator.onLine) throw new Error("Offline")
         if (product) {
@@ -125,6 +123,7 @@ export function ProductDialog({
         }
       } catch (saveErr) {
         if (!allowOffline) throw saveErr
+        savedOffline = true
         // Offline fallback: save locally to IndexedDB and queue in Outbox.
         const { bulkPut } = await import("@/lib/local-db/db")
         const { enqueueOutbox } = await import("@/lib/local-db/outbox")
@@ -177,15 +176,16 @@ export function ProductDialog({
       }
       startTransition(() => router.refresh())
 
-      // 2) Данные уже в БД — спрашиваем про печать этикетки.
-      if (onPrintLabel) {
-        setSavedProduct(saved)
-        // Не держим форму открытой под подтверждением печати:
-        // два одновременно открытых Dialog перехватывают фокус и клики друг у друга.
-        onOpenChange(false)
-        setPrintConfirmOpen(true)
-      } else {
-        onOpenChange(false)
+      onOpenChange(false)
+      if (printAfterSave && onPrintLabel) {
+        if (savedOffline) {
+          toast.info("Товар сохранён локально. Печать будет доступна после синхронизации.")
+        } else {
+          // The label editor uses the current printer profile and starts printing directly.
+          void Promise.resolve(onPrintLabel(saved)).catch((printError) => {
+            toast.error(printError instanceof Error ? printError.message : "Не удалось начать печать")
+          })
+        }
       }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Не удалось сохранить")
@@ -194,18 +194,9 @@ export function ProductDialog({
     }
   }
 
-  const closeAll = () => {
-    setPrintConfirmOpen(false)
-    setSavedProduct(null)
+  const cancel = () => {
+    if (!product) clearDraft()
     onOpenChange(false)
-  }
-
-  const confirmPrint = async () => {
-    const target = savedProduct
-    setPrintConfirmOpen(false)
-    setSavedProduct(null)
-    onOpenChange(false)
-    if (target) await onPrintLabel?.(target)
   }
 
   return (
@@ -247,7 +238,15 @@ export function ProductDialog({
             </div>
             <div className="grid gap-2">
               <Label htmlFor="p-size">Размер</Label>
-              <Input id="p-size" value={form.size} onChange={(e) => setField("size", e.target.value)} />
+              <Input
+                id="p-size"
+                type="number"
+                inputMode="decimal"
+                min={0}
+                step="0.1"
+                value={form.size}
+                onChange={(e) => setField("size", e.target.value)}
+              />
             </div>
           </div>
 
@@ -439,52 +438,39 @@ export function ProductDialog({
         </div>
 
         <DialogFooter className="gap-2 sm:justify-between">
-          {!product && (
-            <Button
-              type="button"
-              variant="ghost"
-              className="text-xs text-muted-foreground"
-              onClick={() => {
-                clearDraft()
-                onOpenChange(false)
-              }}
-            >
-              Очистить черновик
-            </Button>
-          )}
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <div className={cn("grid w-full grid-cols-2 gap-2 sm:w-auto", !product && onPrintLabel && "sm:grid-cols-3")}>
+            <Button type="button" variant="outline" disabled={saving} onClick={cancel}>
               Отмена
             </Button>
-            <Button onClick={submit} disabled={saving}>
+            <Button type="button" onClick={() => void submit()} disabled={saving}>
               {saving ? (
                 <span className="flex items-center gap-2">
                   <InlineLoader />
                   Сохранение...
                 </span>
               ) : (
-                "Сохранить"
+                product ? "Сохранить" : "Добавить"
               )}
             </Button>
+            {!product && onPrintLabel && (
+              <Button
+                type="button"
+                variant="secondary"
+                className="col-span-2 sm:col-span-1"
+                onClick={() => void submit(true)}
+                disabled={saving}
+              >
+                {saving ? (
+                  <span className="flex items-center gap-2">
+                    <InlineLoader />
+                    Сохранение...
+                  </span>
+                ) : (
+                  "Добавить и распечатать"
+                )}
+              </Button>
+            )}
           </div>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-
-    {/* Подтверждение печати — показывается ТОЛЬКО после успешного сохранения */}
-    <Dialog open={printConfirmOpen} onOpenChange={(v) => { if (!v) closeAll() }}>
-      <DialogContent className="sm:max-w-sm">
-        <DialogHeader>
-          <DialogTitle>Печать этикетки</DialogTitle>
-        </DialogHeader>
-        <p className="text-sm text-muted-foreground">
-          Товар сохранён. Хотите распечатать этикетку сейчас?
-        </p>
-        <DialogFooter className="gap-2">
-          <Button variant="outline" onClick={closeAll}>
-            Нет
-          </Button>
-          <Button onClick={() => void confirmPrint()}>Да, печатать</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
