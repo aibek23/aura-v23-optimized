@@ -5,7 +5,7 @@ import type { Product } from "@/lib/types"
 import { createProduct, updateProduct, type ProductInput } from "@/app/actions/products"
 import { takeProductOnConsignment } from "@/app/actions/suppliers"
 import { clearDraft, pushNameHistory } from "@/lib/name-history"
-import { useProductForm } from "@/hooks/useProductForm"
+import { EMPTY_FORM, useProductForm } from "@/hooks/useProductForm"
 
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"

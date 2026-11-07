@@ -58,6 +58,7 @@ test("product form offers cancel, add-and-print, and numeric size entry without 
   assert.match(dialog, /"Добавить и распечатать"/)
   assert.match(dialog, /<Button type="button" variant="outline" disabled=\{saving\} onClick=\{cancel\}>/)
   assert.match(dialog, /id="p-size"[\s\S]*?type="number"[\s\S]*?inputMode="decimal"/)
+  assert.match(dialog, /import \{ EMPTY_FORM, useProductForm \} from "@\/hooks\/useProductForm"/)
   assert.doesNotMatch(dialog, /printConfirmOpen|Хотите распечатать этикетку сейчас/)
   assert.match(generalInfo, /setField\("metal_color", defaults\.metalColor\)/)
   assert.match(metalPicker, /getMetalSelectionDefaults\(b, base, purity, ""\)/)
