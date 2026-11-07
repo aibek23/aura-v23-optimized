@@ -50,6 +50,7 @@ export function ProductDialog({
 
   const {
     form,
+    setForm,
     setField,
     metalCondition,
     metalBase,
@@ -176,12 +177,19 @@ export function ProductDialog({
       }
       startTransition(() => router.refresh())
 
-      onOpenChange(false)
+      if (printAfterSave && !product) {
+        skuAuto.current = true
+        setForm(EMPTY_FORM)
+        setConsignmentChecked(false)
+        setExtraSectionOpen(false)
+      } else {
+        onOpenChange(false)
+      }
       if (printAfterSave && onPrintLabel) {
         if (savedOffline) {
           toast.info("Товар сохранён локально. Печать будет доступна после синхронизации.")
         } else {
-          // The label editor uses the current printer profile and starts printing directly.
+          // Queue printing without leaving the add form so the next item can be entered.
           void Promise.resolve(onPrintLabel(saved)).catch((printError) => {
             toast.error(printError instanceof Error ? printError.message : "Не удалось начать печать")
           })

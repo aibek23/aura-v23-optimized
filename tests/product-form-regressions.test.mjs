@@ -62,3 +62,22 @@ test("product form offers cancel, add-and-print, and numeric size entry without 
   assert.match(generalInfo, /setField\("metal_color", defaults\.metalColor\)/)
   assert.match(metalPicker, /getMetalSelectionDefaults\(b, base, purity, ""\)/)
 })
+
+test("add-and-print keeps the next new-product form open while printing in a hidden FIFO renderer", () => {
+  const dialog = readFileSync(new URL(
+    "../components/screens/sklad/add-edit-Product/product-dialog.tsx",
+    import.meta.url,
+  ), "utf8")
+  const inventory = readFileSync(new URL("../components/screens/sklad/index.tsx", import.meta.url), "utf8")
+  const printQueue = inventory.slice(
+    inventory.indexOf("const queueAutoPrintLabel"),
+    inventory.indexOf("const onAdd"),
+  )
+
+  assert.match(dialog, /if \(printAfterSave && !product\)[\s\S]*?setForm\(EMPTY_FORM\)[\s\S]*?setExtraSectionOpen\(false\)/)
+  assert.match(inventory, /setBackgroundPrintQueue\(\(queue\) => \[\.\.\.queue, p\]\)/)
+  assert.match(printQueue, /setBackgroundPrintQueue/)
+  assert.doesNotMatch(printQueue, /openLabel|setLabelDialogOpen\(true\)/)
+  assert.match(inventory, /aria-hidden="true"[\s\S]*?inert[\s\S]*?left-\[10000px\]/)
+  assert.match(inventory, /autoPrint\s*\n\s*initialSizeKey=\{printerProfile\.defaultLabelKey\}/)
+})

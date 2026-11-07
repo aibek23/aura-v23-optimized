@@ -52,6 +52,7 @@ export function useLabelPrint(
   setIsPrinting: (v: boolean) => void,
   setStatus:     (v: string) => void,
   onSuccess?:    () => void,
+  onAutoPrintError?: () => void,
 ) {
   const autoPrintedRef = useRef(false)
 
@@ -82,12 +83,13 @@ export function useLabelPrint(
         console.error("[Print Error]:", err)
       }
       toast.error(getPrintErrorMessage(err), { duration: 6000 })
+      if (autoPrint) onAutoPrintError?.()
     } finally {
       setIsPrinting(false)
       setStatus("")
     }
     if (printSucceeded) onSuccess?.()
-  }, [fabricRef, sizeDef, loaded, printerProfile, copies, density, setIsPrinting, setStatus, onSuccess])
+  }, [fabricRef, sizeDef, loaded, printerProfile, copies, density, setIsPrinting, setStatus, onSuccess, autoPrint, onAutoPrintError])
 
   useEffect(() => {
     if (!autoPrint || !loaded || autoPrintedRef.current) return
